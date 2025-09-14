@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="page-section">
+  <div class="container playbook-intro">
+    <h1>Playbook</h1>
+    <p>Explore the library of Drivers, Biases, Heuristics, and Nudges. Use filters to browse.</p>
+  </div>
+  </section>
+
+{% if DRIVER_CARDS_V1 %}
+<section class="page-section">
+  <div class="container">
+    <div class="filter-card">
+      <div class="filter-card-header">
+        <h3 class="filter-title">Filters</h3>
+        <button id="filter-clear" class="btn btn-outline btn-sm">Clear All</button>
+      </div>
+
+      <!-- Framework → Capability selector (reused from Diagnostics) -->
+      <div class="selector-row">
+        <div class="control-group">
+          <label class="control-label" for="fw-select">Framework</label>
+          <select id="fw-select" class="library-filter-select">
+            <option value="">All Frameworks</option>
+          </select>
+        </div>
+        <div class="control-group">
+          <label class="control-label" for="comp-select">Competencies</label>
+          <select id="comp-select" class="library-filter-select" disabled>
+            <option value="">All competencies</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="library-controls">
+        <div class="control-row">
+          <div class="control-group">
+            <label class="control-label" for="dc-search">Search</label>
+            <input id="dc-search" class="search-input" type="text" placeholder="Search driver cards..." />
+          </div>
+          <div class="control-group">
+            <label class="control-label">type</label>
+            <div class="segmented">
+              <button class="seg-btn active" data-kind="all">All</button>
+              <button class="seg-btn" data-kind="driver">Drivers</button>
+              <button class="seg-btn" data-kind="bias">Biases</button>
+              <button class="seg-btn" data-kind="heuristic">Heuristics</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Active tag filters bar -->
+      <div id="dc-active-tags" class="active-tags" style="display:none"></div>
+    </div>
+
+    <div id="dc-status" class="notice" style="display:none"></div>
+
+    <div id="dc-grid" class="library-metrics-grid"></div>
+
+    <div id="dc-pagination" class="pagination" style="display:none"></div>
+  </div>
+</section>
+
+<!-- Driver Card Details Modal -->
+<div id="driver-card-modal" class="modal" style="display:none">
+  <div class="modal-content">
+    <button class="modal-close" aria-label="Close">×</button>
+    <div id="driver-card-modal-body"></div>
+  </div>
+  <div class="modal-backdrop"></div>
+  </div>
+
+<script src="{{ url_for('static', filename='js/driver-cards.js') }}?v=20250913-1"></script>
+<script src="{{ url_for('static', filename='js/fw-comp-selector.js') }}?v=20250913-1"></script>
+{% else %}
+<section class="page-section">
+  <div class="container">
+    <div class="notice notice-info">
+      Driver Cards are disabled. Set <code>DRIVER_CARDS_V1=True</code> to enable the Playbook library.
+    </div>
+  </div>
+</section>
+{% endif %}
+{% endblock %}

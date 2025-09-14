@@ -1,0 +1,227 @@
+{% extends "admin/base.html" %}
+
+{% block title %}Dashboard{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+    <h1 class="h2">
+        <i class="bi bi-speedometer2 me-2"></i>Dashboard
+    </h1>
+    <div class="btn-toolbar mb-2 mb-md-0">
+        <div class="btn-group me-2">
+            <button type="button" class="btn btn-outline-secondary dropdown-toggle" data-bs-toggle="dropdown">
+                <i class="bi bi-download me-1"></i>Export Data
+            </button>
+            <ul class="dropdown-menu">
+                <li><a class="dropdown-item" href="{{ url_for('admin.export_data', data_type='metrics') }}">
+                    <i class="bi bi-graph-up me-2"></i>Metrics
+                </a></li>
+                <li><a class="dropdown-item" href="{{ url_for('admin.export_data', data_type='outcomes') }}">
+                    <i class="bi bi-target me-2"></i>L&D Outcomes
+                </a></li>
+                <li><a class="dropdown-item" href="{{ url_for('admin.export_data', data_type='types') }}">
+                    <i class="bi bi-tags me-2"></i>Metric Types
+                </a></li>
+            </ul>
+        </div>
+    </div>
+</div>
+
+<!-- Statistics Cards -->
+<div class="row mb-4">
+    <div class="col-xl-3 col-md-6 mb-4">
+        <div class="card stats-card">
+            <div class="card-body">
+                <div class="d-flex align-items-center">
+                    <div class="flex-grow-1">
+                        <div class="stats-number">{{ stats.total_metrics }}</div>
+                        <div class="text-white-50">Total Metrics</div>
+                    </div>
+                    <div class="flex-shrink-0">
+                        <i class="bi bi-graph-up" style="font-size: 2rem; opacity: 0.5;"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-xl-3 col-md-6 mb-4">
+        <div class="card stats-card" style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);">
+            <div class="card-body">
+                <div class="d-flex align-items-center">
+                    <div class="flex-grow-1">
+                        <div class="stats-number">{{ stats.total_outcomes }}</div>
+                        <div class="text-white-50">L&D Outcomes</div>
+                    </div>
+                    <div class="flex-shrink-0">
+                        <i class="bi bi-target" style="font-size: 2rem; opacity: 0.5;"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-xl-3 col-md-6 mb-4">
+        <div class="card stats-card" style="background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);">
+            <div class="card-body">
+                <div class="d-flex align-items-center">
+                    <div class="flex-grow-1">
+                        <div class="stats-number">{{ stats.total_types }}</div>
+                        <div class="text-white-50">Metric Types</div>
+                    </div>
+                    <div class="flex-shrink-0">
+                        <i class="bi bi-tags" style="font-size: 2rem; opacity: 0.5;"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-xl-3 col-md-6 mb-4">
+        <div class="card stats-card" style="background: linear-gradient(135deg, #fa709a 0%, #fee140 100%);">
+            <div class="card-body">
+                <div class="d-flex align-items-center">
+                    <div class="flex-grow-1">
+                        <div class="stats-number">{{ stats.total_admin_users }}</div>
+                        <div class="text-white-50">Admin Users</div>
+                    </div>
+                    <div class="flex-shrink-0">
+                        <i class="bi bi-people" style="font-size: 2rem; opacity: 0.5;"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <!-- Recent Metrics -->
+    <div class="col-md-6 mb-4">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="card-title mb-0">
+                    <i class="bi bi-clock-history me-2"></i>Recent Metrics
+                </h5>
+                <a href="{{ url_for('admin.metrics') }}" class="btn btn-sm btn-outline-primary">View All</a>
+            </div>
+            <div class="card-body">
+                {% if stats.recent_metrics %}
+                    <div class="list-group list-group-flush">
+                        {% for metric in stats.recent_metrics %}
+                            <div class="list-group-item d-flex justify-content-between align-items-start">
+                                <div class="ms-2 me-auto">
+                                    <div class="fw-bold">{{ metric.name }}</div>
+                                    <small class="text-muted">{{ metric.outcome.name }} • {{ metric.metric_type.name }}</small>
+                                </div>
+                                <small class="text-muted">{{ metric.created_date.strftime('%m/%d/%Y') }}</small>
+                            </div>
+                        {% endfor %}
+                    </div>
+                {% else %}
+                    <p class="text-muted text-center py-3">No metrics found.</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    
+    <!-- Recent Activity -->
+    <div class="col-md-6 mb-4">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="card-title mb-0">
+                    <i class="bi bi-activity me-2"></i>Recent Activity
+                </h5>
+                <a href="{{ url_for('admin.audit_logs') }}" class="btn btn-sm btn-outline-primary">View All</a>
+            </div>
+            <div class="card-body">
+                {% if stats.recent_audit_logs %}
+                    <div class="list-group list-group-flush">
+                        {% for log in stats.recent_audit_logs %}
+                            <div class="list-group-item d-flex justify-content-between align-items-start">
+                                <div class="ms-2 me-auto">
+                                    <div class="fw-bold">
+                                        {% if log.action == 'LOGIN' %}
+                                            <i class="bi bi-box-arrow-in-right text-success me-1"></i>
+                                        {% elif log.action == 'LOGOUT' %}
+                                            <i class="bi bi-box-arrow-right text-warning me-1"></i>
+                                        {% elif 'ADD' in log.action %}
+                                            <i class="bi bi-plus-circle text-success me-1"></i>
+                                        {% elif 'EDIT' in log.action %}
+                                            <i class="bi bi-pencil text-primary me-1"></i>
+                                        {% elif 'DELETE' in log.action %}
+                                            <i class="bi bi-trash text-danger me-1"></i>
+                                        {% else %}
+                                            <i class="bi bi-info-circle text-info me-1"></i>
+                                        {% endif %}
+                                        {{ log.action.replace('_', ' ').title() }}
+                                    </div>
+                                    <small class="text-muted">{{ log.admin_user.username }} • {{ log.details[:50] }}{% if log.details|length > 50 %}...{% endif %}</small>
+                                </div>
+                                <small class="text-muted">{{ log.created_date.strftime('%m/%d %H:%M') }}</small>
+                            </div>
+                        {% endfor %}
+                    </div>
+                {% else %}
+                    <p class="text-muted text-center py-3">No recent activity.</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Quick Actions -->
+<div class="row">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="card-title mb-0">
+                    <i class="bi bi-lightning me-2"></i>Quick Actions
+                </h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-3 mb-3">
+                        <a href="{{ url_for('admin.add_metric') }}" class="btn btn-outline-primary w-100">
+                            <i class="bi bi-plus-circle me-2"></i>Add Metric
+                        </a>
+                    </div>
+                    <div class="col-md-3 mb-3">
+                        <a href="{{ url_for('admin.add_outcome') }}" class="btn btn-outline-success w-100">
+                            <i class="bi bi-plus-circle me-2"></i>Add L&D Outcome
+                        </a>
+                    </div>
+                    <div class="col-md-3 mb-3">
+                        <a href="{{ url_for('admin.add_metric_type') }}" class="btn btn-outline-info w-100">
+                            <i class="bi bi-plus-circle me-2"></i>Add Metric Type
+                        </a>
+                    </div>
+                    <div class="col-md-3 mb-3">
+                        <a href="{{ url_for('admin.bulk_import') }}" class="btn btn-outline-warning w-100">
+                            <i class="bi bi-upload me-2"></i>Import Data
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    // Auto-refresh stats every 30 seconds
+    setInterval(function() {
+        fetch('{{ url_for("admin.api_stats") }}')
+            .then(response => response.json())
+            .then(data => {
+                // Update stats numbers
+                document.querySelector('.stats-card:nth-child(1) .stats-number').textContent = data.total_metrics;
+                document.querySelector('.stats-card:nth-child(2) .stats-number').textContent = data.total_outcomes;
+                document.querySelector('.stats-card:nth-child(3) .stats-number').textContent = data.total_types;
+                document.querySelector('.stats-card:nth-child(4) .stats-number').textContent = data.total_admin_users;
+            })
+            .catch(error => console.log('Stats refresh failed:', error));
+    }, 30000);
+</script>
+{% endblock %}
+

@@ -1,0 +1,58 @@
+{% extends "admin/base.html" %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+<div class="pt-3 pb-2 mb-3 border-bottom d-flex justify-content-between align-items-center">
+    <h1 class="h2 mb-0"><i class="bi bi-list-stars me-2"></i>{{ title }}</h1>
+    {% if framework %}
+    <a href="{{ url_for('admin.competencies', framework_id=framework.id) }}" class="btn btn-outline-secondary">
+        <i class="bi bi-arrow-left me-1"></i>Back to {{ framework.name }}
+    </a>
+    {% endif %}
+</div>
+
+<div class="card">
+    <div class="card-body">
+        <form method="POST">
+            {{ form.csrf_token }}
+
+            <div class="row">
+                <div class="col-md-6 mb-3">
+                    <label class="form-label">Framework</label>
+                    {{ form.framework_id(class_='form-select') }}
+                </div>
+                <div class="col-md-6 mb-3">
+                    <label class="form-label">Sort Order</label>
+                    {{ form.sort_order(class_='form-control', placeholder='0') }}
+                </div>
+            </div>
+
+            <div class="mb-3">
+                <label class="form-label">Name</label>
+                {{ form.name(class_='form-control', placeholder='e.g., Communication') }}
+            </div>
+
+            <div class="mb-3">
+                <label class="form-label">Description</label>
+                {{ form.description(class_='form-control', rows=4, placeholder='Short description of the competency') }}
+            </div>
+
+            <div class="mb-3">
+                <label class="form-label">Associated Metrics</label>
+                {{ form.metric_ids(class_='form-select', multiple=true, size=12) }}
+                <div class="form-text">Hold Ctrl (Windows) or Cmd (Mac) to select multiple metrics.</div>
+            </div>
+
+            <div class="d-flex gap-2">
+                <button type="submit" class="btn btn-primary"><i class="bi bi-save me-1"></i>Save</button>
+                {% if framework %}
+                <a href="{{ url_for('admin.competencies', framework_id=framework.id) }}" class="btn btn-secondary">Cancel</a>
+                {% else %}
+                <a href="{{ url_for('admin.frameworks') }}" class="btn btn-secondary">Cancel</a>
+                {% endif %}
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}

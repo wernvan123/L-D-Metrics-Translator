@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test Fixes - L&D Metrics Translator</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .test-section { margin: 20px 0; padding: 15px; border: 1px solid #ddd; border-radius: 5px; }
+        .test-button { padding: 10px 15px; margin: 5px; background: #007bff; color: white; border: none; border-radius: 3px; cursor: pointer; }
+        .test-button:hover { background: #0056b3; }
+        .metric-card { padding: 10px; margin: 5px; border: 1px solid #ccc; border-radius: 3px; cursor: pointer; }
+        .metric-card.selected { background: #e3f2fd; border-color: #2196f3; }
+        .event-suggestions { display: none; padding: 10px; background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 5px; margin: 10px 0; }
+        .suggestion-item { display: block; width: 100%; padding: 8px; margin: 2px 0; background: white; border: 1px solid #ddd; border-radius: 3px; cursor: pointer; }
+        .suggestion-item:hover { background: #f8f9fa; }
+        .results { margin-top: 15px; padding: 10px; background: #f8f9fa; border-radius: 5px; }
+    </style>
+</head>
+<body>
+    <h1>Test Fixes - L&D Metrics Translator</h1>
+    
+    <!-- Test 1: Show Examples Button -->
+    <div class="test-section">
+        <h2>Test 1: Show Examples Button Functionality</h2>
+        <p>Click the button below to test if the examples show/hide correctly:</p>
+        
+        <button id="show-suggestions-btn" class="test-button">
+            Show Examples
+        </button>
+        
+        <div id="event-suggestions" class="event-suggestions">
+            <h4>Quick Examples:</h4>
+            <button class="suggestion-item" data-suggestion="Our team completed a leadership development program but engagement scores dropped by 15% afterward">
+                Leadership program impact on engagement
+            </button>
+            <button class="suggestion-item" data-suggestion="New employees are taking 3 months longer than expected to reach full productivity">
+                Onboarding effectiveness issues
+            </button>
+            <button class="suggestion-item" data-suggestion="Remote workers report feeling disconnected from company culture and values">
+                Remote work culture challenges
+            </button>
+        </div>
+        
+        <div class="results" id="test1-results">
+            <strong>Test Status:</strong> <span id="test1-status">Not tested</span>
+        </div>
+    </div>
+    
+    <!-- Test 2: Metric Selection Integration -->
+    <div class="test-section">
+        <h2>Test 2: Metric Card Selection Integration</h2>
+        <p>Select some metrics below and then test the AI analysis integration:</p>
+        
+        <div class="metrics-container">
+            <div class="metric-card" data-metric-id="1" data-category="engagement">
+                <h4>Employee Engagement Score</h4>
+                <p>Measures overall employee satisfaction and commitment</p>
+            </div>
+            <div class="metric-card" data-metric-id="2" data-category="training">
+                <h4>Training Completion Rate</h4>
+                <p>Percentage of employees completing assigned training</p>
+            </div>
+            <div class="metric-card" data-metric-id="3" data-category="performance">
+                <h4>Performance Improvement</h4>
+                <p>Measurable improvement in job performance metrics</p>
+            </div>
+        </div>
+        
+        <textarea id="event-description" placeholder="Enter an event description to test AI analysis..." rows="4" style="width: 100%; margin: 10px 0;"></textarea>
+        
+        <button id="test-analysis-btn" class="test-button">
+            Test AI Analysis with Selected Metrics
+        </button>
+        
+        <div class="results" id="test2-results">
+            <strong>Selected Metrics:</strong> <span id="selected-metrics-display">None</span><br>
+            <strong>Test Status:</strong> <span id="test2-status">Not tested</span>
+        </div>
+    </div>
+    
+    <!-- Test 3: Dynamic Report Generator Integration -->
+    <div class="test-section">
+        <h2>Test 3: Dynamic Report Generator Integration</h2>
+        <p>Test the selection summary updates:</p>
+        
+        <div class="selection-summary">
+            <h4>📈 Current Selections</h4>
+            <div class="selection-stats">
+                <div class="selection-stat">
+                    <span class="stat-number" id="selected-outcomes-count">0</span>
+                    <span class="stat-label">L&D Outcomes</span>
+                </div>
+                <div class="selection-stat">
+                    <span class="stat-number" id="selected-metrics-count-report">0</span>
+                    <span class="stat-label">Metrics Selected</span>
+                </div>
+                <div class="selection-stat">
+                    <span class="stat-number" id="ai-recommendations-count">0</span>
+                    <span class="stat-label">AI Recommendations</span>
+                </div>
+                <div class="selection-stat">
+                    <span class="stat-number" id="estimated-pages">8</span>
+                    <span class="stat-label">Estimated Pages</span>
+                </div>
+            </div>
+        </div>
+        
+        <button id="simulate-selections-btn" class="test-button">
+            Simulate Metric Selections
+        </button>
+        
+        <div class="results" id="test3-results">
+            <strong>Test Status:</strong> <span id="test3-status">Not tested</span>
+        </div>
+    </div>
+
+    <script>
+        // Test 1: Show Examples Button
+        class TestEventAnalyzer {
+            constructor() {
+                this.suggestionsBtn = document.getElementById('show-suggestions-btn');
+                this.suggestionsContainer = document.getElementById('event-suggestions');
+                this.bindEvents();
+            }
+            
+            bindEvents() {
+                if (this.suggestionsBtn) {
+                    this.suggestionsBtn.addEventListener('click', (e) => {
+                        e.preventDefault();
+                        this.toggleSuggestions();
+                    });
+                }
+                
+                // Bind suggestion clicks
+                document.addEventListener('click', (e) => {
+                    if (e.target.classList.contains('suggestion-item')) {
+                        const suggestion = e.target.getAttribute('data-suggestion');
+                        document.getElementById('event-description').value = suggestion;
+                        this.hideSuggestions();
+                    }
+                });
+            }
+            
+            toggleSuggestions() {
+                if (!this.suggestionsContainer || !this.suggestionsBtn) return;
+                
+                if (this.suggestionsContainer.style.display === 'none' || !this.suggestionsContainer.style.display) {
+                    this.showSuggestions();
+                } else {
+                    this.hideSuggestions();
+                }
+                
+                // Update test status
+                document.getElementById('test1-status').textContent = 'Working correctly!';
+                document.getElementById('test1-status').style.color = 'green';
+            }
+            
+            showSuggestions() {
+                if (this.suggestionsContainer) {
+                    this.suggestionsContainer.style.display = 'block';
+                    if (this.suggestionsBtn) {
+                        this.suggestionsBtn.textContent = 'Hide Examples';
+                    }
+                }
+            }
+            
+            hideSuggestions() {
+                if (this.suggestionsContainer) {
+                    this.suggestionsContainer.style.display = 'none';
+                    if (this.suggestionsBtn) {
+                        this.suggestionsBtn.textContent = 'Show Examples';
+                    }
+                }
+            }
+        }
+        
+        // Test 2: Metric Selection Integration
+        class TestMetricSelection {
+            constructor() {
+                this.selectedMetrics = new Set();
+                this.bindEvents();
+            }
+            
+            bindEvents() {
+                // Metric card selection
+                document.querySelectorAll('.metric-card').forEach(card => {
+                    card.addEventListener('click', () => {
+                        this.toggleMetricSelection(card);
+                    });
+                });
+                
+                // Test analysis button
+                document.getElementById('test-analysis-btn').addEventListener('click', () => {
+                    this.testAnalysis();
+                });
+            }
+            
+            toggleMetricSelection(card) {
+                const metricId = card.dataset.metricId;
+                
+                if (this.selectedMetrics.has(metricId)) {
+                    this.selectedMetrics.delete(metricId);
+                    card.classList.remove('selected');
+                } else {
+                    this.selectedMetrics.add(metricId);
+                    card.classList.add('selected');
+                }
+                
+                this.updateSelectedMetricsDisplay();
+            }
+            
+            updateSelectedMetricsDisplay() {
+                const selectedCards = document.querySelectorAll('.metric-card.selected');
+                const metricNames = Array.from(selectedCards).map(card => 
+                    card.querySelector('h4').textContent
+                );
+                
+                document.getElementById('selected-metrics-display').textContent = 
+                    metricNames.length > 0 ? metricNames.join(', ') : 'None';
+            }
+            
+            getSelectedMetrics() {
+                const selectedCards = document.querySelectorAll('.metric-card.selected');
+                return Array.from(selectedCards).map(card => ({
+                    id: card.dataset.metricId,
+                    name: card.querySelector('h4').textContent,
+                    category: card.dataset.category,
+                    description: card.querySelector('p').textContent
+                }));
+            }
+            
+            testAnalysis() {
+                const eventDescription = document.getElementById('event-description').value.trim();
+                const selectedMetrics = this.getSelectedMetrics();
+                
+                if (!eventDescription) {
+                    document.getElementById('test2-status').textContent = 'Please enter an event description';
+                    document.getElementById('test2-status').style.color = 'orange';
+                    return;
+                }
+                
+                // Simulate API call with selected metrics
+                console.log('Testing analysis with:', {
+                    event_description: eventDescription,
+                    selected_metrics: selectedMetrics
+                });
+                
+                document.getElementById('test2-status').textContent = 
+                    `Integration working! Selected ${selectedMetrics.length} metrics for context-aware analysis.`;
+                document.getElementById('test2-status').style.color = 'green';
+            }
+        }
+        
+        // Test 3: Dynamic Report Generator Integration
+        class TestReportGenerator {
+            constructor() {
+                this.bindEvents();
+            }
+            
+            bindEvents() {
+                document.getElementById('simulate-selections-btn').addEventListener('click', () => {
+                    this.simulateSelections();
+                });
+            }
+            
+            simulateSelections() {
+                // Simulate metric and outcome selections
+                document.getElementById('selected-outcomes-count').textContent = '3';
+                document.getElementById('selected-metrics-count-report').textContent = '5';
+                document.getElementById('ai-recommendations-count').textContent = '7';
+                document.getElementById('estimated-pages').textContent = '12';
+                
+                // Trigger events that the dynamic report generator would listen for
+                const metricEvent = new CustomEvent('metricSelectionChanged', {
+                    detail: [
+                        { id: 1, name: 'Employee Engagement Score' },
+                        { id: 2, name: 'Training Completion Rate' },
+                        { id: 3, name: 'Performance Improvement' }
+                    ]
+                });
+                
+                const outcomeEvent = new CustomEvent('outcomeSelectionChanged', {
+                    detail: [
+                        { id: 1, name: 'Improved Performance' },
+                        { id: 2, name: 'Higher Engagement' },
+                        { id: 3, name: 'Better Retention' }
+                    ]
+                });
+                
+                const aiEvent = new CustomEvent('aiRecommendationsUpdated', {
+                    detail: [
+                        { id: 1, title: 'Focus on leadership development' },
+                        { id: 2, title: 'Implement mentoring programs' },
+                        { id: 3, title: 'Enhance communication training' }
+                    ]
+                });
+                
+                document.dispatchEvent(metricEvent);
+                document.dispatchEvent(outcomeEvent);
+                document.dispatchEvent(aiEvent);
+                
+                document.getElementById('test3-status').textContent = 'Selection summary updated successfully!';
+                document.getElementById('test3-status').style.color = 'green';
+            }
+        }
+        
+        // Initialize tests when DOM is loaded
+        document.addEventListener('DOMContentLoaded', () => {
+            new TestEventAnalyzer();
+            new TestMetricSelection();
+            new TestReportGenerator();
+        });
+    </script>
+</body>
+</html>

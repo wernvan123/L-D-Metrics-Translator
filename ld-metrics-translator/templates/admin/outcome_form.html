@@ -1,0 +1,122 @@
+{% extends "admin/base.html" %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+    <h1 class="h2">
+        <i class="bi bi-target me-2"></i>{{ title }}
+    </h1>
+    <div class="btn-toolbar mb-2 mb-md-0">
+        <a href="{{ url_for('admin.outcomes') }}" class="btn btn-outline-secondary">
+            <i class="bi bi-arrow-left me-1"></i>Back to L&D Outcomes
+        </a>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="card-title mb-0">L & D Outcome Details</h5>
+            </div>
+            <div class="card-body">
+                <form method="POST">
+                    {{ form.hidden_tag() }}
+                    
+                    <div class="mb-3">
+                        {{ form.name.label(class="form-label") }}
+                        {{ form.name(class="form-control") }}
+                        {% if form.name.errors %}
+                            <div class="text-danger small mt-1">
+                                {% for error in form.name.errors %}
+                                    <div>{{ error }}</div>
+                                {% endfor %}
+                            </div>
+                        {% endif %}
+                    </div>
+                    
+                    <div class="mb-3">
+                        {{ form.description.label(class="form-label") }}
+                        {{ form.description(class="form-control", rows="4") }}
+                        {% if form.description.errors %}
+                            <div class="text-danger small mt-1">
+                                {% for error in form.description.errors %}
+                                    <div>{{ error }}</div>
+                                {% endfor %}
+                            </div>
+                        {% endif %}
+                        <div class="form-text">Optional: Provide a detailed description of this L&D outcome.</div>
+                    </div>
+                    
+                    <div class="d-flex gap-2">
+                        <button type="submit" class="btn btn-primary">
+                            <i class="bi bi-check-circle me-1"></i>
+                            {% if outcome %}Update L&D Outcome{% else %}Create L&D Outcome{% endif %}
+                        </button>
+                        <a href="{{ url_for('admin.outcomes') }}" class="btn btn-secondary">
+                            <i class="bi bi-x-circle me-1"></i>Cancel
+                        </a>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-4">
+        <!-- Help Card -->
+        <div class="card">
+            <div class="card-header">
+                <h5 class="card-title mb-0">
+                    <i class="bi bi-question-circle me-2"></i>About L&D Outcomes
+                </h5>
+            </div>
+            <div class="card-body">
+                <p class="small">
+                    L&D Outcomes represent the high-level business goals that learning and development initiatives aim to achieve.
+                </p>
+                
+                <h6>Common L&D Outcomes:</h6>
+                <ul class="small">
+                    <li><strong>Employee Engagement:</strong> Learner participation and involvement</li>
+                    <li><strong>Performance:</strong> Job performance improvement</li>
+                    <li><strong>Employee Retention:</strong> Employee retention and satisfaction</li>
+                    <li><strong>Compliance:</strong> Regulatory and policy adherence</li>
+                    <li><strong>Innovation:</strong> Creative thinking and problem-solving</li>
+                </ul>
+                
+                <div class="alert alert-info small mt-3">
+                    <i class="bi bi-info-circle me-1"></i>
+                    Choose clear, meaningful names that align with your organization's strategic objectives.
+                </div>
+            </div>
+        </div>
+        
+        {% if outcome and (outcome.metrics | length) > 0 %}
+        <!-- Associated Metrics -->
+        <div class="card mt-3">
+            <div class="card-header">
+                <h5 class="card-title mb-0">
+                    <i class="bi bi-graph-up me-2"></i>Associated Metrics
+                </h5>
+            </div>
+            <div class="card-body">
+                <p class="small text-muted mb-2">This outcome is used by {{ outcome.metrics | length }} metrics:</p>
+                <div class="list-group list-group-flush">
+                    {% for metric in outcome.metrics[:5] %}
+                        <div class="list-group-item px-0 py-2">
+                            <div class="fw-bold small">{{ metric.name }}</div>
+                        </div>
+                    {% endfor %}
+                    {% if (outcome.metrics | length) > 5 %}
+                        <div class="list-group-item px-0 py-2 text-muted small">
+                            ... and {{ (outcome.metrics | length) - 5 }} more
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

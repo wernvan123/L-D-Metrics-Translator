@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+
+{% block step %}playbook{% endblock %}
+
+{% block breadcrumbs %}
+  <a href="/diagnostics">Diagnostics</a>
+  <span>→</span>
+  <a href="/plan-builder">Plan Builder</a>
+  <span>→</span>
+  <a href="/playbook" class="active">Playbook</a>
+{% endblock %}
+
+{% block content %}
+<section class="page playbook">
+  <div class="layout two-col">
+    <div class="col main">
+      <!-- Filter/Search Bar -->
+      <div class="card">
+        <div class="card-header">
+          <h2>Explore the Playbook</h2>
+        </div>
+        <div class="card-body">
+          <div class="row gap">
+            <label class="field" style="flex:2 1 360px;">
+              <span>Search</span>
+              <input id="pbk-search" placeholder="Search drivers, biases, or keywords" />
+            </label>
+            <label class="field" style="flex:1 1 220px;">
+              <span>Kind</span>
+              <select id="pbk-kind">
+                <option value="">All</option>
+                <option value="driver">Driver</option>
+                <option value="bias">Bias</option>
+              </select>
+            </label>
+          </div>
+          <div id="playbook-status" class="notice" style="display:none"></div>
+        </div>
+      </div>
+
+      <!-- Library Grid -->
+      <div class="card">
+        <div class="card-header">
+          <h3>Library</h3>
+        </div>
+        <div class="card-body">
+          <div id="playbook-grid" class="grid three"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <h2>Explore the Playbook</h2>
+        </div>
+        <div class="card-body" id="playbook-tree">
+          Loading framework concepts and drivers...
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <h3>Context-aware Suggestions</h3>
+          <label class="toggle">
+            <input type="checkbox" id="toggle-ai-suggestions" />
+            <span>Use AI Suggestions</span>
+          </label>
+        </div>
+        <div class="card-body" id="playbook-suggestions">—</div>
+      </div>
+    </div>
+
+    <aside class="col side">
+      <div class="card">
+        <div class="card-header"><h3>Active Selections</h3></div>
+        <div class="card-body" id="active-selections">Loading...</div>
+      </div>
+      <div class="card">
+        <div class="card-header"><h3>Quick Actions</h3></div>
+        <div class="card-body">
+          <a class="btn primary" href="/plan-builder">Back to Plan Builder</a>
+          <a class="btn" href="/diagnostics">Re-run Diagnostics</a>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <!-- Detail View Modal -->
+  <div id="playbook-modal" class="modal" style="display:none;">
+    <div class="modal-backdrop"></div>
+    <div class="modal-dialog">
+      <button class="modal-close" aria-label="Close">×</button>
+      <div id="playbook-modal-body" class="modal-body">Loading…</div>
+    </div>
+  </div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+  <script src="{{ url_for('static', filename='js/playbook.js') }}"></script>
+{% endblock %}

@@ -1,0 +1,289 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container">
+    <div class="status-header">
+        <h1 class="status-title">System Status</h1>
+        <div class="status-badge status-{{ status.status }}">
+            {{ status.status.title() }}
+        </div>
+    </div>
+
+    <div class="status-grid">
+        <!-- Application Info -->
+        <div class="status-card">
+            <h2>Application</h2>
+            <div class="status-info">
+                <p><strong>Name:</strong> {{ status.application }}</p>
+                <p><strong>Status:</strong> {{ status.status.title() }}</p>
+                <p><strong>Timestamp:</strong> {{ status.timestamp }}</p>
+                {% if status.error %}
+                <p class="error"><strong>Error:</strong> {{ status.error }}</p>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Database Status -->
+        {% if status.database %}
+        <div class="status-card">
+            <h2>Database</h2>
+            <div class="status-info">
+                <p><strong>Status:</strong> {{ status.database.status.title() }}</p>
+                <p><strong>Response Time:</strong> {{ status.database.response_time_ms }}ms</p>
+                {% if status.database.statistics %}
+                <div class="db-stats">
+                    <h3>Statistics</h3>
+                    <ul>
+                        <li>L & D Outcomes: {{ status.database.statistics.outcomes }}</li>
+                        <li>Metric Types: {{ status.database.statistics.metric_types }}</li>
+                        <li>Metrics: {{ status.database.statistics.metrics }}</li>
+                    </ul>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- System Information -->
+        {% if status.system %}
+        <div class="status-card">
+            <h2>System</h2>
+            <div class="status-info">
+                <p><strong>Python Version:</strong> {{ status.system.python_version }}</p>
+                <p><strong>Platform:</strong> {{ status.system.platform }}</p>
+                <p><strong>Environment:</strong> {{ status.system.flask_env }}</p>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- Performance -->
+        {% if status.performance %}
+        <div class="status-card">
+            <h2>Performance</h2>
+            <div class="status-info">
+                <p><strong>Total Response Time:</strong> {{ status.performance.total_response_time_ms }}ms</p>
+                {% if status.performance.database_response_time_ms %}
+                <p><strong>Database Response Time:</strong> {{ status.performance.database_response_time_ms }}ms</p>
+                {% endif %}
+            </div>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- Recent Activity -->
+    {% if status.recent_activity %}
+    <div class="recent-activity">
+        <h2>Recent Activity</h2>
+        <div class="activity-list">
+            {% for activity in status.recent_activity %}
+            <div class="activity-item">
+                <div class="activity-info">
+                    <h3>{{ activity.name }}</h3>
+                    <p><span class="outcome">{{ activity.outcome }}</span> • <span class="type">{{ activity.type }}</span></p>
+                    <p class="activity-date">Created: {{ activity.created }}</p>
+                </div>
+                <a href="{{ url_for('main.metric_detail', id=activity.id) }}" class="btn btn-sm">View</a>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    <div class="status-actions">
+        <a href="{{ url_for('main.index') }}" class="btn btn-primary">Back to Metrics</a>
+        <a href="{{ url_for('main.health_check') }}" class="btn btn-secondary">Health Check (JSON)</a>
+        <button onclick="location.reload()" class="btn btn-secondary">Refresh Status</button>
+    </div>
+</div>
+
+<style>
+/* Status page specific styles */
+.status-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 2rem;
+    padding-bottom: 1rem;
+    border-bottom: 2px solid #e1e8ed;
+}
+
+.status-title {
+    color: #2c3e50;
+    margin: 0;
+}
+
+.status-badge {
+    padding: 8px 16px;
+    border-radius: 20px;
+    font-weight: bold;
+    text-transform: uppercase;
+    font-size: 0.8rem;
+}
+
+.status-operational,
+.status-healthy {
+    background-color: #d4edda;
+    color: #155724;
+}
+
+.status-degraded,
+.status-warning {
+    background-color: #fff3cd;
+    color: #856404;
+}
+
+.status-error,
+.status-unhealthy {
+    background-color: #f8d7da;
+    color: #721c24;
+}
+
+.status-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 2rem;
+    margin-bottom: 2rem;
+}
+
+.status-card {
+    background: white;
+    padding: 1.5rem;
+    border-radius: 8px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+}
+
+.status-card h2 {
+    color: #2c3e50;
+    margin-bottom: 1rem;
+    font-size: 1.2rem;
+    border-bottom: 1px solid #e1e8ed;
+    padding-bottom: 0.5rem;
+}
+
+.status-info p {
+    margin-bottom: 0.5rem;
+}
+
+.db-stats {
+    margin-top: 1rem;
+}
+
+.db-stats h3 {
+    font-size: 1rem;
+    margin-bottom: 0.5rem;
+    color: #495057;
+}
+
+.db-stats ul {
+    list-style: none;
+    padding: 0;
+}
+
+.db-stats li {
+    padding: 0.25rem 0;
+    border-bottom: 1px solid #f8f9fa;
+}
+
+.recent-activity {
+    background: white;
+    padding: 2rem;
+    border-radius: 8px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    margin-bottom: 2rem;
+}
+
+.recent-activity h2 {
+    color: #2c3e50;
+    margin-bottom: 1rem;
+    border-bottom: 1px solid #e1e8ed;
+    padding-bottom: 0.5rem;
+}
+
+.activity-list {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.activity-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem;
+    border: 1px solid #e1e8ed;
+    border-radius: 6px;
+    transition: background-color 0.3s;
+}
+
+.activity-item:hover {
+    background-color: #f8f9fa;
+}
+
+.activity-info h3 {
+    margin: 0 0 0.5rem 0;
+    font-size: 1rem;
+    color: #2c3e50;
+}
+
+.activity-info p {
+    margin: 0.25rem 0;
+    font-size: 0.9rem;
+    color: #666;
+}
+
+.outcome {
+    color: #27ae60;
+    font-weight: bold;
+}
+
+.type {
+    color: #e74c3c;
+    font-weight: bold;
+}
+
+.activity-date {
+    font-size: 0.8rem !important;
+    color: #999 !important;
+}
+
+.status-actions {
+    display: flex;
+    gap: 1rem;
+    justify-content: center;
+    margin-top: 2rem;
+}
+
+.btn-sm {
+    padding: 6px 12px;
+    font-size: 0.8rem;
+}
+
+.error {
+    color: #dc3545;
+    font-weight: bold;
+}
+
+@media (max-width: 768px) {
+    .status-header {
+        flex-direction: column;
+        gap: 1rem;
+        text-align: center;
+    }
+    
+    .status-grid {
+        grid-template-columns: 1fr;
+    }
+    
+    .activity-item {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 1rem;
+    }
+    
+    .status-actions {
+        flex-direction: column;
+        align-items: center;
+    }
+}
+</style>
+{% endblock %}

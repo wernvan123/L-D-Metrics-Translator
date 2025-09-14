@@ -1,0 +1,211 @@
+{% extends "admin/base.html" %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+    <h1 class="h2">
+        <i class="bi bi-person me-2"></i>{{ title }}
+    </h1>
+    <div class="btn-toolbar mb-2 mb-md-0">
+        <a href="{{ url_for('admin.admin_users') }}" class="btn btn-outline-secondary">
+            <i class="bi bi-arrow-left me-1"></i>Back to Admin Users
+        </a>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="card-title mb-0">Admin User Details</h5>
+            </div>
+            <div class="card-body">
+                <form method="POST">
+                    {{ form.hidden_tag() }}
+                    
+                    <div class="mb-3">
+                        {{ form.username.label(class="form-label") }}
+                        {{ form.username(class="form-control") }}
+                        {% if form.username.errors %}
+                            <div class="text-danger small mt-1">
+                                {% for error in form.username.errors %}
+                                    <div>{{ error }}</div>
+                                {% endfor %}
+                            </div>
+                        {% endif %}
+                        <div class="form-text">Username must be at least 3 characters long and unique.</div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        {{ form.email.label(class="form-label") }}
+                        {{ form.email(class="form-control", type="email") }}
+                        {% if form.email.errors %}
+                            <div class="text-danger small mt-1">
+                                {% for error in form.email.errors %}
+                                    <div>{{ error }}</div>
+                                {% endfor %}
+                            </div>
+                        {% endif %}
+                    </div>
+                    
+                    <div class="mb-3">
+                        {{ form.password.label(class="form-label") }}
+                        {% if user %}
+                            <div class="form-text mb-2">Leave blank to keep current password.</div>
+                        {% endif %}
+                        {{ form.password(class="form-control") }}
+                        {% if form.password.errors %}
+                            <div class="text-danger small mt-1">
+                                {% for error in form.password.errors %}
+                                    <div>{{ error }}</div>
+                                {% endfor %}
+                            </div>
+                        {% endif %}
+                        {% if not user %}
+                            <div class="form-text">Password must be at least 6 characters long.</div>
+                        {% endif %}
+                    </div>
+                    
+                    <div class="mb-3">
+                        <div class="form-check">
+                            {{ form.is_active(class="form-check-input") }}
+                            {{ form.is_active.label(class="form-check-label") }}
+                        </div>
+                        <div class="form-text">Inactive users cannot log in to the admin panel.</div>
+                    </div>
+                    
+                    <div class="d-flex gap-2">
+                        <button type="submit" class="btn btn-primary">
+                            <i class="bi bi-check-circle me-1"></i>
+                            {% if user %}Update Admin User{% else %}Create Admin User{% endif %}
+                        </button>
+                        <a href="{{ url_for('admin.admin_users') }}" class="btn btn-secondary">
+                            <i class="bi bi-x-circle me-1"></i>Cancel
+                        </a>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-4">
+        <!-- Security Guidelines -->
+        <div class="card">
+            <div class="card-header">
+                <h5 class="card-title mb-0">
+                    <i class="bi bi-shield-check me-2"></i>Security Guidelines
+                </h5>
+            </div>
+            <div class="card-body">
+                <h6>Password Requirements:</h6>
+                <ul class="small">
+                    <li>Minimum 6 characters</li>
+                    <li>Use a strong, unique password</li>
+                    <li>Consider using a password manager</li>
+                </ul>
+                
+                <h6 class="mt-3">Admin Privileges:</h6>
+                <ul class="small">
+                    <li>Full access to all metrics and data</li>
+                    <li>Can add, edit, and delete content</li>
+                    <li>Can manage other admin users</li>
+                    <li>Can import and export data</li>
+                    <li>Access to audit logs</li>
+                </ul>
+                
+                <div class="alert alert-warning small mt-3">
+                    <i class="bi bi-exclamation-triangle me-1"></i>
+                    Only grant admin access to trusted individuals who need to manage the system.
+                </div>
+            </div>
+        </div>
+        
+        {% if user %}
+        <!-- User Activity -->
+        <div class="card mt-3">
+            <div class="card-header">
+                <h5 class="card-title mb-0">
+                    <i class="bi bi-activity me-2"></i>User Activity
+                </h5>
+            </div>
+            <div class="card-body">
+                <div class="row text-center">
+                    <div class="col-6">
+                        <div class="fw-bold">{{ user.created_date.strftime('%Y-%m-%d') }}</div>
+                        <small class="text-muted">Created</small>
+                    </div>
+                    <div class="col-6">
+                        <div class="fw-bold">
+                            {% if user.last_login %}
+                                {{ user.last_login.strftime('%Y-%m-%d') }}
+                            {% else %}
+                                Never
+                            {% endif %}
+                        </div>
+                        <small class="text-muted">Last Login</small>
+                    </div>
+                </div>
+                
+                <div class="mt-3">
+                    <small class="text-muted">
+                        Recent actions: {{ user.audit_logs.count() }} total audit log entries
+                    </small>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    // Password strength indicator
+    document.getElementById('password').addEventListener('input', function() {
+        const password = this.value;
+        const strengthIndicator = document.getElementById('password-strength');
+        
+        if (password.length === 0) {
+            if (strengthIndicator) strengthIndicator.remove();
+            return;
+        }
+        
+        let strength = 0;
+        let feedback = [];
+        
+        if (password.length >= 6) strength++;
+        else feedback.push('At least 6 characters');
+        
+        if (/[A-Z]/.test(password)) strength++;
+        else feedback.push('Uppercase letter');
+        
+        if (/[a-z]/.test(password)) strength++;
+        else feedback.push('Lowercase letter');
+        
+        if (/[0-9]/.test(password)) strength++;
+        else feedback.push('Number');
+        
+        if (/[^A-Za-z0-9]/.test(password)) strength++;
+        else feedback.push('Special character');
+        
+        const colors = ['danger', 'danger', 'warning', 'info', 'success', 'success'];
+        const labels = ['Very Weak', 'Weak', 'Fair', 'Good', 'Strong', 'Very Strong'];
+        
+        let indicator = document.getElementById('password-strength');
+        if (!indicator) {
+            indicator = document.createElement('div');
+            indicator.id = 'password-strength';
+            indicator.className = 'mt-2';
+            this.parentNode.appendChild(indicator);
+        }
+        
+        indicator.innerHTML = `
+            <div class="progress" style="height: 5px;">
+                <div class="progress-bar bg-${colors[strength]}" style="width: ${(strength/5)*100}%"></div>
+            </div>
+            <small class="text-${colors[strength]}">${labels[strength]}</small>
+        `;
+    });
+</script>
+{% endblock %}

@@ -1,0 +1,22 @@
+# Core Flask Dependencies for Development
+Flask==2.3.3
+Flask-SQLAlchemy==3.0.5
+Flask-Migrate==4.0.5
+Flask-CORS==4.0.0
+Flask-WTF==1.1.1
+WTForms==3.0.1
+email-validator==2.2.0
+python-dotenv==1.0.0
+Werkzeug==2.3.7
+
+# PDF Generation
+reportlab==4.0.7
+Pillow==10.1.0
+
+# Development only - no PostgreSQL
+Flask-Limiter==3.5.0
+
+# Testing Dependencies (optional for dev)
+pytest==7.4.2
+pytest-flask==1.2.0
+requests==2.31.0

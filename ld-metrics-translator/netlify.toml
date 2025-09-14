@@ -1,0 +1,21 @@
+[build]
+  publish = "."
+  command = "echo 'Build complete'"
+
+[build.environment]
+  PYTHON_VERSION = "3.11"
+
+[[redirects]]
+  from = "/*"
+  to = "/main.py"
+  status = 200
+  force = false
+
+[functions]
+  directory = "."
+  included_files = ["**/*.py", "**/*.html", "**/*.css", "**/*.js", "**/*.json", "static/**/*", "templates/**/*", "app/**/*", "migrations/**/*", "instance/**/*"]
+
+[dev]
+  command = "python main.py"
+  port = 8080
+  publish = "."

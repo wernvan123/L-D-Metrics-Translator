@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% block step %}plan-builder{% endblock %}
+{% block breadcrumbs %}
+  <a href="/diagnostics">Diagnostics</a>
+  <span>→</span>
+  <a href="/plan-builder">Plan Builder</a>
+  <span>→</span>
+  <a href="/plan/report" class="active">Report</a>
+{% endblock %}
+{% block content %}
+<section class="page report-page">
+  <div class="card">
+    <div class="card-header">
+      <h2>Generate Report</h2>
+    </div>
+    <div class="card-body">
+      <p>This page starts a dynamic report job and shows progress. You can navigate away; the job will continue.</p>
+      <div class="row gap">
+        <label class="field" style="flex:2 1 360px;">
+          <span>Title</span>
+          <input id="rpt-title" placeholder="Development Plan" />
+        </label>
+        <button id="rpt-start" class="btn primary" style="align-self:flex-end;">Start Report</button>
+      </div>
+      <div id="rpt-status" class="notice" style="display:none"></div>
+      <div id="rpt-progress" class="progress" style="margin-top:12px;display:none">
+        <div id="rpt-bar" class="progress-bar" style="width:0%"></div>
+      </div>
+      <div id="rpt-result" class="mt"></div>
+    </div>
+  </div>
+</section>
+{% endblock %}
+{% block scripts %}
+<script>
+(function(){
+  const el = {
+    start: document.getElementById('rpt-start'),
+    title: document.getElementById('rpt-title'),
+    status: document.getElementById('rpt-status'),
+    barWrap: document.getElementById('rpt-progress'),
+    bar: document.getElementById('rpt-bar'),
+    result: document.getElementById('rpt-result'),
+  };
+  let pollId = null; let currentJob = null;
+
+  function setStatus(type, msg){
+    if(!msg){ el.status.style.display='none'; return; }
+    el.status.className = 'notice ' + (type?('notice-'+type):'');
+    el.status.textContent = msg; el.status.style.display='block';
+  }
+  function setProgress(p){
+    el.barWrap.style.display='block';
+    el.bar.style.width = Math.max(0, Math.min(100, p)) + '%';
+  }
+  async function startJob(){
+    try{
+      setStatus('', 'Starting report…'); el.result.innerHTML = ''; setProgress(0);
+      const res = await fetch('/api/dynamic-reports', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ title: (el.title.value||'').trim() || 'Development Plan' }) });
+      if(!res.ok) throw new Error('Failed to start report');
+      const data = await res.json(); currentJob = data.job_id; if(window.notify) window.notify('success','Report started');
+      poll();
+    }catch(err){ setStatus('warning', err.message||'Failed to start'); if(window.notify) window.notify('error', err.message||'Failed to start'); }
+  }
+  async function poll(){
+    if(!currentJob) return;
+    try{
+      const r = await fetch(`/api/dynamic-reports/${encodeURIComponent(currentJob)}/status`);
+      if(!r.ok) throw new Error('Status check failed');
+      const s = await r.json();
+      setProgress(s.progress||0);
+      if(String(s.status).toLowerCase() === 'completed'){
+        setStatus('success', 'Report is ready');
+        el.result.innerHTML = `<a class="btn primary" href="${s.download_url||'/sample.pdf'}">Download Report</a>`;
+        pollId && clearTimeout(pollId); pollId = null; return;
+      }
+      setStatus('', `Progress: ${s.progress||0}%`);
+      pollId = setTimeout(poll, 800);
+    }catch(err){ setStatus('warning', err.message||'Polling error'); pollId = setTimeout(poll, 1200); }
+  }
+
+  if(el.start){ el.start.addEventListener('click', startJob); }
+})();
+</script>
+{% endblock %}

@@ -1,0 +1,122 @@
+{% extends "admin/base.html" %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+    <h1 class="h2">
+        <i class="bi bi-tags me-2"></i>{{ title }}
+    </h1>
+    <div class="btn-toolbar mb-2 mb-md-0">
+        <a href="{{ url_for('admin.metric_types') }}" class="btn btn-outline-secondary">
+            <i class="bi bi-arrow-left me-1"></i>Back to Metric Types
+        </a>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="card-title mb-0">Metric Type Details</h5>
+            </div>
+            <div class="card-body">
+                <form method="POST">
+                    {{ form.hidden_tag() }}
+                    
+                    <div class="mb-3">
+                        {{ form.name.label(class="form-label") }}
+                        {{ form.name(class="form-control") }}
+                        {% if form.name.errors %}
+                            <div class="text-danger small mt-1">
+                                {% for error in form.name.errors %}
+                                    <div>{{ error }}</div>
+                                {% endfor %}
+                            </div>
+                        {% endif %}
+                    </div>
+                    
+                    <div class="mb-3">
+                        {{ form.description.label(class="form-label") }}
+                        {{ form.description(class="form-control", rows="4") }}
+                        {% if form.description.errors %}
+                            <div class="text-danger small mt-1">
+                                {% for error in form.description.errors %}
+                                    <div>{{ error }}</div>
+                                {% endfor %}
+                            </div>
+                        {% endif %}
+                        <div class="form-text">Optional: Provide a detailed description of this metric type.</div>
+                    </div>
+                    
+                    <div class="d-flex gap-2">
+                        <button type="submit" class="btn btn-primary">
+                            <i class="bi bi-check-circle me-1"></i>
+                            {% if metric_type %}Update Metric Type{% else %}Create Metric Type{% endif %}
+                        </button>
+                        <a href="{{ url_for('admin.metric_types') }}" class="btn btn-secondary">
+                            <i class="bi bi-x-circle me-1"></i>Cancel
+                        </a>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-4">
+        <!-- Help Card -->
+        <div class="card">
+            <div class="card-header">
+                <h5 class="card-title mb-0">
+                    <i class="bi bi-question-circle me-2"></i>About Metric Types
+                </h5>
+            </div>
+            <div class="card-body">
+                <p class="small">
+                    Metric Types classify the measurement approach or methodology used to capture learning and development data.
+                </p>
+                
+                <h6>Common Metric Types:</h6>
+                <ul class="small">
+                    <li><strong>Operational KPI:</strong> Key performance indicators for L&D operations</li>
+                    <li><strong>Behavioral Metric:</strong> Measures changes in learner behavior</li>
+                    <li><strong>Business Impact:</strong> Direct business outcomes from L&D</li>
+                    <li><strong>Learning Analytics:</strong> Data-driven insights from learning platforms</li>
+                    <li><strong>ROI Metric:</strong> Return on investment calculations</li>
+                </ul>
+                
+                <div class="alert alert-info small mt-3">
+                    <i class="bi bi-info-circle me-1"></i>
+                    Choose types that reflect how the metric is measured or calculated.
+                </div>
+            </div>
+        </div>
+        
+        {% if metric_type and (metric_type.metrics | length) > 0 %}
+        <!-- Associated Metrics -->
+        <div class="card mt-3">
+            <div class="card-header">
+                <h5 class="card-title mb-0">
+                    <i class="bi bi-graph-up me-2"></i>Associated Metrics
+                </h5>
+            </div>
+            <div class="card-body">
+                <p class="small text-muted mb-2">This type is used by {{ metric_type.metrics | length }} metrics:</p>
+                <div class="list-group list-group-flush">
+                    {% for metric in metric_type.metrics[:5] %}
+                        <div class="list-group-item px-0 py-2">
+                            <div class="fw-bold small">{{ metric.name }}</div>
+                        </div>
+                    {% endfor %}
+                    {% if (metric_type.metrics | length) > 5 %}
+                        <div class="list-group-item px-0 py-2 text-muted small">
+                            ... and {{ (metric_type.metrics | length) - 5 }} more
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

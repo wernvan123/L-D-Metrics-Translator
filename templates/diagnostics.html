@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+
+{% block step %}diagnostics{% endblock %}
+
+{% block breadcrumbs %}
+  <a href="/diagnostics" class="active">Diagnostics</a>
+  <span>→</span>
+  <a href="/plan-builder">Plan Builder</a>
+  <span>→</span>
+  <a href="/playbook">Playbook</a>
+{% endblock %}
+
+{% block content %}
+<section class="page diagnostics">
+  <div class="layout two-col">
+    <div class="col main">
+      <div class="card">
+        <div class="card-header">
+          <h2>Diagnose a Challenge</h2>
+        </div>
+        <div class="card-body">
+          <label class="field">
+            <span>Challenge Description</span>
+            <textarea id="challenge-description" placeholder="Describe the event, audience, timing, and challenge context..."></textarea>
+          </label>
+          <div class="row gap">
+            <label class="field">
+              <span>Event Type</span>
+              <input id="event-type" placeholder="Workshop, onboarding, leadership, ..."/>
+            </label>
+            <label class="field">
+              <span>Audience</span>
+              <input id="audience" placeholder="Managers, new hires, sales, ..."/>
+            </label>
+            <label class="field">
+              <span>Timeframe</span>
+              <input id="timeframe" placeholder="Q4, 6 weeks, rolling, ..."/>
+            </label>
+          </div>
+          <div class="actions">
+            <button id="analyze-btn" class="btn primary">Analyze with AI</button>
+            <button id="add-recommended-btn" class="btn" disabled>Add recommended metrics to selection</button>
+            <a class="btn" href="/plan-builder">Proceed to Plan Builder</a>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid two">
+        <div class="card">
+          <div class="card-header"><h3>AI Summary</h3></div>
+          <div class="card-body" id="ai-summary">
+            <div class="empty-state">
+              <p><strong>No analysis yet.</strong></p>
+              <ul class="list hints">
+                <li>Describe the challenge with context (event, audience, timing).</li>
+                <li>Include goals or pain points you want to address.</li>
+                <li>Optionally select a framework and competencies first for better results.</li>
+              </ul>
+              <div class="mt">
+                <button class="btn primary" data-trigger-analyze="true">Analyze with AI</button>
+                <div class="meta">Tip: You can refine the description and re-run analysis any time.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header"><h3>Drivers & Competencies</h3></div>
+          <div class="card-body" id="ai-drivers">—</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <h3>Recommended Metrics</h3>
+          <label class="toggle">
+            <input type="checkbox" id="toggle-ai-suggestions" />
+            <span>Use AI Suggestions</span>
+          </label>
+        </div>
+        <div class="card-body" id="recommended-metrics">—</div>
+      </div>
+    </div>
+
+    <aside class="col side">
+      <div class="card">
+        <div class="card-header"><h3>Session Context</h3></div>
+        <div class="card-body" id="session-context">Loading...</div>
+      </div>
+    </aside>
+  </div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+  <script src="{{ url_for('static', filename='js/diagnostics.js') }}"></script>
+{% endblock %}

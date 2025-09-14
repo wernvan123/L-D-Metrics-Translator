@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="page-section">
+  <div class="container plan-builder-intro text-on-hero">
+    <div style="font-size:12px;color:#6b7280;float:right" aria-label="version marker">PB v20250908-2</div>
+    <h1>Plan Builder</h1>
+    <p>Create a targeted development plan using frameworks, outcomes, and drivers.</p>
+  </div>
+</section>
+
+<!-- Intelligent Initial State: Choose Starting Point when no active plan -->
+<section class="page-section" id="pb-initial-choice" style="display:none">
+  <div class="container">
+    <div class="card" role="region" aria-label="Choose Your Starting Point">
+      <div class="card-header"><h3>Choose Your Starting Point</h3></div>
+      <div class="card-body">
+        <div class="selector-row">
+          <div class="control-group">
+            <label class="control-label" for="pb-choice-framework">Start with a Framework</label>
+            <select id="pb-choice-framework" class="library-filter-select">
+              <option value="">— Choose a Framework —</option>
+            </select>
+          </div>
+          <div class="control-group">
+            <label class="control-label" for="pb-choice-outcome">Start with an Outcome</label>
+            <select id="pb-choice-outcome" class="library-filter-select">
+              <option value="">— Choose an Outcome —</option>
+            </select>
+          </div>
+        </div>
+        <p class="pb-empty" style="margin-top:8px;">You can begin with either a framework or an outcome. You can refine further on the next step.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Main Workspace: two-column layout -->
+<section class="page-section">
+  <div class="container">
+    <style>
+      .pb-layout { display: grid; grid-template-columns: 1fr 340px; gap: 20px; align-items: start; }
+      .pb-grid { min-height: 200px; }
+      .pb-sidebar { background:#fff; border:1px solid #e5e7eb; border-radius:12px; padding:16px; box-shadow:0 10px 24px rgba(0,0,0,.06); position: sticky; top: 16px; }
+      .pb-sidebar h3 { margin: 0 0 8px; }
+      .pb-group { margin-top: 12px; }
+      .pb-item { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:8px; border:1px solid #e5e7eb; border-radius:8px; margin-bottom:8px; }
+      .pb-empty { color:#6b7280; font-size: 14px; }
+      .metric-card .metric-actions { display:flex; gap:8px; }
+      /* Competency pills, reusing badge styles */
+      .pb-competencies { display:flex; flex-wrap:wrap; gap:8px; margin: 8px 0 16px; }
+      .pb-competency { cursor:pointer; user-select:none; }
+      .pb-competency.badge-outline { background: transparent; }
+      .pb-competency.is-active { background: var(--primary, #3f6fe0); color:#fff; border-color: transparent; }
+      .pb-competency:hover, .pb-competency:focus { 
+        box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+        transform: translateY(-1px);
+      }
+      .pb-competency:active {
+        transform: translateY(0);
+        box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+      }
+      /* Darker helper text in initial-choice section */
+      #pb-initial-choice .pb-empty { color: #111; }
+      .pb-step { margin-bottom: 12px; font-weight:700; color:#374151; }
+      @media (max-width: 1000px) { .pb-layout { grid-template-columns: 1fr; } .pb-sidebar { position: relative; top: auto; } }
+    </style>
+    <style>
+      /* Local overrides for this page */
+      .pb-layout { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; }
+      .pb-sidebar { position: sticky; top: 16px; height: fit-content; }
+      #pb-initial-choice .pb-empty { color: #111; }
+      .pb-step { margin-bottom: 12px; font-weight:700; color:#374151; }
+      /* Competency pill visibility and style overrides */
+      .pb-competencies { display:flex; flex-wrap:wrap; gap:8px; margin:8px 0 16px; }
+      .pb-competencies .pb-competency { border:1px solid rgba(255,255,255,0.95) !important; color:#fff !important; background:transparent !important; }
+      .pb-competencies .pb-competency:hover, .pb-competencies .pb-competency:focus { border-color:#fff !important; box-shadow:0 0 0 3px rgba(255,255,255,0.22); color:#fff !important; background:transparent !important; }
+      .pb-competencies .pb-competency.is-active { border-color:#fff !important; color:#fff !important; background:transparent !important; font-weight:700; box-shadow:0 0 0 3px rgba(255,255,255,0.28); }
+      @media (max-width: 1000px) { .pb-layout { grid-template-columns: 1fr; } .pb-sidebar { position: relative; top: auto; } }
+    </style>
+    <div class="pb-layout">
+      <div>
+        <div id="pb-status" class="notice" style="display:none"></div>
+        <!-- Step 1/2 area, shown dynamically -->
+        <div id="pb-steps" aria-live="polite">
+          <div id="pb-step-competencies" style="display:none">
+            <h3>Step 2: Explore Competencies</h3>
+            <div id="pb-competency-list" class="pb-competencies"></div>
+            <div id="pb-search-row" class="control-group" style="margin: 8px 0 16px; display:none;">
+              <label class="control-label" for="pb-search">Search</label>
+              <input id="pb-search" class="search-input" type="text" placeholder="Search drivers..." />
+            </div>
+          </div>
+        </div>
+        <div id="pb-grid" class="library-metrics-grid pb-grid" aria-live="polite"></div>
+        <div id="pb-pagination" class="pagination" style="display:none"></div>
+      </div>
+
+      <aside class="pb-sidebar" aria-label="Current Selections">
+        <h3>Current Selections</h3>
+        <div class="meta" id="pb-selection-count">0 selected</div>
+        <div id="pb-sidebar-content">
+          <p class="pb-empty">No items yet. Use “Add to Plan” on any card.</p>
+        </div>
+        <div class="cta-group" style="margin-top: 12px; display:flex; gap:8px; flex-wrap:wrap;">
+          <button id="pb-generate-report" class="btn btn-primary btn-lg" disabled>Generate Report</button>
+          <button id="pb-start-new" class="btn btn-outline btn-lg" type="button">Start New Plan</button>
+        </div>
+      </aside>
+    </div>
+  </div>
+</section>
+
+<!-- Client-side summary modal (Option B) -->
+<div id="pb-summary-modal" class="modal" style="display:none">
+  <div class="modal-content">
+    <button class="modal-close" aria-label="Close">×</button>
+    <div id="pb-summary-body"></div>
+  </div>
+  <div class="modal-backdrop"></div>
+</div>
+
+<script src="{{ url_for('static', filename='js/plan-builder.js') }}?v=20250914-3"></script>
+{% endblock %}

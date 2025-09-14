@@ -1,0 +1,28 @@
+{
+  "kinds": {
+    "Cognitive Load Indicator": "heuristic",
+    "Knowledge Retention Score": "bias"
+  },
+  "tags": {
+    "Cognitive Load Indicator": [
+      "domain:neuroscience",
+      "concept:cognitive-load"
+    ],
+    "Knowledge Retention Score": [
+      "domain:assessment",
+      "bias:testing-effect"
+    ],
+    "Training Completion Rate": [
+      "domain:operational"
+    ],
+    "Session Participation": [
+      "domain:behavioral"
+    ],
+    "Time to Productivity": [
+      "domain:operational"
+    ],
+    "Behavioral Application Index": [
+      "domain:behavioral"
+    ]
+  }
+}

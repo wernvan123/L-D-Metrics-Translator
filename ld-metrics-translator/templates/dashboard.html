@@ -1,0 +1,287 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="page-section">
+  <div class="container">
+    <h1>Dashboard</h1>
+    <p>High-level overview and quick access.</p>
+  </div>
+</section>
+
+<!-- Key Numbers Section (same structure/IDs for consistency) -->
+<section id="key-numbers" class="page-section key-numbers-section">
+    <div class="container">
+        <div class="summary-stats">
+            <div class="stat-card">
+                <h3>{{ stats.metrics or 0 }}</h3>
+                <p>Total Metrics</p>
+                <span class="stat-trend">+5 this month</span>
+            </div>
+            <div class="stat-card">
+                <h3>{{ stats.outcomes or 0 }}</h3>
+                <p>L &amp; D Outcomes</p>
+                <span class="stat-trend">Complete coverage</span>
+            </div>
+            <div class="stat-card">
+                <h3>{{ stats.types or 0 }}</h3>
+                <p>Metric Categories</p>
+                <span class="stat-trend">Behavioral, Operational, Neuroscience</span>
+            </div>
+            <div class="stat-card" id="frameworks-count-card">
+                <h3>{{ stats.frameworks or 0 }}</h3>
+                <p>Frameworks</p>
+                <span class="stat-trend">Available</span>
+            </div>
+            <div class="stat-card">
+                <h3>{{ stats.combinations or 0 }}</h3>
+                <p>Combinations</p>
+                <span class="stat-trend">Full matrix</span>
+            </div>
+        </div>
+        {% if stats.error %}
+        <div class="notice notice-warning" role="status">
+            <strong>Note:</strong> Unable to load live stats ({{ stats.error }}). Showing defaults.
+        </div>
+        {% endif %}
+    </div>
+</section>
+
+<!-- Dashboard Primary Actions: 3-card layout -->
+<section class="page-section">
+  <div class="container">
+    <style>
+      .action-cards {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 24px;
+        margin-top: 24px;
+      }
+      .action-card {
+        border-radius: 20px;
+        padding: 28px 24px;
+        color: #fff;
+        box-shadow: 0 18px 40px rgba(0,0,0,0.12);
+        transition: transform .15s ease, box-shadow .15s ease;
+        text-decoration: none;
+        display: block;
+        min-height: 200px;
+      }
+      .action-card:hover { transform: translateY(-3px); box-shadow: 0 24px 56px rgba(0,0,0,0.16); }
+      .action-card h3 { font-size: 20px; line-height: 1.2; margin: 6px 0 8px; font-weight: 700; }
+      .action-card p { color: rgba(255,255,255,0.95); max-width: 32ch; }
+      .action-icon { width: 44px; height: 44px; border-radius: 12px; background: rgba(255,255,255,0.2); display:flex; align-items:center; justify-content:center; }
+      .card-blue { background: linear-gradient(180deg, #2d6cdf, #1f4fb9); }
+      .card-white { background: #ffffff; color: #1f2937; }
+      .card-white p { color: #4b5563; }
+      .card-green { background: linear-gradient(180deg, #1fc48b, #18a574); }
+      @media (max-width: 900px) { .action-cards { grid-template-columns: 1fr; } }
+    </style>
+
+    <div class="action-cards" aria-label="Primary actions">
+      <a class="action-card card-blue" href="{{ url_for('main.diagnostics') }}">
+        <div class="action-icon" aria-hidden="true">🧠</div>
+        <h3>Diagnose a Challenge</h3>
+        <p>Use AI and behavioral science to find the root cause to complex issues.</p>
+      </a>
+
+      <a class="action-card card-white" href="{{ url_for('main.plan_builder') }}">
+        <div class="action-icon" aria-hidden="true">🗺️</div>
+        <h3>Build a Development Plan</h3>
+        <p>Use frameworks and outcomes to create a targeted plan.</p>
+      </a>
+
+      <a class="action-card card-green" href="{{ url_for('main.playbook') }}">
+        <div class="action-icon" aria-hidden="true">📘</div>
+        <h3>Explore the Playbook</h3>
+        <p>Browse our library of interconnected drivers, concepts, and nodes.</p>
+      </a>
+    </div>
+  </div>
+  
+</section>
+
+<!-- Frameworks Pane: browse frameworks → competencies → metrics -->
+<section class="page-section">
+  <div class="container">
+    <h2 style="margin-bottom:10px">Frameworks</h2>
+    <p class="subtle">Browse the two core frameworks and drill down to competencies and mapped metrics.</p>
+
+    <style>
+      .fw-pane { margin-top: 10px; }
+      .fw-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
+      .fw-card { background: #fff; border-radius: 12px; padding: 16px; box-shadow: 0 10px 24px rgba(0,0,0,0.08); border: 1px solid #e5e7eb; }
+      .fw-head { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+      .fw-name { font-weight: 700; color: #1f2937; }
+      .fw-meta { font-size: 12px; color: #6b7280; }
+      .fw-actions { display:flex; gap:8px; }
+      .btn-xs { padding: 6px 10px; font-size: 12px; border: 1px solid #d1d5db; border-radius: 6px; background:#f9fafb; cursor:pointer; }
+      .btn-xs:hover { background:#eff6ff; border-color:#93c5fd; }
+      .fw-body { margin-top: 10px; }
+      .comp-item { background:#f9fafb; border:1px solid #e5e7eb; border-radius:10px; padding:10px; margin-bottom:8px; }
+      .comp-head { display:flex; align-items:center; justify-content:space-between; }
+      .comp-name { font-weight:600; color:#111827; }
+      .metric-pill { display:inline-block; background:#e0f2fe; color:#0369a1; border:1px solid #bae6fd; padding:3px 8px; margin:4px 4px 0 0; border-radius:999px; font-size:12px; }
+      @media (max-width: 900px) { .fw-grid { grid-template-columns: 1fr; } }
+    </style>
+
+    <div id="fw-pane" class="fw-pane" data-selected-fw="">
+      <div class="fw-grid" id="fw-grid" aria-live="polite"></div>
+      <div id="fw-error" style="display:none; color:#b91c1c; margin-top:8px"></div>
+    </div>
+
+    <script>
+      (function(){
+        const grid = document.getElementById('fw-grid');
+        const errEl = document.getElementById('fw-error');
+
+        function el(tag, attrs={}, children=[]) {
+          const n = document.createElement(tag);
+          Object.entries(attrs).forEach(([k,v])=>{ if (k==='class') n.className=v; else if(k==='text') n.textContent=v; else n.setAttribute(k,v); });
+          children.forEach(c=> n.appendChild(c));
+          return n;
+        }
+
+        async function fetchJSON(url){
+          const res = await fetch(url, {headers:{'Accept':'application/json'}});
+          if (!res.ok) throw new Error('HTTP '+res.status);
+          return res.json();
+        }
+
+        async function loadFrameworks(){
+          try {
+            errEl.style.display='none';
+            grid.innerHTML = '<div class="fw-card"><div class="fw-head"><span class="fw-name">Loading frameworks…</span></div></div>';
+            const data = await fetchJSON('/api/frameworks');
+            const items = (data && data.frameworks) ? data.frameworks.slice(0,2) : [];
+            if (!items.length) { grid.innerHTML = '<div class="fw-card">No frameworks available.</div>'; return; }
+            grid.innerHTML = '';
+            items.forEach(fw => grid.appendChild(renderFrameworkCard(fw)));
+          } catch (e){
+            grid.innerHTML = '';
+            errEl.textContent = 'Failed to load frameworks: ' + (e && e.message ? e.message : e);
+            errEl.style.display='block';
+          }
+        }
+
+        let selectedCompetencyIds = new Set();
+
+        function postJSON(url, body){
+          return fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body||{})});
+        }
+
+        function renderFrameworkCard(fw){
+          const body = el('div', {class:'fw-body'});
+          const head = el('div', {class:'fw-head'}, [
+            el('div', {}, [
+              el('div', {class:'fw-name', text: fw.name || 'Framework'}),
+              el('div', {class:'fw-meta', text: (fw.competency_count||0) + ' competencies'})
+            ]),
+            el('div', {class:'fw-actions'}, [
+              (function(){
+                const b = el('button', {class:'btn-xs', type:'button', text:'Select'});
+                b.addEventListener('click', async ()=>{
+                  try{
+                    await postJSON('/api/context/framework/select', {framework_id: fw.id});
+                    document.getElementById('fw-pane').dataset.selectedFw = String(fw.id);
+                    selectedCompetencyIds = new Set();
+                    await loadCompetencies(fw.id, body, true);
+                    // Refresh continue card state
+                    try{ const r = await fetch('/api/context/framework/state'); }catch(_){}
+                  }catch(e){ alert('Failed to select framework'); }
+                });
+                return b;
+              })(),
+              (function(){
+                const b = el('button', {class:'btn-xs', type:'button', text:'View Competencies'});
+                b.addEventListener('click', ()=> loadCompetencies(fw.id, body));
+                return b;
+              })(),
+              el('a', {class:'btn-xs', href:`/api/frameworks/${fw.id}/tree`, target:'_blank', rel:'noopener', text:'Open Tree JSON'})
+            ])
+          ]);
+          return el('div', {class:'fw-card'}, [head, body]);
+        }
+
+        async function loadCompetencies(fwId, mount, selectable=false){
+          try {
+            mount.innerHTML = '<div class="comp-item">Loading competencies…</div>';
+            const data = await fetchJSON(`/api/frameworks/${fwId}/competencies?include_metrics=true`);
+            const comps = data && data.competencies ? data.competencies : [];
+            if (!comps.length){ mount.innerHTML = '<div class="comp-item">No competencies found.</div>'; return; }
+            mount.innerHTML = '';
+            comps.forEach(c => mount.appendChild(renderCompetency(c, selectable)));
+          } catch(e){
+            mount.innerHTML = `<div class="comp-item" style="color:#b91c1c">Failed to load competencies: ${e && e.message ? e.message : e}</div>`;
+          }
+        }
+
+        function renderCompetency(c, selectable=false){
+          const metrics = Array.isArray(c.metrics) ? c.metrics : [];
+          const pills = metrics.slice(0,6).map(m => el('span', {class:'metric-pill', text:m.name}));
+          const openLink = el('a', {class:'btn-xs', href:`/api/competencies/${c.id}/metrics`, target:'_blank', rel:'noopener', text:'Open Metrics JSON'});
+          let left = el('div', {class:'comp-name', text: c.name});
+          if(selectable){
+            const chk = el('input', {type:'checkbox'});
+            chk.checked = selectedCompetencyIds.has(c.id);
+            chk.addEventListener('change', async ()=>{
+              try{
+                if(chk.checked) selectedCompetencyIds.add(c.id); else selectedCompetencyIds.delete(c.id);
+                await postJSON('/api/context/framework/competencies', {competency_ids: Array.from(selectedCompetencyIds)});
+              }catch(e){ alert('Failed to update competencies'); }
+            });
+            left = el('label', {class:'comp-name'}, [chk, el('span', {text: ' '+c.name})]);
+          }
+          const head = el('div', {class:'comp-head'}, [left, openLink]);
+          return el('div', {class:'comp-item'}, [head, el('div', {}, pills)]);
+        }
+
+        loadFrameworks();
+      })();
+    </script>
+  </div>
+</section>
+
+<!-- Continue where you left off -->
+<section class="page-section">
+  <div class="container">
+    <style>
+      .continue-card { background:#fff; border:1px solid #e5e7eb; border-radius:12px; padding:16px; box-shadow:0 10px 24px rgba(0,0,0,.06); display:flex; align-items:center; justify-content:space-between; gap:12px; }
+      .continue-meta { color:#6b7280; font-size:13px; }
+      .continue-actions { display:flex; gap:8px; flex-wrap:wrap; }
+    </style>
+    <div id="continue-card" class="continue-card" style="display:none">
+      <div>
+        <div style="font-weight:700; color:#111827">Continue where you left off</div>
+        <div id="continue-desc" class="continue-meta"></div>
+      </div>
+      <div class="continue-actions">
+        <a class="btn btn-sm btn-outline" href="{{ url_for('main.diagnostics') }}">Diagnostics</a>
+        <a class="btn btn-sm btn-outline" href="{{ url_for('main.plan_builder') }}">Plan Builder</a>
+        <a class="btn btn-sm btn-outline" href="{{ url_for('main.playbook') }}">Playbook</a>
+      </div>
+    </div>
+  </div>
+  <script>
+    (async function(){
+      try{
+        const res = await fetch('/api/context/framework/state');
+        if(!res.ok) return;
+        const s = await res.json();
+        if(!s || !s.success) return;
+        const fw = s.framework;
+        const comps = s.active_competencies || [];
+        if(fw || (Array.isArray(comps) && comps.length)){
+          const card = document.getElementById('continue-card');
+          const desc = document.getElementById('continue-desc');
+          const parts = [];
+          if(fw) parts.push(`Framework: ${fw.name}`);
+          if(comps.length) parts.push(`${comps.length} competencies selected`);
+          desc.textContent = parts.join(' • ');
+          card.style.display = 'flex';
+        }
+      }catch(e){ /* silent */ }
+    })();
+  </script>
+</section>
+
+{% endblock %}

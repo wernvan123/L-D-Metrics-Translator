@@ -1,0 +1,521 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Context Management Demo - L&D Metrics Translator</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+            color: #333;
+        }
+        .section {
+            margin: 20px 0;
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            background: #fafafa;
+        }
+        .section h3 {
+            margin-top: 0;
+            color: #2c3e50;
+        }
+        .button {
+            background: #3498db;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        .button:hover {
+            background: #2980b9;
+        }
+        .button.success {
+            background: #27ae60;
+        }
+        .button.danger {
+            background: #e74c3c;
+        }
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 5px;
+        }
+        .status.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .status.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        .status.info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
+        .metric-card {
+            display: inline-block;
+            margin: 5px;
+            padding: 10px 15px;
+            background: #ecf0f1;
+            border: 1px solid #bdc3c7;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        .metric-card.selected {
+            background: #3498db;
+            color: white;
+            border-color: #2980b9;
+        }
+        .metric-card:hover {
+            background: #d5dbdb;
+        }
+        .metric-card.selected:hover {
+            background: #2980b9;
+        }
+        .output {
+            background: #2c3e50;
+            color: #ecf0f1;
+            padding: 15px;
+            border-radius: 5px;
+            font-family: monospace;
+            white-space: pre-wrap;
+            max-height: 300px;
+            overflow-y: auto;
+            margin: 10px 0;
+        }
+        .preferences {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin: 15px 0;
+        }
+        .pref-item {
+            display: flex;
+            flex-direction: column;
+        }
+        .pref-item label {
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        .pref-item input, .pref-item select {
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 3px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Context Management System Demo</h1>
+            <p>Test the Core Context Management functionality for L&D Metrics Translator</p>
+        </div>
+
+        <!-- Session Information -->
+        <div class="section">
+            <h3>Session Information</h3>
+            <button class="button" onclick="getSessionInfo()">Get Session Info</button>
+            <button class="button" onclick="initializeContext()">Initialize Context</button>
+            <div id="sessionOutput" class="output" style="display: none;"></div>
+        </div>
+
+        <!-- User Preferences -->
+        <div class="section">
+            <h3>User Preferences</h3>
+            <div class="preferences">
+                <div class="pref-item">
+                    <label for="theme">Theme:</label>
+                    <select id="theme">
+                        <option value="light">Light</option>
+                        <option value="dark">Dark</option>
+                    </select>
+                </div>
+                <div class="pref-item">
+                    <label for="resultsPerPage">Results per page:</label>
+                    <input type="number" id="resultsPerPage" value="20" min="10" max="100">
+                </div>
+                <div class="pref-item">
+                    <label for="autoSave">Auto-save selections:</label>
+                    <select id="autoSave">
+                        <option value="true">Yes</option>
+                        <option value="false">No</option>
+                    </select>
+                </div>
+            </div>
+            <button class="button" onclick="loadPreferences()">Load Preferences</button>
+            <button class="button success" onclick="savePreferences()">Save Preferences</button>
+            <div id="preferencesStatus"></div>
+        </div>
+
+        <!-- Context Storage -->
+        <div class="section">
+            <h3>Context Storage</h3>
+            <div style="margin: 15px 0;">
+                <label>Context Type: <input type="text" id="contextType" value="demo" placeholder="e.g., search, preferences"></label>
+                <label>Context Key: <input type="text" id="contextKey" value="test_data" placeholder="e.g., last_search"></label>
+            </div>
+            <div style="margin: 15px 0;">
+                <label>Context Data:</label>
+                <textarea id="contextData" rows="3" style="width: 100%; padding: 8px;">{"message": "Hello from context demo!", "timestamp": "2025-08-24"}</textarea>
+            </div>
+            <button class="button" onclick="storeContext()">Store Context</button>
+            <button class="button" onclick="getContext()">Get Context</button>
+            <button class="button danger" onclick="deleteContext()">Delete Context</button>
+            <div id="contextStatus"></div>
+        </div>
+
+        <!-- Metric Selection -->
+        <div class="section">
+            <h3>Metric Selection</h3>
+            <div id="metricsContainer">
+                <p>Loading metrics...</p>
+            </div>
+            <div style="margin: 15px 0;">
+                <button class="button" onclick="loadMetrics()">Load Available Metrics</button>
+                <button class="button" onclick="getSelectedMetrics()">Get Selected Metrics</button>
+                <button class="button danger" onclick="clearSelections()">Clear All Selections</button>
+            </div>
+            <div id="selectionStatus"></div>
+            <div id="selectedMetricsOutput" class="output" style="display: none;"></div>
+        </div>
+
+        <!-- Search Context Demo -->
+        <div class="section">
+            <h3>Search Context Demo</h3>
+            <div style="margin: 15px 0;">
+                <label>Search Query: <input type="text" id="searchQuery" value="employee engagement" placeholder="Enter search term"></label>
+                <label>Results Count: <input type="number" id="resultsCount" value="15" min="0"></label>
+            </div>
+            <button class="button" onclick="storeSearchContext()">Store Search Context</button>
+            <button class="button" onclick="getSearchHistory()">Get Search History</button>
+            <div id="searchStatus"></div>
+        </div>
+
+        <!-- API Testing -->
+        <div class="section">
+            <h3>API Response Log</h3>
+            <button class="button" onclick="clearLog()">Clear Log</button>
+            <div id="apiLog" class="output"></div>
+        </div>
+    </div>
+
+    <!-- Include the Context Manager -->
+    <script src="/static/js/context-manager.js"></script>
+    
+    <script>
+        // Demo functionality
+        let availableMetrics = [];
+
+        function log(message, type = 'info') {
+            const logElement = document.getElementById('apiLog');
+            const timestamp = new Date().toLocaleTimeString();
+            const logEntry = `[${timestamp}] ${message}\n`;
+            logElement.textContent += logEntry;
+            logElement.scrollTop = logElement.scrollHeight;
+        }
+
+        function showStatus(elementId, message, type = 'info') {
+            const element = document.getElementById(elementId);
+            element.innerHTML = `<div class="status ${type}">${message}</div>`;
+        }
+
+        function clearLog() {
+            document.getElementById('apiLog').textContent = '';
+        }
+
+        async function getSessionInfo() {
+            try {
+                const stats = await contextManager.getSessionStats();
+                document.getElementById('sessionOutput').style.display = 'block';
+                document.getElementById('sessionOutput').textContent = JSON.stringify(stats, null, 2);
+                log('Session info retrieved successfully');
+            } catch (error) {
+                log(`Error getting session info: ${error.message}`, 'error');
+            }
+        }
+
+        async function initializeContext() {
+            try {
+                await contextManager.init();
+                log('Context initialized successfully');
+                showStatus('sessionOutput', 'Context initialized successfully!', 'success');
+            } catch (error) {
+                log(`Error initializing context: ${error.message}`, 'error');
+                showStatus('sessionOutput', `Error: ${error.message}`, 'error');
+            }
+        }
+
+        async function loadPreferences() {
+            try {
+                const prefs = contextManager.getPreferences();
+                document.getElementById('theme').value = prefs.theme || 'light';
+                document.getElementById('resultsPerPage').value = prefs.results_per_page || 20;
+                document.getElementById('autoSave').value = prefs.auto_save_selections ? 'true' : 'false';
+                
+                showStatus('preferencesStatus', 'Preferences loaded successfully!', 'success');
+                log('Preferences loaded from context manager');
+            } catch (error) {
+                log(`Error loading preferences: ${error.message}`, 'error');
+                showStatus('preferencesStatus', `Error: ${error.message}`, 'error');
+            }
+        }
+
+        async function savePreferences() {
+            try {
+                const preferences = {
+                    theme: document.getElementById('theme').value,
+                    results_per_page: parseInt(document.getElementById('resultsPerPage').value),
+                    auto_save_selections: document.getElementById('autoSave').value === 'true'
+                };
+
+                const success = await contextManager.updatePreferences(preferences);
+                if (success) {
+                    showStatus('preferencesStatus', 'Preferences saved successfully!', 'success');
+                    log('Preferences saved to context manager');
+                } else {
+                    throw new Error('Failed to save preferences');
+                }
+            } catch (error) {
+                log(`Error saving preferences: ${error.message}`, 'error');
+                showStatus('preferencesStatus', `Error: ${error.message}`, 'error');
+            }
+        }
+
+        async function storeContext() {
+            try {
+                const contextType = document.getElementById('contextType').value;
+                const contextKey = document.getElementById('contextKey').value;
+                const contextData = JSON.parse(document.getElementById('contextData').value);
+
+                const success = await contextManager.storeContext(contextType, contextKey, contextData);
+                if (success) {
+                    showStatus('contextStatus', 'Context stored successfully!', 'success');
+                    log(`Context stored: ${contextType}:${contextKey}`);
+                } else {
+                    throw new Error('Failed to store context');
+                }
+            } catch (error) {
+                log(`Error storing context: ${error.message}`, 'error');
+                showStatus('contextStatus', `Error: ${error.message}`, 'error');
+            }
+        }
+
+        async function getContext() {
+            try {
+                const contextType = document.getElementById('contextType').value;
+                const contextKey = document.getElementById('contextKey').value;
+
+                const data = await contextManager.getContext(contextType, contextKey);
+                if (data) {
+                    document.getElementById('contextData').value = JSON.stringify(data, null, 2);
+                    showStatus('contextStatus', 'Context retrieved successfully!', 'success');
+                    log(`Context retrieved: ${contextType}:${contextKey}`);
+                } else {
+                    showStatus('contextStatus', 'Context not found or expired', 'info');
+                    log(`Context not found: ${contextType}:${contextKey}`);
+                }
+            } catch (error) {
+                log(`Error getting context: ${error.message}`, 'error');
+                showStatus('contextStatus', `Error: ${error.message}`, 'error');
+            }
+        }
+
+        async function deleteContext() {
+            try {
+                const contextType = document.getElementById('contextType').value;
+                const contextKey = document.getElementById('contextKey').value;
+
+                const response = await fetch(`/api/context/delete/${contextType}/${contextKey}`, {
+                    method: 'DELETE',
+                    headers: {
+                        'X-Session-ID': contextManager.sessionId
+                    }
+                });
+
+                if (response.ok) {
+                    showStatus('contextStatus', 'Context deleted successfully!', 'success');
+                    log(`Context deleted: ${contextType}:${contextKey}`);
+                } else {
+                    throw new Error('Failed to delete context');
+                }
+            } catch (error) {
+                log(`Error deleting context: ${error.message}`, 'error');
+                showStatus('contextStatus', `Error: ${error.message}`, 'error');
+            }
+        }
+
+        async function loadMetrics() {
+            try {
+                const response = await fetch('/api/metrics?per_page=10');
+                const data = await response.json();
+                
+                if (data.metrics) {
+                    availableMetrics = data.metrics;
+                    renderMetrics();
+                    log(`Loaded ${data.metrics.length} metrics`);
+                } else {
+                    throw new Error('Failed to load metrics');
+                }
+            } catch (error) {
+                log(`Error loading metrics: ${error.message}`, 'error');
+                showStatus('selectionStatus', `Error: ${error.message}`, 'error');
+            }
+        }
+
+        function renderMetrics() {
+            const container = document.getElementById('metricsContainer');
+            container.innerHTML = '';
+
+            availableMetrics.forEach(metric => {
+                const card = document.createElement('div');
+                card.className = 'metric-card';
+                card.textContent = metric.name;
+                card.title = metric.description;
+                card.onclick = () => toggleMetric(metric.id, card);
+                container.appendChild(card);
+            });
+        }
+
+        async function toggleMetric(metricId, cardElement) {
+            try {
+                const result = await contextManager.selectMetric(metricId);
+                if (result) {
+                    if (result.selected) {
+                        cardElement.classList.add('selected');
+                    } else {
+                        cardElement.classList.remove('selected');
+                    }
+                    log(`Metric ${result.action}: ${metricId}`);
+                    showStatus('selectionStatus', `Metric ${result.action} successfully!`, 'success');
+                } else {
+                    throw new Error('Failed to toggle metric selection');
+                }
+            } catch (error) {
+                log(`Error toggling metric: ${error.message}`, 'error');
+                showStatus('selectionStatus', `Error: ${error.message}`, 'error');
+            }
+        }
+
+        async function getSelectedMetrics() {
+            try {
+                const selected = await contextManager.getSelectedMetrics();
+                document.getElementById('selectedMetricsOutput').style.display = 'block';
+                document.getElementById('selectedMetricsOutput').textContent = JSON.stringify(selected, null, 2);
+                log(`Retrieved ${selected.length} selected metrics`);
+            } catch (error) {
+                log(`Error getting selected metrics: ${error.message}`, 'error');
+                showStatus('selectionStatus', `Error: ${error.message}`, 'error');
+            }
+        }
+
+        async function clearSelections() {
+            try {
+                const success = await contextManager.clearMetricSelections();
+                if (success) {
+                    // Update UI
+                    document.querySelectorAll('.metric-card.selected').forEach(card => {
+                        card.classList.remove('selected');
+                    });
+                    showStatus('selectionStatus', 'All selections cleared!', 'success');
+                    log('All metric selections cleared');
+                } else {
+                    throw new Error('Failed to clear selections');
+                }
+            } catch (error) {
+                log(`Error clearing selections: ${error.message}`, 'error');
+                showStatus('selectionStatus', `Error: ${error.message}`, 'error');
+            }
+        }
+
+        async function storeSearchContext() {
+            try {
+                const query = document.getElementById('searchQuery').value;
+                const resultsCount = parseInt(document.getElementById('resultsCount').value);
+                
+                const success = await contextManager.storeSearchContext(query, {}, resultsCount);
+                if (success) {
+                    showStatus('searchStatus', 'Search context stored successfully!', 'success');
+                    log(`Search context stored: "${query}" (${resultsCount} results)`);
+                } else {
+                    throw new Error('Failed to store search context');
+                }
+            } catch (error) {
+                log(`Error storing search context: ${error.message}`, 'error');
+                showStatus('searchStatus', `Error: ${error.message}`, 'error');
+            }
+        }
+
+        async function getSearchHistory() {
+            try {
+                const response = await fetch('/api/context/search-history', {
+                    headers: {
+                        'X-Session-ID': contextManager.sessionId
+                    }
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    if (data.success) {
+                        const history = data.search_history;
+                        showStatus('searchStatus', `Found ${history.length} search entries`, 'info');
+                        log(`Search history: ${JSON.stringify(history, null, 2)}`);
+                    } else {
+                        throw new Error('Failed to get search history');
+                    }
+                } else {
+                    throw new Error('API request failed');
+                }
+            } catch (error) {
+                log(`Error getting search history: ${error.message}`, 'error');
+                showStatus('searchStatus', `Error: ${error.message}`, 'error');
+            }
+        }
+
+        // Event listeners for context manager
+        document.addEventListener('contextManager:contextInitialized', (event) => {
+            log('Context Manager initialized via event');
+            loadPreferences();
+        });
+
+        document.addEventListener('contextManager:metricSelectionChanged', (event) => {
+            log(`Metric selection changed via event: ${event.detail.action}`);
+        });
+
+        document.addEventListener('contextManager:preferencesUpdated', (event) => {
+            log('Preferences updated via event');
+        });
+
+        // Initialize when page loads
+        window.addEventListener('load', () => {
+            log('Context Management Demo loaded');
+            setTimeout(() => {
+                if (window.contextManager && contextManager.initialized) {
+                    loadPreferences();
+                    loadMetrics();
+                }
+            }, 1000);
+        });
+    </script>
+</body>
+</html>

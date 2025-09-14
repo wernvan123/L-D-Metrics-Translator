@@ -1,0 +1,28 @@
+Essential files to upload to Google Cloud Shell:
+
+REQUIRED FILES:
+✅ app.yaml
+✅ main.py
+✅ requirements.txt (or requirements-prod.txt)
+✅ .gcloudignore
+✅ config.py
+✅ run.py (backup entry point)
+
+REQUIRED DIRECTORIES:
+✅ app/ (entire directory)
+✅ static/ (entire directory) 
+✅ templates/ (entire directory)
+
+OPTIONAL FILES (for production):
+- .env.example
+- README.md
+- Dockerfile (not needed for App Engine)
+
+FILES TO EXCLUDE (don't upload):
+❌ venv/
+❌ __pycache__/
+❌ .git/
+❌ logs/
+❌ ld_metrics.db (will be recreated)
+❌ instance/
+❌ tests/

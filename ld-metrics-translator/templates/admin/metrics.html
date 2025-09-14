@@ -1,0 +1,167 @@
+{% extends "admin/base.html" %}
+
+{% block title %}Metrics Management{% endblock %}
+
+{% block extra_css %}
+<style>
+    /* Adjust column widths for better visual balance */
+    .data-table { table-layout: fixed; }
+    .data-table td { overflow: hidden; text-overflow: ellipsis; }
+    .data-table th:nth-child(1), .data-table td:nth-child(1) { width: 40%; }
+    .data-table th:nth-child(2), .data-table td:nth-child(2) { width: 15%; white-space: nowrap; }
+    .data-table th:nth-child(3), .data-table td:nth-child(3) { width: 15%; white-space: nowrap; }
+    .data-table th:nth-child(4), .data-table td:nth-child(4) { width: 15%; white-space: nowrap; }
+    .data-table th:nth-child(5), .data-table td:nth-child(5) { width: 140px; white-space: nowrap; }
+
+    /* Truncate long descriptions in the first column to two lines */
+    .data-table td:nth-child(1) small {
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        line-clamp: 2;
+        overflow: hidden;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+    <h1 class="h2">
+        <i class="bi bi-graph-up me-2"></i>Metrics Management
+    </h1>
+    <div class="btn-toolbar mb-2 mb-md-0">
+        <a href="{{ url_for('admin.add_metric') }}" class="btn btn-primary">
+            <i class="bi bi-plus-circle me-1"></i>Add Metric
+        </a>
+    </div>
+</div>
+
+<!-- Search Form -->
+<div class="card mb-4">
+    <div class="card-body">
+        <form method="GET" class="row g-3">
+            <div class="col-md-10">
+                <input type="text" class="form-control" name="search" value="{{ search }}" 
+                       placeholder="Search metrics by name or description...">
+            </div>
+            <div class="col-md-2">
+                <button type="submit" class="btn btn-outline-primary w-100">
+                    <i class="bi bi-search me-1"></i>Search
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Metrics Table -->
+<div class="card">
+    <div class="card-header">
+        <h5 class="card-title mb-0">
+            All Metrics ({{ metrics.total }} total)
+        </h5>
+    </div>
+    <div class="card-body">
+        {% if metrics.items %}
+            <div class="table-responsive">
+                <table class="table table-hover data-table">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Name</th>
+                            <th>L&D Outcome</th>
+                            <th>Metric Type</th>
+                            <th>Created</th>
+                            <th width="150">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for metric in metrics.items %}
+                            <tr>
+                                <td>
+                                    <div class="fw-bold">{{ metric.name }}</div>
+                                    <small class="text-muted">{{ metric.description[:100] }}{% if metric.description|length > 100 %}...{% endif %}</small>
+                                </td>
+                                <td>
+                                    <span class="badge bg-primary">{{ metric.outcome.name }}</span>
+                                </td>
+                                <td>
+                                    <span class="badge bg-secondary">{{ metric.metric_type.name }}</span>
+                                </td>
+                                <td>
+                                    <small>{{ metric.created_date.strftime('%Y-%m-%d %H:%M') }}</small>
+                                </td>
+                                <td>
+                                    <div class="btn-group btn-group-sm">
+                                        <a href="{{ url_for('main.metric_detail', id=metric.id) }}" 
+                                           class="btn btn-outline-info" title="View">
+                                            <i class="bi bi-eye"></i>
+                                        </a>
+                                        <a href="{{ url_for('admin.edit_metric', id=metric.id) }}" 
+                                           class="btn btn-outline-primary" title="Edit">
+                                            <i class="bi bi-pencil"></i>
+                                        </a>
+                                        <form method="POST" action="{{ url_for('admin.delete_metric', id=metric.id) }}" 
+                                              style="display: inline;">
+                                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+                                            <button type="submit" class="btn btn-outline-danger delete-btn" 
+                                                    title="Delete" data-item-name="{{ metric.name }}">
+                                                <i class="bi bi-trash"></i>
+                                            </button>
+                                        </form>
+                                    </div>
+                                </td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            
+            <!-- Pagination -->
+            {% if metrics.pages > 1 %}
+                <nav aria-label="Metrics pagination">
+                    <ul class="pagination justify-content-center mt-3">
+                        {% if metrics.has_prev %}
+                            <li class="page-item">
+                                <a class="page-link" href="{{ url_for('admin.metrics', page=metrics.prev_num, search=search) }}">Previous</a>
+                            </li>
+                        {% endif %}
+                        
+                        {% for page_num in metrics.iter_pages() %}
+                            {% if page_num %}
+                                {% if page_num != metrics.page %}
+                                    <li class="page-item">
+                                        <a class="page-link" href="{{ url_for('admin.metrics', page=page_num, search=search) }}">{{ page_num }}</a>
+                                    </li>
+                                {% else %}
+                                    <li class="page-item active">
+                                        <span class="page-link">{{ page_num }}</span>
+                                    </li>
+                                {% endif %}
+                            {% else %}
+                                <li class="page-item disabled">
+                                    <span class="page-link">...</span>
+                                </li>
+                            {% endif %}
+                        {% endfor %}
+                        
+                        {% if metrics.has_next %}
+                            <li class="page-item">
+                                <a class="page-link" href="{{ url_for('admin.metrics', page=metrics.next_num, search=search) }}">Next</a>
+                            </li>
+                        {% endif %}
+                    </ul>
+                </nav>
+            {% endif %}
+        {% else %}
+            <div class="text-center py-5">
+                <i class="bi bi-graph-up text-muted" style="font-size: 4rem;"></i>
+                <h4 class="text-muted mt-3">No metrics found</h4>
+                <p class="text-muted">{% if search %}No metrics match your search criteria.{% else %}Get started by adding your first metric.{% endif %}</p>
+                <a href="{{ url_for('admin.add_metric') }}" class="btn btn-primary">
+                    <i class="bi bi-plus-circle me-1"></i>Add Metric
+                </a>
+            </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
+

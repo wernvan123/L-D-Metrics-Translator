@@ -1,0 +1,35 @@
+runtime: python39
+
+env_variables:
+  FLASK_CONFIG: production
+  SECRET_KEY: "43f00ad3f5ad89bc3a2013a0b2cfff21f31f7c2f1b805af21f26a624c81fa4b9"
+  # DATABASE_URL will be set to Cloud SQL if needed
+
+automatic_scaling:
+  min_instances: 0  # Scale to zero when not in use (saves money)
+  max_instances: 5
+  target_cpu_utilization: 0.6
+
+handlers:
+- url: /static
+  static_dir: static
+  secure: always
+  
+- url: /.*
+  script: auto
+  secure: always
+
+# Health check configuration
+readiness_check:
+  path: "/"
+  check_interval_sec: 5
+  timeout_sec: 4
+  failure_threshold: 2
+  success_threshold: 2
+
+liveness_check:
+  path: "/"
+  check_interval_sec: 30
+  timeout_sec: 4
+  failure_threshold: 4
+  success_threshold: 2

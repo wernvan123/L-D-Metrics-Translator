@@ -1,0 +1,110 @@
+{% extends "admin/base.html" %}
+
+{% block title %}Admin Users Management{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+    <h1 class="h2">
+        <i class="bi bi-people me-2"></i>Admin Users Management
+    </h1>
+    <div class="btn-toolbar mb-2 mb-md-0">
+        <a href="{{ url_for('admin.add_admin_user') }}" class="btn btn-primary">
+            <i class="bi bi-person-plus me-1"></i>Add Admin User
+        </a>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header">
+        <h5 class="card-title mb-0">
+            All Admin Users ({{ users|length }} total)
+        </h5>
+    </div>
+    <div class="card-body">
+        {% if users %}
+            <div class="table-responsive">
+                <table class="table table-hover data-table">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Username</th>
+                            <th>Email</th>
+                            <th>Status</th>
+                            <th>Created</th>
+                            <th>Last Login</th>
+                            <th width="150">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for user in users %}
+                            <tr>
+                                <td>
+                                    <div class="fw-bold">{{ user.username }}</div>
+                                    {% if user.id == session.admin_user_id %}
+                                        <small class="text-primary">(Current User)</small>
+                                    {% endif %}
+                                </td>
+                                <td>{{ user.email }}</td>
+                                <td>
+                                    {% if user.is_active %}
+                                        <span class="badge bg-success">Active</span>
+                                    {% else %}
+                                        <span class="badge bg-secondary">Inactive</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <small>{{ user.created_date.strftime('%Y-%m-%d %H:%M') }}</small>
+                                </td>
+                                <td>
+                                    {% if user.last_login %}
+                                        <small>{{ user.last_login.strftime('%Y-%m-%d %H:%M') }}</small>
+                                    {% else %}
+                                        <small class="text-muted">Never</small>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <div class="btn-group btn-group-sm">
+                                        <a href="{{ url_for('admin.edit_admin_user', id=user.id) }}" 
+                                           class="btn btn-outline-primary" title="Edit">
+                                            <i class="bi bi-pencil"></i>
+                                        </a>
+                                        {% if user.id != session.admin_user_id %}
+                                            <form method="POST" action="{{ url_for('admin.delete_admin_user', id=user.id) }}" 
+                                                  style="display: inline;">
+                                                {{ csrf_token() }}
+                                                <button type="submit" class="btn btn-outline-danger delete-btn" 
+                                                        title="Delete" data-item-name="{{ user.username }}">
+                                                    <i class="bi bi-trash"></i>
+                                                </button>
+                                            </form>
+                                        {% else %}
+                                            <button class="btn btn-outline-danger" disabled title="Cannot delete your own account">
+                                                <i class="bi bi-trash"></i>
+                                            </button>
+                                        {% endif %}
+                                    </div>
+                                </td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        {% else %}
+            <div class="text-center py-5">
+                <i class="bi bi-people text-muted" style="font-size: 4rem;"></i>
+                <h4 class="text-muted mt-3">No admin users found</h4>
+                <p class="text-muted">Get started by adding your first admin user.</p>
+                <a href="{{ url_for('admin.add_admin_user') }}" class="btn btn-primary">
+                    <i class="bi bi-person-plus me-1"></i>Add Admin User
+                </a>
+            </div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Security Notice -->
+<div class="alert alert-warning mt-4">
+    <i class="bi bi-shield-exclamation me-2"></i>
+    <strong>Security Notice:</strong> Admin users have full access to manage all data in the system. 
+    Only grant admin access to trusted individuals who need to manage the L&D Metrics Translator.
+</div>
+{% endblock %}

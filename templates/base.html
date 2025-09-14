@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>L&D Metrics Translator</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=20250909" />
+  </head>
+  <body class="theme-vibrant">
+    <header class="app-header">
+      {% if mocks_enabled %}
+      <div class="mock-banner">Mock APIs active</div>
+      {% endif %}
+      {% if prod_parity %}
+      <div class="mock-banner" style="background:#eef9f1;color:#0b5d29;border-bottom-color:#cfead8;">Production parity mode</div>
+      {% endif %}
+      {% block top_nav %}
+      <div class="container header-content">
+        <a class="brand" href="/">L&D Metrics Translator</a>
+        <nav class="breadcrumbs" id="breadcrumbs">
+          {% block breadcrumbs %}{% endblock %}
+        </nav>
+        <div class="header-right">
+          <a id="selection-badge" class="selection-badge hidden" href="/plan-builder" title="Go to Plan Builder">
+            <span class="icon">📊</span>
+            <span class="count" id="selection-count">0</span>
+          </a>
+          <div id="context-status-indicator" class="context-status-indicator hidden">
+            <span class="dot"></span>
+            <span class="label">Synced</span>
+          </div>
+        </div>
+      </div>
+      {% endblock %}
+      {% block workflow_strip %}
+      <div class="workflow-strip">
+        <div class="container">
+          <ol class="workflow" id="workflow" data-step="{% block step %}{% endblock %}">
+            <li class="step" data-key="diagnostics"><a href="/diagnostics">Diagnostics</a></li>
+            <li class="sep">→</li>
+            <li class="step" data-key="plan-builder"><a href="/plan-builder">Plan Builder</a></li>
+            <li class="sep">→</li>
+            <li class="step" data-key="playbook"><a href="/playbook">Playbook</a></li>
+          </ol>
+        </div>
+      </div>
+      {% endblock %}
+    </header>
+
+    <main class="container">
+      <div id="notifications" class="notifications"></div>
+      {% block content %}{% endblock %}
+    </main>
+    
+    <!-- Global Metric Details Modal -->
+    <div id="modal-overlay" class="modal-overlay hidden" aria-hidden="true">
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+        <div class="modal-header">
+          <h3 id="modal-title">Metric Details</h3>
+          <button id="modal-close" class="btn">Close</button>
+        </div>
+        <div id="modal-body" class="modal-body">Loading...</div>
+      </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/context-status-indicator.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/notifications.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/metric-details.js') }}"></script>
+    <script>
+      // Highlight active workflow step and update selection badge
+      (async function(){
+        const wf = document.getElementById('workflow');
+        if (wf) {
+          const active = (wf.getAttribute('data-step')||'').toLowerCase();
+          for (const li of wf.querySelectorAll('.step')) {
+            if (li.getAttribute('data-key') === active) li.classList.add('active');
+          }
+        }
+        async function refreshBadge(){
+          try {
+            const r = await fetch('/api/context/framework/state');
+            if (r.ok) {
+              const s = await r.json();
+              const badge = document.getElementById('selection-badge');
+              const count = document.getElementById('selection-count');
+              count.textContent = s.selected_metrics_count || 0;
+              badge.classList.remove('hidden');
+            }
+          } catch {}
+        }
+        await refreshBadge();
+        window.addEventListener('context:saved', refreshBadge);
+      })();
+    </script>
+    {% block scripts %}{% endblock %}
+  </body>
+</html>

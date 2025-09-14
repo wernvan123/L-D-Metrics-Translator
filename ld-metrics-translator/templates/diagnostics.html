@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="page-section">
+  <div class="container diagnostics-intro text-on-hero">
+    <h1>Diagnostics</h1>
+    <p>Analyze events and identify potential behavioral drivers and biases.</p>
+  </div>
+</section>
+
+<section class="page-section">
+  <div class="container diagnostics-tabs-wrapper">
+    <div class="subnav-tabs">
+      <button class="subnav-tab active" data-panel="diag-ai">🧠 AI Event Analysis</button>
+      <button class="subnav-tab" data-panel="diag-bsd">🧪 Behavioral Science Diagnostic</button>
+      <button class="subnav-tab" data-panel="diag-driver-card">🧩 Driver Card Demo</button>
+    </div>
+  </div>
+</section>
+
+<!-- Panel: AI Event Analysis (hooks for event-analysis.js) -->
+<section id="diag-ai" class="page-section diag-panel" role="tabpanel">
+  <div class="container">
+    <div class="event-analysis-container">
+      <!-- Inline Login Prompt within Enter Scenario card (Option A) -->
+      <div id="login-prompt" class="login-prompt inline" style="display: none;">
+        <div class="login-prompt-content">
+          <div class="login-prompt-icon">👤</div>
+          <div class="login-prompt-text">
+            <h4>Login to save analyses</h4>
+            <p>You can also continue as guest to try the analyzer</p>
+          </div>
+          <div class="login-prompt-actions">
+            <a id="open-login-btn" href="/admin/login" class="btn btn-primary">Log In</a>
+            <button id="continue-anonymous" class="btn btn-secondary">Continue as Guest</button>
+            <button id="login-dismiss" class="btn btn-outline" aria-label="Dismiss">Dismiss</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="event-input-container">
+        <div class="event-input-header">
+          <textarea id="event-description" class="event-input" placeholder="Describe a workplace event or situation..." rows="4" maxlength="500"></textarea>
+          <div class="character-counter"><span id="analysis-char-count">0</span>/500</div>
+        </div>
+
+        <div id="event-suggestions" class="event-suggestions" style="display: none;"></div>
+
+        <div class="event-input-actions" id="analysis-actions" style="display:flex; gap: 8px;">
+          <button id="analyze-event-btn" class="btn btn-primary btn-lg"><span class="btn-icon">🧠</span>Analyze Event</button>
+          <button id="show-suggestions-btn" class="btn btn-secondary"><span class="btn-icon">💡</span>Show Examples</button>
+          <button id="clear-analysis" class="btn btn-outline">Clear</button>
+        </div>
+      </div>
+
+      <!-- Analysis Results -->
+      <div id="analysis-loading" class="analysis-loading" style="display: none;">
+        <div class="loading-spinner"></div>
+        <p>Analyzing...</p>
+      </div>
+      <div id="analysis-results" class="analysis-results" style="display: none;">
+        <div id="analysis-content" class="analysis-content"></div>
+        <div class="analysis-footer"><span class="analysis-source"></span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Panel: Behavioral Science Diagnostic (free-text analyzer) -->
+<section id="diag-bsd" class="page-section diag-panel" role="tabpanel" hidden>
+  <div class="container">
+    <div class="bsd-intro">
+      <h3>Behavioral Science Diagnostic</h3>
+      <p>Describe the event or situation in natural language. We’ll identify potential biases, heuristics, and fallacies, plus countermeasures.</p>
+    </div>
+
+    <div class="bsd-form">
+      <div class="bsd-group">
+        <textarea id="bsd-text" class="event-input" rows="4" placeholder="Describe the situation... e.g., ‘Leadership approved the risky plan quickly because a well-known executive supported it, and no one raised objections.’"></textarea>
+      </div>
+      <div class="bsd-actions">
+        <button type="button" id="bsd-analyze" class="btn btn-primary btn-lg">Analyze</button>
+      </div>
+    </div>
+
+    <div id="bsd-output" class="bsd-output" style="display:none"></div>
+  </div>
+</section>
+
+<!-- Panel: Driver Card Demo (renders from /api/metric-cards/<id>) -->
+<section id="diag-driver-card" class="page-section diag-panel" role="tabpanel" hidden>
+  <div class="container">
+    <div class="bsd-intro">
+      <h3>Driver Card Preview</h3>
+      <p>Select a seeded example to preview the new Metric Card layout.</p>
+    </div>
+    <div style="display:flex; gap:8px; align-items:center; margin-bottom:12px;">
+      <label for="driver-card-id">Select Card</label>
+      <select id="driver-card-id" class="form-control" style="max-width:360px;">
+        <option value="">Loading…</option>
+      </select>
+      <button class="btn btn-primary" id="driver-card-load">Load</button>
+    </div>
+    <div id="driver-card-demo"></div>
+  </div>
+  <script src="{{ url_for('static', filename='js/driver-card-demo.js') }}?v=20250913-3"></script>
+</section>
+
+<script src="{{ url_for('static', filename='js/diagnostics.js') }}?v=20250912-2"></script>
+{% endblock %}

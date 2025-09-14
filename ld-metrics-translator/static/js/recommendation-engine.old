@@ -1,0 +1,1072 @@
+/**
+ * Rules-Based Recommendation Engine for L&D Metrics Translator
+ * Provides intelligent metric recommendations based on user selections and context
+ */
+
+class RecommendationEngine {
+    constructor() {
+        this.recommendations = [];
+        this.metricTemplates = this.initializeMetricTemplates();
+        this.combinationRules = this.initializeCombinationRules();
+        this.outcomeContexts = this.initializeOutcomeContexts();
+        this.fallbackRecommendations = this.initializeFallbackRecommendations();
+        this.init();
+    }
+
+    init() {
+        // Wait for DOM to be ready
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', () => {
+                this.initializeAfterDOMReady();
+            });
+        } else {
+            this.initializeAfterDOMReady();
+        }
+    }
+
+    initializeAfterDOMReady() {
+        console.log('RecommendationEngine: Initializing after DOM ready');
+        
+        // Initialize recommendation display area
+        this.createRecommendationPanel();
+        
+        // Listen for selection changes
+        this.bindSelectionEvents();
+        
+        // Generate initial recommendations
+        this.generateInitialRecommendations();
+        
+        console.log('RecommendationEngine: Initialization complete');
+    }
+
+    initializeMetricTemplates() {
+        return {
+            'operational': {
+                name: 'Operational KPI',
+                priority: 'high',
+                characteristics: ['measurable', 'quantitative', 'business-focused'],
+                synergies: ['behavioral', 'neuroscience'],
+                recommendations: [
+                    {
+                        context: 'efficiency',
+                        metrics: ['Time to Competency', 'Training Cost per Employee', 'Completion Rate'],
+                        reasoning: 'These operational metrics provide clear ROI visibility and efficiency tracking.'
+                    },
+                    {
+                        context: 'performance',
+                        metrics: ['Employee Turnover Rate', 'Internal Mobility Rate', 'Cost per Hire'],
+                        reasoning: 'Focus on retention and internal development for sustainable performance.'
+                    }
+                ]
+            },
+            'behavioral': {
+                name: 'Behavioral Metric',
+                priority: 'medium',
+                characteristics: ['qualitative', 'engagement-focused', 'culture-driven'],
+                synergies: ['operational', 'neuroscience'],
+                recommendations: [
+                    {
+                        context: 'engagement',
+                        metrics: ['Active Participation in Learning Programs', 'Voluntary Learning Hours', 'Peer-to-Peer Knowledge Sharing'],
+                        reasoning: 'Behavioral metrics reveal intrinsic motivation and cultural adoption of learning.'
+                    },
+                    {
+                        context: 'collaboration',
+                        metrics: ['Mentorship Participation', 'Cross-Department Learning', 'Knowledge Sharing Index'],
+                        reasoning: 'These metrics indicate collaborative learning culture and knowledge flow.'
+                    }
+                ]
+            },
+            'neuroscience': {
+                name: 'Neuroscience-Based Metric',
+                priority: 'high',
+                characteristics: ['scientific', 'cognitive', 'evidence-based'],
+                synergies: ['operational', 'behavioral'],
+                recommendations: [
+                    {
+                        context: 'retention',
+                        metrics: ['Memory Consolidation', 'Cognitive Load', 'Attention'],
+                        reasoning: 'Neuroscience metrics provide insights into learning effectiveness at the cognitive level.'
+                    },
+                    {
+                        context: 'optimization',
+                        metrics: ['Neuroplasticity Index', 'Stress Response', 'Flow State Frequency'],
+                        reasoning: 'These metrics help optimize learning conditions for maximum brain engagement.'
+                    }
+                ]
+            }
+        };
+    }
+
+    initializeCombinationRules() {
+        return [
+            {
+                combination: ['operational', 'behavioral'],
+                synergy: 0.8,
+                title: 'Performance & Culture Balance',
+                description: 'Combining operational efficiency with behavioral insights creates a holistic view of learning impact.',
+                recommendedMetrics: [
+                    'Time to Competency + Active Participation',
+                    'Employee Turnover Rate + Voluntary Learning Hours',
+                    'Training ROI + Peer Knowledge Sharing'
+                ]
+            },
+            {
+                combination: ['operational', 'neuroscience'],
+                synergy: 0.9,
+                title: 'Data-Driven Learning Optimization',
+                description: 'Scientific measurement of learning effectiveness with clear business outcomes.',
+                recommendedMetrics: [
+                    'Completion Rate + Memory Consolidation',
+                    'Cost per Hire + Cognitive Load Assessment',
+                    'Performance Improvement + Attention Metrics'
+                ]
+            },
+            {
+                combination: ['behavioral', 'neuroscience'],
+                synergy: 0.85,
+                title: 'Human-Centered Learning Design',
+                description: 'Understanding both motivation and cognitive processes for optimal learning experiences.',
+                recommendedMetrics: [
+                    'Engagement Score + Flow State Frequency',
+                    'Collaboration Index + Neuroplasticity',
+                    'Learning Motivation + Stress Response'
+                ]
+            },
+            {
+                combination: ['operational', 'behavioral', 'neuroscience'],
+                synergy: 0.95,
+                title: 'Comprehensive Learning Analytics',
+                description: 'The gold standard: business impact, human behavior, and cognitive science combined.',
+                recommendedMetrics: [
+                    'ROI + Engagement + Memory Retention',
+                    'Efficiency + Motivation + Cognitive Load',
+                    'Performance + Culture + Brain Health'
+                ]
+            }
+        ];
+    }
+
+    initializeOutcomeContexts() {
+        return {
+            'employee_engagement': {
+                priority_metrics: ['behavioral', 'neuroscience'],
+                key_indicators: ['Active Participation', 'Voluntary Learning Hours', 'Flow State'],
+                success_factors: ['intrinsic motivation', 'positive learning culture', 'optimal challenge level']
+            },
+            'skill_development': {
+                priority_metrics: ['operational', 'neuroscience'],
+                key_indicators: ['Time to Competency', 'Memory Consolidation', 'Performance Improvement'],
+                success_factors: ['structured learning paths', 'spaced repetition', 'practical application']
+            },
+            'retention_improvement': {
+                priority_metrics: ['operational', 'behavioral'],
+                key_indicators: ['Employee Turnover Rate', 'Internal Mobility', 'Career Satisfaction'],
+                success_factors: ['growth opportunities', 'recognition programs', 'work-life balance']
+            },
+            'performance_enhancement': {
+                priority_metrics: ['operational', 'neuroscience'],
+                key_indicators: ['Productivity Metrics', 'Quality Scores', 'Cognitive Performance'],
+                success_factors: ['clear objectives', 'feedback loops', 'stress management']
+            },
+            'innovation_culture': {
+                priority_metrics: ['behavioral', 'neuroscience'],
+                key_indicators: ['Creative Problem Solving', 'Risk Taking', 'Neuroplasticity'],
+                success_factors: ['psychological safety', 'diverse perspectives', 'experimentation']
+            }
+        };
+    }
+
+    initializeFallbackRecommendations() {
+        return {
+            'no_selections': {
+                title: 'Start Your L&D Analytics Journey',
+                recommendations: [
+                    {
+                        metric: 'Employee Engagement Score',
+                        type: 'behavioral',
+                        reasoning: 'Foundation metric that influences all other learning outcomes.'
+                    },
+                    {
+                        metric: 'Training Completion Rate',
+                        type: 'operational',
+                        reasoning: 'Essential baseline for measuring program effectiveness.'
+                    },
+                    {
+                        metric: 'Memory Retention Rate',
+                        type: 'neuroscience',
+                        reasoning: 'Scientific measure of actual learning effectiveness.'
+                    }
+                ]
+            },
+            'single_category': {
+                title: 'Enhance Your Measurement Strategy',
+                description: 'Consider adding complementary metric types for deeper insights.'
+            },
+            'conflicting_selections': {
+                title: 'Resolve Selection Conflicts',
+                description: 'Some selections may not align well. Here are better combinations.'
+            }
+        };
+    }
+
+        }
+    };
+}
+
+initializeCombinationRules() {
+    return [
+        {
+            combination: ['operational', 'behavioral'],
+            synergy: 0.8,
+            title: 'Performance & Culture Balance',
+            description: 'Combining operational efficiency with behavioral insights creates a holistic view of learning impact.',
+            recommendedMetrics: [
+                'Time to Competency + Active Participation',
+                'Employee Turnover Rate + Voluntary Learning Hours',
+                'Training ROI + Peer Knowledge Sharing'
+            ]
+        },
+        {
+            combination: ['operational', 'neuroscience'],
+            synergy: 0.9,
+            title: 'Data-Driven Learning Optimization',
+            description: 'Scientific measurement of learning effectiveness with clear business outcomes.',
+            recommendedMetrics: [
+                'Completion Rate + Memory Consolidation',
+                'Cost per Hire + Cognitive Load Assessment',
+                'Performance Improvement + Attention Metrics'
+            ]
+        },
+        {
+            combination: ['behavioral', 'neuroscience'],
+            synergy: 0.85,
+            title: 'Human-Centered Learning Design',
+            description: 'Understanding both motivation and cognitive processes for optimal learning experiences.',
+            recommendedMetrics: [
+                'Engagement Score + Flow State Frequency',
+                'Collaboration Index + Neuroplasticity',
+                'Learning Motivation + Stress Response'
+            ]
+        },
+        {
+            combination: ['operational', 'behavioral', 'neuroscience'],
+            synergy: 0.95,
+            title: 'Comprehensive Learning Analytics',
+            description: 'The gold standard: business impact, human behavior, and cognitive science combined.',
+            recommendedMetrics: [
+                'ROI + Engagement + Memory Retention',
+                'Efficiency + Motivation + Cognitive Load',
+                'Performance + Culture + Brain Health'
+            ]
+        }
+    ];
+}
+
+initializeOutcomeContexts() {
+    return {
+        'employee_engagement': {
+            priority_metrics: ['behavioral', 'neuroscience'],
+            key_indicators: ['Active Participation', 'Voluntary Learning Hours', 'Flow State'],
+            success_factors: ['intrinsic motivation', 'positive learning culture', 'optimal challenge level']
+        },
+        'skill_development': {
+            priority_metrics: ['operational', 'neuroscience'],
+            key_indicators: ['Time to Competency', 'Memory Consolidation', 'Performance Improvement'],
+            success_factors: ['structured learning paths', 'spaced repetition', 'practical application']
+        },
+        'retention_improvement': {
+            priority_metrics: ['operational', 'behavioral'],
+            key_indicators: ['Employee Turnover Rate', 'Internal Mobility', 'Career Satisfaction'],
+            success_factors: ['growth opportunities', 'recognition programs', 'work-life balance']
+        },
+        'performance_enhancement': {
+            priority_metrics: ['operational', 'neuroscience'],
+            key_indicators: ['Productivity Metrics', 'Quality Scores', 'Cognitive Performance'],
+            success_factors: ['clear objectives', 'feedback loops', 'stress management']
+        },
+        'innovation_culture': {
+            priority_metrics: ['behavioral', 'neuroscience'],
+            key_indicators: ['Creative Problem Solving', 'Risk Taking', 'Neuroplasticity'],
+            success_factors: ['psychological safety', 'diverse perspectives', 'experimentation']
+        }
+    };
+}
+
+initializeFallbackRecommendations() {
+    return {
+        'no_selections': {
+            title: 'Start Your L&D Analytics Journey',
+            recommendations: [
+                {
+                    metric: 'Employee Engagement Score',
+                    type: 'behavioral',
+                    reasoning: 'Foundation metric that influences all other learning outcomes.'
+                },
+                {
+                    metric: 'Training Completion Rate',
+                    type: 'operational',
+                    reasoning: 'Essential baseline for measuring program effectiveness.'
+                },
+                {
+                    metric: 'Memory Retention Rate',
+                    type: 'neuroscience',
+                    reasoning: 'Scientific measure of actual learning effectiveness.'
+                }
+            ]
+        },
+        'single_category': {
+            title: 'Enhance Your Measurement Strategy',
+            description: 'Consider adding complementary metric types for deeper insights.'
+        },
+        'conflicting_selections': {
+            title: 'Resolve Selection Conflicts',
+            description: 'Some selections may not align well. Here are better combinations.'
+        }
+    };
+}
+
+createRecommendationPanel() {
+    try {
+        console.log('RecommendationEngine: Creating recommendation panel');
+        
+        // Check if panel already exists
+        let panel = document.getElementById('recommendation-panel');
+        
+        if (!panel) {
+            // Create the panel element if it doesn't exist
+            panel = document.createElement('div');
+            panel.id = 'recommendation-panel';
+            panel.className = 'recommendation-panel';
+            panel.innerHTML = `
+                <div class="recommendation-header">
+                    <h3>🎯 Smart Recommendations</h3>
+                    <p class="recommendation-subtitle">AI-powered suggestions based on your selections</p>
+                </div>
+                <div class="recommendation-content">
+                    <div class="recommendation-loading">
+                        <div class="loading-spinner"></div>
+                        <p>Analyzing your selections...</p>
+                    </div>
+                </div>
+            `;
+            
+            // Add close button functionality
+            const closeBtn = document.createElement('button');
+            closeBtn.className = 'close-btn';
+            closeBtn.innerHTML = '&times;';
+            closeBtn.onclick = () => this.togglePanel();
+            panel.querySelector('.recommendation-header').appendChild(closeBtn);
+            
+            // Store references to panel elements
+            this.panel = panel;
+            this.recommendationContent = panel.querySelector('.recommendation-content');
+        }
+        
+        // Find the metrics container and its parent
+        const metricsContainer = document.getElementById('metrics-container');
+        const exploreSection = document.getElementById('explore');
+        
+        // Remove panel from its current position if it exists
+        if (panel.parentNode) {
+            panel.parentNode.removeChild(panel);
+        }
+        
+        // Insert the panel in the correct position
+        if (metricsContainer) {
+            // Insert after metrics container within the Explore section
+            metricsContainer.insertAdjacentElement('afterend', panel);
+            console.log('RecommendationEngine: Panel positioned after metrics container');
+        } else if (exploreSection) {
+            // Fallback: Append to end of Explore section
+            exploreSection.appendChild(panel);
+            console.log('RecommendationEngine: Panel appended to Explore section');
+        } else {
+            // Last resort: Append to body
+            document.body.appendChild(panel);
+            console.warn('RecommendationEngine: Could not find Explore section, appending to body');
+        }
+        
+        // Make sure the panel is visible
+            if (e.target.type === 'checkbox' && e.target.closest('.dropdown-content')) {
+                setTimeout(() => this.generateRecommendations(), 100);
+            }
+        });
+    }
+
+    generateInitialRecommendations() {
+        this.showFallbackRecommendations('no_selections');
+    }
+
+    async generateRecommendations() {
+        const selections = this.getCurrentSelections();
+        const context = this.analyzeContext(selections);
+        
+        // Show loading state
+        this.showLoadingState();
+        
+        try {
+            // Try to get recommendations from backend API first
+            const apiRecommendations = await this.fetchRecommendationsFromAPI(selections, context);
+            if (apiRecommendations) {
+                this.displayAPIRecommendations(apiRecommendations);
+                return;
+            }
+        } catch (error) {
+            console.warn('API recommendations failed, falling back to client-side logic:', error);
+        }
+        
+        // Fallback to client-side logic
+        if (this.hasNoSelections(selections)) {
+            this.showFallbackRecommendations('no_selections');
+            return;
+        }
+
+        if (this.hasSingleCategory(selections)) {
+            this.generateSingleCategoryRecommendations(selections, context);
+            return;
+        }
+
+        if (this.hasMultipleCategories(selections)) {
+            this.generateCombinationRecommendations(selections, context);
+            return;
+        }
+
+        this.showFallbackRecommendations('conflicting_selections');
+    }
+
+    async fetchRecommendationsFromAPI(selections, context) {
+        const requestData = {
+            categories: Array.from(selections.categories),
+            outcomes: Array.from(selections.outcomes),
+            metrics: Array.from(selections.metrics),
+            context: context.primaryFocus || 'general'
+        };
+
+        const response = await fetch('/api/recommendations', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(requestData)
+        });
+
+        if (!response.ok) {
+            throw new Error(`API request failed: ${response.status}`);
+        }
+
+        const data = await response.json();
+        return data.recommendations;
+    }
+
+    displayAPIRecommendations(apiRecommendations) {
+        const recommendations = {
+            title: '🎯 AI-Powered Recommendations',
+            subtitle: 'Intelligent suggestions based on your selections and industry best practices',
+            items: [],
+            advanced: true,
+            api_powered: true
+        };
+
+        // Process primary recommendations
+        if (apiRecommendations.primary && apiRecommendations.primary.length > 0) {
+            apiRecommendations.primary.forEach(rec => {
+                recommendations.items.push({
+                    title: rec.title || 'Primary Recommendation',
+                    metrics: rec.metrics || [],
+                    reasoning: rec.reasoning || 'Recommended based on your selections.',
+                    priority: rec.priority || 'medium',
+                    type: rec.type || 'primary'
+                });
+            });
+        }
+
+        // Process secondary recommendations
+        if (apiRecommendations.secondary && apiRecommendations.secondary.length > 0) {
+            apiRecommendations.secondary.forEach(rec => {
+                recommendations.items.push({
+                    title: rec.title || 'Secondary Recommendation',
+                    metrics: rec.metrics || [],
+                    reasoning: rec.reasoning || 'Additional recommendation based on your context.',
+                    priority: rec.priority || 'medium',
+                    type: rec.type || 'secondary'
+                });
+            });
+        }
+
+        // Process synergies
+        if (apiRecommendations.synergies && apiRecommendations.synergies.length > 0) {
+            const synergy = apiRecommendations.synergies[0]; // Use first synergy
+            recommendations.synergy = synergy.synergy_score || 0.8;
+            recommendations.items.push({
+                title: synergy.title || 'Synergy Recommendation',
+                metrics: synergy.metrics || [],
+                reasoning: synergy.reasoning || 'These metrics work well together to provide comprehensive insights.',
+                priority: 'high',
+                type: 'synergy'
+            });
+        }
+
+        // Process insights
+        if (apiRecommendations.insights && apiRecommendations.insights.length > 0) {
+            apiRecommendations.insights.forEach(insight => {
+                const outcomeText = insight.outcome ? `Focus on ${insight.outcome}` : 'Strategic insight based on your selections.';
+                recommendations.items.push({
+                    title: insight.title || 'Strategic Insight',
+                    metrics: insight.recommended_metrics || insight.key_metrics || [],
+                    reasoning: insight.recommended_approach || outcomeText,
+                    priority: insight.priority || 'medium',
+                    type: 'insight',
+                    additional_info: insight.success_factors || insight.timeline
+                });
+            });
+        }
+
+        this.displayRecommendations(recommendations);
+    }
+
+    showLoadingState() {
+        const panel = document.getElementById('recommendation-panel');
+        if (!panel) return;
+
+        const content = panel.querySelector('.recommendation-content');
+        if (!content) return;
+
+        content.innerHTML = `
+            <div class="recommendation-loading">
+                <div class="loading-spinner"></div>
+                <p>Analyzing your selections and generating personalized recommendations...</p>
+            </div>
+        `;
+
+        panel.style.display = 'block';
+        panel.classList.add('active');
+    }
+
+    getCurrentSelections() {
+        const selections = {
+            categories: new Set(),
+            outcomes: new Set(),
+            metrics: new Set(),
+            neuroscience: new Set()
+        };
+
+        // Get selections from multi-select navigation if available
+        if (window.multiSelectNav && window.multiSelectNav.selections) {
+            Object.keys(selections).forEach(key => {
+                if (window.multiSelectNav.selections[key]) {
+                    selections[key] = new Set(window.multiSelectNav.selections[key]);
+                }
+            });
+        }
+
+        return selections;
+    }
+
+    analyzeContext(selections) {
+        const context = {
+            primaryFocus: null,
+            secondaryFocus: null,
+            outcomeAlignment: [],
+            complexityLevel: 'basic'
+        };
+
+        // Determine primary focus based on selections
+        const categoryTypes = this.mapCategoriesToTypes(selections.categories);
+        if (categoryTypes.length > 0) {
+            context.primaryFocus = categoryTypes[0];
+            if (categoryTypes.length > 1) {
+                context.secondaryFocus = categoryTypes[1];
+                context.complexityLevel = 'advanced';
+            }
+        }
+
+        // Analyze outcome alignment
+        context.outcomeAlignment = this.mapOutcomesToContexts(selections.outcomes);
+
+        return context;
+    }
+
+    mapCategoriesToTypes(categoryIds) {
+        const types = [];
+        categoryIds.forEach(id => {
+            const checkbox = document.querySelector(`#categories-dropdown input[value="${id}"]`);
+            if (checkbox) {
+                const name = checkbox.dataset.name?.toLowerCase() || '';
+                if (name.includes('operational')) types.push('operational');
+                else if (name.includes('behavioral')) types.push('behavioral');
+                else if (name.includes('neuroscience')) types.push('neuroscience');
+            }
+        });
+        return [...new Set(types)]; // Remove duplicates
+    }
+
+    mapOutcomesToContexts(outcomeIds) {
+        const contexts = [];
+        outcomeIds.forEach(id => {
+            const checkbox = document.querySelector(`#outcomes-dropdown input[value="${id}"]`);
+            if (checkbox) {
+                const name = checkbox.dataset.name?.toLowerCase() || '';
+                if (name.includes('engagement')) contexts.push('employee_engagement');
+                else if (name.includes('skill') || name.includes('development')) contexts.push('skill_development');
+                else if (name.includes('retention')) contexts.push('retention_improvement');
+                else if (name.includes('performance')) contexts.push('performance_enhancement');
+                else if (name.includes('innovation')) contexts.push('innovation_culture');
+            }
+        });
+        return [...new Set(contexts)];
+    }
+
+    hasNoSelections(selections) {
+        return Object.values(selections).every(set => set.size === 0);
+    }
+
+    hasSingleCategory(selections) {
+        const categoryTypes = this.mapCategoriesToTypes(selections.categories);
+        return categoryTypes.length === 1;
+    }
+
+    hasMultipleCategories(selections) {
+        const categoryTypes = this.mapCategoriesToTypes(selections.categories);
+        return categoryTypes.length > 1;
+    }
+
+    generateSingleCategoryRecommendations(selections, context) {
+        const categoryType = context.primaryFocus;
+        const template = this.metricTemplates[categoryType];
+        
+        if (!template) {
+            this.showFallbackRecommendations('single_category');
+            return;
+        }
+
+        const recommendations = {
+            title: `${template.name} Recommendations`,
+            subtitle: 'Consider adding complementary metrics for deeper insights',
+            items: [],
+            suggestions: []
+        };
+
+        // Add specific recommendations based on context
+        if (context.outcomeAlignment.length > 0) {
+            context.outcomeAlignment.forEach(outcome => {
+                const outcomeContext = this.outcomeContexts[outcome];
+                if (outcomeContext) {
+                    recommendations.items.push({
+                        title: `${outcome.replace('_', ' ').toUpperCase()} Focus`,
+                        metrics: outcomeContext.key_indicators.slice(0, 3),
+                        reasoning: `Optimized for ${outcome.replace('_', ' ')} based on your selections.`
+                    });
+                }
+            });
+        } else {
+            // Use template recommendations
+            template.recommendations.forEach(rec => {
+                recommendations.items.push(rec);
+            });
+        }
+
+        // Add synergy suggestions
+        template.synergies.forEach(synergyType => {
+            const synergyTemplate = this.metricTemplates[synergyType];
+            if (synergyTemplate) {
+                recommendations.suggestions.push({
+                    type: 'add_category',
+                    category: synergyType,
+                    title: `Add ${synergyTemplate.name}`,
+                    benefit: `Combining ${template.name} with ${synergyTemplate.name} provides comprehensive insights.`
+                });
+            }
+        });
+
+        this.displayRecommendations(recommendations);
+    }
+
+    generateCombinationRecommendations(selections, context) {
+        const categoryTypes = this.mapCategoriesToTypes(selections.categories);
+        const combination = this.findBestCombination(categoryTypes);
+        
+        if (!combination) {
+            this.showFallbackRecommendations('conflicting_selections');
+            return;
+        }
+
+        const recommendations = {
+            title: combination.title,
+            subtitle: combination.description,
+            synergy: combination.synergy,
+            items: [],
+            advanced: true
+        };
+
+        // Generate contextual recommendations
+        if (context.outcomeAlignment.length > 0) {
+            context.outcomeAlignment.forEach(outcome => {
+                const outcomeContext = this.outcomeContexts[outcome];
+                if (outcomeContext) {
+                    const relevantMetrics = this.getRelevantMetricsForOutcome(outcome, categoryTypes);
+                    recommendations.items.push({
+                        title: `${outcome.replace('_', ' ').toUpperCase()} Strategy`,
+                        metrics: relevantMetrics,
+                        reasoning: `Tailored combination for ${outcome.replace('_', ' ')} improvement.`,
+                        priority: 'high'
+                    });
+                }
+            });
+        }
+
+        // Add combination-specific recommendations
+        recommendations.items.push({
+            title: 'Recommended Metric Combinations',
+            metrics: combination.recommendedMetrics,
+            reasoning: combination.description,
+            priority: 'medium'
+        });
+
+        this.displayRecommendations(recommendations);
+    }
+
+    findBestCombination(categoryTypes) {
+        const sortedTypes = categoryTypes.sort();
+        return this.combinationRules.find(rule => {
+            const sortedCombination = rule.combination.sort();
+            return JSON.stringify(sortedTypes) === JSON.stringify(sortedCombination);
+        });
+    }
+
+    getRelevantMetricsForOutcome(outcome, categoryTypes) {
+        const outcomeContext = this.outcomeContexts[outcome];
+        if (!outcomeContext) return [];
+
+        const relevantMetrics = [];
+        categoryTypes.forEach(type => {
+            if (outcomeContext.priority_metrics.includes(type)) {
+                const template = this.metricTemplates[type];
+                if (template) {
+                    const contextRec = template.recommendations.find(rec => 
+                        rec.context === outcome.split('_')[0]
+                    );
+                    if (contextRec) {
+                        relevantMetrics.push(...contextRec.metrics.slice(0, 2));
+                    }
+                }
+            }
+        });
+
+        return relevantMetrics.length > 0 ? relevantMetrics : outcomeContext.key_indicators.slice(0, 3);
+    }
+
+    showFallbackRecommendations(type) {
+        const fallback = this.fallbackRecommendations[type];
+        if (!fallback) return;
+
+        const recommendations = {
+            title: fallback.title,
+            subtitle: fallback.description || 'Get started with these essential metrics',
+            items: fallback.recommendations || [],
+            fallback: true
+        };
+
+        this.displayRecommendations(recommendations);
+    }
+
+    displayRecommendations(recommendations) {
+        const panel = document.getElementById('recommendation-panel');
+        if (!panel) return;
+
+        const content = panel.querySelector('.recommendation-content');
+        if (!content) return;
+
+        let html = '';
+
+        if (recommendations.synergy) {
+            html += `
+                <div class="synergy-score">
+                    <div class="synergy-bar">
+                        <div class="synergy-fill" style="width: ${recommendations.synergy * 100}%"></div>
+                    </div>
+                    <span class="synergy-text">Synergy Score: ${Math.round(recommendations.synergy * 100)}%</span>
+                </div>
+            `;
+        }
+
+        html += '<div class="recommendation-items">';
+
+        recommendations.items.forEach((item, index) => {
+            const priorityClass = item.priority ? `priority-${item.priority}` : '';
+            const title = item.title || item.metric || 'Recommendation';
+            const reasoning = item.reasoning || 'No additional details available.';
+            
+            html += `
+                <div class="recommendation-item ${priorityClass}">
+                    <div class="recommendation-item-header">
+                        <h4>${title}</h4>
+                        ${item.type ? `<span class="metric-type-badge">${item.type}</span>` : ''}
+                    </div>
+                    <div class="recommendation-item-content">
+                        ${item.metrics && item.metrics.length > 0 ? `
+                            <ul class="metric-list">
+                                ${item.metrics.map(metric => `<li>${metric || 'Metric'}</li>`).join('')}
+                            </ul>
+                        ` : ''}
+                        <p class="recommendation-reasoning">${reasoning}</p>
+                    </div>
+                </div>
+            `;
+        });
+
+        if (recommendations.suggestions && recommendations.suggestions.length > 0) {
+            html += '<div class="recommendation-suggestions">';
+            html += '<h4>💡 Suggestions to Improve</h4>';
+            recommendations.suggestions.forEach(suggestion => {
+                const title = suggestion.title || 'Suggestion';
+                const benefit = suggestion.benefit || suggestion.description || 'Additional improvement opportunity.';
+                html += `
+                    <div class="suggestion-item">
+                        <strong>${title}</strong>
+                        <p>${benefit}</p>
+                    </div>
+                `;
+            });
+            html += '</div>';
+        }
+
+        html += '</div>';
+
+        content.innerHTML = html;
+        
+        // Show panel
+        panel.style.display = 'block';
+        panel.classList.add('active');
+    }
+
+    showFallbackRecommendations(type) {
+        console.log(`RecommendationEngine: Showing fallback recommendations for: ${type}`);
+        
+        const fallback = this.fallbackRecommendations[type];
+        if (!fallback) {
+            console.warn(`RecommendationEngine: No fallback found for type: ${type}`);
+            return;
+        }
+
+        const recommendations = {
+            items: [
+                {
+                    title: 'Employee Engagement Score',
+                    type: 'behavioral',
+                    reasoning: 'Foundation metric that influences all other learning outcomes.',
+                    priority: 'high',
+                    metrics: ['Engagement Score', 'Participation Rate']
+                },
+                {
+                    title: 'Training Completion Rate',
+                    type: 'operational', 
+                    reasoning: 'Essential baseline for measuring program effectiveness.',
+                    priority: 'high',
+                    metrics: ['Completion Rate', 'Drop-off Rate']
+                },
+                {
+                    title: 'Memory Retention Rate',
+                    type: 'neuroscience',
+                    reasoning: 'Scientific measure of actual learning effectiveness.',
+                    priority: 'medium',
+                    metrics: ['Retention Score', 'Recall Accuracy']
+                }
+            ],
+            insights: [
+                {
+                    title: 'Getting Started',
+                    content: 'Select metric categories and L&D outcomes above to get personalized recommendations.',
+                    type: 'tip'
+                }
+            ]
+        };
+        
+        // Merge with any existing fallback recommendations
+        if (fallback.recommendations) {
+            recommendations.items = [...fallback.recommendations, ...recommendations.items];
+        }
+
+        console.log('RecommendationEngine: Calling displayRecommendations with:', recommendations);
+        this.displayRecommendations(recommendations);
+    }
+
+    // Handle click on recommendation item
+    handleRecommendationAction(metricTitle) {
+        console.log('RecommendationEngine: Recommendation clicked:', metricTitle);
+        
+        // Find the search input and set its value
+        const searchInput = document.getElementById('search-input');
+        if (searchInput) {
+            searchInput.value = metricTitle;
+            
+            // Trigger input event to filter metrics
+            const event = new Event('input', { bubbles: true });
+            searchInput.dispatchEvent(event);
+        }
+    }
+
+    displayRecommendations(recommendations) {
+        console.log('RecommendationEngine: Displaying recommendations:', recommendations);
+        
+        const panel = document.getElementById('recommendation-panel');
+        if (!panel) {
+            console.error('RecommendationEngine: Panel not found');
+            return;
+        }
+
+        const content = panel.querySelector('.recommendation-content');
+        if (!content) {
+            console.error('RecommendationEngine: Content area not found');
+            return;
+        }
+
+        // Always show the panel
+        panel.style.display = 'block';
+        
+        // Ensure we always show the getting started message if no recommendations
+        if ((!recommendations || !recommendations.items || recommendations.items.length === 0) && 
+            (!recommendations.insights || !recommendations.insights.some(i => i.title === 'Getting Started'))) {
+            recommendations = recommendations || {};
+            recommendations.insights = recommendations.insights || [];
+            recommendations.insights.unshift({
+                title: 'Getting Started',
+                content: 'Select metric categories and L&D outcomes above to get personalized recommendations.',
+                type: 'tip'
+            });
+        }
+        panel.classList.add('active');
+
+        // Build recommendations HTML
+        let html = '';
+        
+        // Add insights/help text at the top if available
+        if (recommendations.insights && recommendations.insights.length > 0) {
+            html += '<div class="recommendation-insights" style="margin-bottom: 1.5rem;">';
+            recommendations.insights.forEach(insight => {
+                html += `
+                    <div class="insight-item">
+                        <h4>${insight.title}</h4>
+                        <p>${insight.content}</p>
+                    </div>
+                `;
+            });
+            html += '</div>';
+        }
+
+        // Add synergy score if available
+        if (recommendations.synergy) {
+            html += `
+                <div class="synergy-score">
+                    <div class="synergy-bar">
+                        <div class="synergy-fill" style="width: ${recommendations.synergy}%"></div>
+                    </div>
+                    <span class="synergy-text">Synergy Score: ${recommendations.synergy}%</span>
+                </div>
+            `;
+        }
+
+        // Add recommendation items
+        if (recommendations.items && recommendations.items.length > 0) {
+            html += '<div class="recommendation-items">';
+            
+            recommendations.items.forEach(item => {
+                const priorityClass = item.priority ? `priority-${item.priority}` : 'priority-medium';
+                const typeClass = item.type ? `type-${item.type}` : '';
+                
+                const safeTitle = item.title || item.metric || 'Recommendation';
+                html += `
+                    <div class="recommendation-item ${priorityClass} ${typeClass}">
+                        <div class="recommendation-item-header">
+                            <h4>${safeTitle}</h4>
+                            ${item.priority ? `<span class="priority-badge priority-${item.priority}">${item.priority}</span>` : ''}
+                        </div>
+                        <div class="recommendation-item-content">
+                `;
+
+                // Add metrics if available
+                if (item.metrics && item.metrics.length > 0) {
+                    html += '<ul class="metric-list">';
+                    item.metrics.forEach(metric => {
+                        // Handle both string and object metric formats
+                        let metricText = '';
+                        if (typeof metric === 'string') {
+                            metricText = metric;
+                        } else if (metric && typeof metric === 'object') {
+                            metricText = metric.name || metric.title || metric.metric || 'Metric';
+                        } else {
+                            metricText = 'Metric';
+                        }
+                        
+                        // Ensure we have a valid string and it's not 'undefined'
+                        if (!metricText || metricText === 'undefined' || metricText === 'null') {
+                            metricText = 'Recommended Metric';
+                        }
+                        
+                        const safeMetric = metricText.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+                        html += '<li onclick="window.recommendationEngine.handleRecommendationAction(\'' + 
+                                safeMetric + '\')" ';
+                        html += 'style="cursor: pointer; text-decoration: underline; color: #4a90e2;">';
+                        html += metricText + '</li>';
+                    });
+                    html += '</ul>';
+                }
+
+                // Add reasoning
+                const safeReasoning = item.reasoning || 'No additional details available.';
+                html += `<p class="recommendation-reasoning">${safeReasoning}</p>`;
+
+                // Add additional info if available
+                if (item.additional_info) {
+                    html += `<p class="recommendation-additional">${item.additional_info}</p>`;
+                }
+
+                html += `
+                        </div>
+                    </div>
+                `;
+            });
+            
+            html += '</div>';
+        }
+
+        // Insights are now shown at the top
+
+        // Update content
+        content.innerHTML = html;
+        
+        console.log('RecommendationEngine: Recommendations displayed successfully');
+    }
+}
+
+// Initialize recommendation engine with error handling
+let recommendationEngine;
+
+// Safe initialization function
+function initializeRecommendationEngine() {
+    try {
+        console.log('RecommendationEngine: Initializing recommendation engine');
+        recommendationEngine = new RecommendationEngine();
+        window.recommendationEngine = recommendationEngine;
+        return true;
+    } catch (error) {
+        console.error('RecommendationEngine: Error initializing recommendation engine:', error);
+        return false;
+    }
+}
+
+// Initialize when DOM is ready
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => {
+        console.log('RecommendationEngine: DOM loaded, creating instance');
+        initializeRecommendationEngine();
+    });
+} else {
+    console.log('RecommendationEngine: DOM already ready, creating instance');
+    initializeRecommendationEngine();
+}
+
+// Export for debugging
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = { RecommendationEngine };
+}

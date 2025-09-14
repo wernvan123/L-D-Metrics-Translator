@@ -1,0 +1,82 @@
+{% extends "admin/base.html" %}
+
+{% block title %}Frameworks{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+    <h1 class="h2">
+        <i class="bi bi-diagram-3 me-2"></i>Frameworks
+    </h1>
+    <div class="btn-toolbar mb-2 mb-md-0">
+        <a href="{{ url_for('admin.add_framework') }}" class="btn btn-primary">
+            <i class="bi bi-plus-circle me-1"></i>Add Framework
+        </a>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-body">
+        {% if frameworks %}
+            <div class="table-responsive">
+                <table class="table table-hover data-table">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Name</th>
+                            <th>Source</th>
+                            <th>Active</th>
+                            <th>Competencies</th>
+                            <th>Created</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for fw in frameworks %}
+                        <tr>
+                            <td>
+                                <div class="fw-bold">{{ fw.name }}</div>
+                                <small class="text-muted">{{ fw.description or '' }}</small>
+                            </td>
+                            <td>{{ fw.source or '-' }}</td>
+                            <td>
+                                {% if fw.is_active %}
+                                    <span class="badge bg-success">Active</span>
+                                {% else %}
+                                    <span class="badge bg-secondary">Inactive</span>
+                                {% endif %}
+                            </td>
+                            <td><span class="badge bg-info">{{ fw.competencies|length }}</span></td>
+                            <td><small>{{ fw.created_date.strftime('%Y-%m-%d') if fw.created_date else '-' }}</small></td>
+                            <td>
+                                <div class="btn-group btn-group-sm">
+                                    <a href="{{ url_for('admin.competencies', framework_id=fw.id) }}" class="btn btn-outline-secondary" title="Manage Competencies">
+                                        <i class="bi bi-list-stars"></i>
+                                    </a>
+                                    <a href="{{ url_for('admin.edit_framework', id=fw.id) }}" class="btn btn-outline-primary" title="Edit">
+                                        <i class="bi bi-pencil"></i>
+                                    </a>
+                                    <form method="POST" action="{{ url_for('admin.delete_framework', id=fw.id) }}" style="display:inline;">
+                                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+                                        <button type="submit" class="btn btn-outline-danger delete-btn" data-item-name="{{ fw.name }}" title="Delete">
+                                            <i class="bi bi-trash"></i>
+                                        </button>
+                                    </form>
+                                </div>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        {% else %}
+            <div class="text-center py-5">
+                <i class="bi bi-diagram-3 text-muted" style="font-size: 4rem;"></i>
+                <h4 class="text-muted mt-3">No frameworks found</h4>
+                <p class="text-muted">Get started by adding your first framework.</p>
+                <a href="{{ url_for('admin.add_framework') }}" class="btn btn-primary">
+                    <i class="bi bi-plus-circle me-1"></i>Add Framework
+                </a>
+            </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

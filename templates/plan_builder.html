@@ -1,0 +1,165 @@
+{% extends "base.html" %}
+
+{% block step %}plan-builder{% endblock %}
+
+{% block breadcrumbs %}
+  <a href="/diagnostics">Diagnostics</a>
+  <span>→</span>
+  <a href="/plan-builder" class="active">Plan Builder</a>
+  <span>→</span>
+  <a href="/playbook">Playbook</a>
+{% endblock %}
+
+{% block content %}
+<section class="page plan-builder">
+  <div class="layout two-col">
+    <div class="col main">
+      <div class="card">
+        <div class="card-header">
+          <h2>Plan Configuration</h2>
+        </div>
+        <div class="card-body">
+          <div class="row gap">
+            <label class="field">
+              <span>Report Title</span>
+              <input id="report-title" placeholder="e.g., Q4 Leadership Development Plan" />
+            </label>
+            <label class="field">
+              <span>Report Type</span>
+              <select id="report-type">
+                <option value="comprehensive">Comprehensive</option>
+                <option value="basic">Basic</option>
+              </select>
+            </label>
+          </div>
+          <div class="row gap">
+            <label class="checkbox">
+              <input type="checkbox" id="include-ai-summary" checked /> Include AI Summary
+            </label>
+            <label class="checkbox">
+              <input type="checkbox" id="include-metrics" checked /> Include Selected Metrics
+            </label>
+          </div>
+          <div class="actions">
+            <button class="btn" id="save-plan-config">Save Plan</button>
+            <button class="btn primary" id="generate-report">Generate PDF Report</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Plan Setup / Filter Bar -->
+      <div class="card">
+        <div class="card-header">
+          <h3>Find Drivers and Nudges</h3>
+        </div>
+        <div class="card-body">
+          <div class="row gap">
+            <label class="field" style="flex:2 1 360px;">
+              <span>Search</span>
+              <input id="pb-search" placeholder="Search drivers, biases, or keywords" />
+            </label>
+            <label class="field" style="flex:1 1 220px;">
+              <span>Start with a Framework</span>
+              <select id="pb-fw-select">
+                <option value="">All Frameworks</option>
+              </select>
+            </label>
+            <label class="field" style="flex:1 1 220px;">
+              <span>Start with an Outcome</span>
+              <select id="pb-outcome-select">
+                <option value="">All Outcomes</option>
+              </select>
+            </label>
+          </div>
+          <div id="pb-status" class="notice" style="display:none"></div>
+        </div>
+      </div>
+
+      <!-- Main Workspace Grid -->
+      <div class="card">
+        <div class="card-header"><h3>Suggestions & Library</h3></div>
+        <div class="card-body">
+          <div id="pb-grid" class="grid three"></div>
+          <div id="pb-pagination" class="pagination" style="display:none"></div>
+        </div>
+      </div>
+
+      <div class="grid two">
+        <div class="card">
+          <div class="card-header"><h3>Selected Metrics</h3></div>
+          <div class="card-body" id="selected-metrics">Loading...</div>
+        </div>
+        <div class="card">
+          <div class="card-header">
+            <h3>AI Suggestions</h3>
+            <label class="toggle">
+              <input type="checkbox" id="toggle-ai-suggestions" />
+              <span>Use AI Suggestions</span>
+            </label>
+          </div>
+          <div class="card-body" id="ai-suggestions">—</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><h3>Report Progress</h3></div>
+        <div class="card-body">
+          <div id="report-progress">No report running.</div>
+          <div id="report-history" class="mt"></div>
+        </div>
+      </div>
+    </div>
+
+    <aside class="col side">
+      <div class="card">
+        <div class="card-header"><h3>Framework & Competencies</h3></div>
+        <div class="card-body">
+          <label class="field">
+            <span>Select Framework</span>
+            <select id="framework-select">
+              <option value="">— Choose —</option>
+              <!-- Options populated by JS -->
+            </select>
+          </label>
+          <div class="mt">
+            <button id="set-framework" class="btn">Set Framework</button>
+          </div>
+          <div class="mt" id="framework-summary">Loading...</div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header"><h3>Browse (Optional)</h3></div>
+        <div class="card-body" id="framework-tree">—</div>
+      </div>
+
+      <!-- Current Selections Sidebar -->
+      <div class="card pb-sidebar">
+        <div class="card-header">
+          <h3>Current Selections</h3>
+        </div>
+        <div class="card-body" id="pb-sidebar-content">
+          <!-- Populated by JS: grouped by kind with Remove buttons -->
+          Loading...
+        </div>
+        <div class="card-footer">
+          <button class="btn primary" id="pb-generate-report">Generate Report</button>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <!-- Optional Summary Modal used by plan-builder.js (export preview) -->
+  <div id="pb-summary-modal" class="modal" style="display:none;">
+    <div class="modal-backdrop"></div>
+    <div class="modal-dialog">
+      <button class="modal-close" aria-label="Close">×</button>
+      <div id="pb-summary-body" class="modal-body">Loading…</div>
+    </div>
+  </div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+  <script src="{{ url_for('static', filename='js/plan-builder.js') }}"></script>
+{% endblock %}
+

@@ -1,0 +1,43 @@
+{
+  "goleman-emotional-intelligence:self-awareness": [
+    "360 Feedback Score",
+    "Self-Assessment Completion Rate",
+    "Peer Feedback Score"
+  ],
+  "goleman-emotional-intelligence:self-management": [
+    "On-Time Delivery Rate",
+    "Absenteeism Rate",
+    "Knowledge Application Rate"
+  ],
+  "goleman-emotional-intelligence:social-awareness": [
+    "Pulse Survey eNPS",
+    "Manager Feedback Quality",
+    "Customer Satisfaction (CSAT)"
+  ],
+  "goleman-emotional-intelligence:relationship-management": [
+    "Collaboration Index",
+    "Manager Feedback Quality",
+    "Cross-Functional Collaboration Score"
+  ],
+  "situational-leadership:directing": [
+    "Time to Productivity",
+    "Error Rate",
+    "Cycle Time Reduction"
+  ],
+  "situational-leadership:coaching": [
+    "Learning Retention Score",
+    "360 Feedback Score",
+    "Coaching Session Completion Rate"
+  ],
+  "situational-leadership:supporting": [
+    "Collaboration Index",
+    "Pulse Survey eNPS",
+    "Team Satisfaction Index",
+    "Mentoring Hours per Employee"
+  ],
+  "situational-leadership:delegating": [
+    "On-Time Delivery Rate",
+    "Absenteeism Rate",
+    "Delegation Effectiveness Score"
+  ]
+}

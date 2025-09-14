@@ -1,0 +1,90 @@
+{% extends "admin/base.html" %}
+
+{% block title %}L&D Outcomes Management{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+    <h1 class="h2">
+        <i class="bi bi-target me-2"></i>L&D Outcomes Management
+    </h1>
+    <div class="btn-toolbar mb-2 mb-md-0">
+        <a href="{{ url_for('admin.add_outcome') }}" class="btn btn-primary">
+            <i class="bi bi-plus-circle me-1"></i>Add L&D Outcome
+        </a>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header">
+        <h5 class="card-title mb-0">
+            All L&D Outcomes ({{ outcomes|length }} total)
+        </h5>
+    </div>
+    <div class="card-body">
+        {% if outcomes %}
+            <div class="table-responsive">
+                <table class="table table-hover data-table">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Name</th>
+                            <th>Description</th>
+                            <th>Metrics Count</th>
+                            <th>Created</th>
+                            <th width="150">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for outcome in outcomes %}
+                            <tr>
+                                <td>
+                                    <div class="fw-bold">{{ outcome.name }}</div>
+                                </td>
+                                <td>
+                                    <div class="text-muted">{{ outcome.description or 'No description' }}</div>
+                                </td>
+                                <td>
+                                    <span class="badge bg-info">{{ outcome.metrics | length }} metrics</span>
+                                </td>
+                                <td>
+                                    <small>{{ outcome.created_date.strftime('%Y-%m-%d %H:%M') }}</small>
+                                </td>
+                                <td>
+                                    <div class="btn-group btn-group-sm">
+                                        <a href="{{ url_for('admin.edit_outcome', id=outcome.id) }}" 
+                                           class="btn btn-outline-primary" title="Edit">
+                                            <i class="bi bi-pencil"></i>
+                                        </a>
+                                        {% if (outcome.metrics | length) == 0 %}
+                                            <form method="POST" action="{{ url_for('admin.delete_outcome', id=outcome.id) }}" 
+                                                  style="display: inline;">
+                                                {{ csrf_token() }}
+                                                <button type="submit" class="btn btn-outline-danger delete-btn" 
+                                                        title="Delete" data-item-name="{{ outcome.name }}">
+                                                    <i class="bi bi-trash"></i>
+                                                </button>
+                                            </form>
+                                        {% else %}
+                                            <button class="btn btn-outline-danger" disabled title="Cannot delete - has associated metrics">
+                                                <i class="bi bi-trash"></i>
+                                            </button>
+                                        {% endif %}
+                                    </div>
+                                </td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        {% else %}
+            <div class="text-center py-5">
+                <i class="bi bi-target text-muted" style="font-size: 4rem;"></i>
+                <h4 class="text-muted mt-3">No L&D outcomes found</h4>
+                <p class="text-muted">Get started by adding your first L&D outcome.</p>
+                <a href="{{ url_for('admin.add_outcome') }}" class="btn btn-primary">
+                    <i class="bi bi-plus-circle me-1"></i>Add L&D Outcome
+                </a>
+            </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

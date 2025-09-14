@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rate Limit Exceeded - L & D Metrics Translator</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <style>
+        .error-container {
+            text-align: center;
+            padding: 4rem 2rem;
+            max-width: 600px;
+            margin: 0 auto;
+        }
+        .error-code {
+            font-size: 6rem;
+            font-weight: bold;
+            color: #9b59b6;
+            margin-bottom: 1rem;
+        }
+        .error-message {
+            font-size: 1.5rem;
+            color: var(--text-color);
+            margin-bottom: 2rem;
+        }
+        .error-description {
+            color: var(--text-muted);
+            margin-bottom: 2rem;
+            line-height: 1.6;
+        }
+        .retry-info {
+            background: #f8f9fa;
+            padding: 1rem;
+            border-radius: 5px;
+            margin-bottom: 2rem;
+            border-left: 4px solid #9b59b6;
+        }
+        .error-actions {
+            display: flex;
+            gap: 1rem;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+        .btn-home {
+            background: var(--primary-color);
+            color: white;
+            padding: 0.75rem 1.5rem;
+            text-decoration: none;
+            border-radius: 5px;
+            transition: background-color 0.3s;
+        }
+        .btn-home:hover {
+            background: var(--primary-dark);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="error-container">
+            <div class="error-code">429</div>
+            <div class="error-message">Too Many Requests</div>
+            <div class="error-description">
+                You've made too many requests in a short period.
+                <br>
+                Please wait a moment before trying again.
+            </div>
+            {% if retry_after %}
+            <div class="retry-info">
+                <strong>Please wait {{ retry_after }} seconds before retrying.</strong>
+            </div>
+            {% endif %}
+            <div class="error-actions">
+                <a href="{{ url_for('main.index') }}" class="btn-home">Go Home</a>
+            </div>
+        </div>
+    </div>
+    
+    {% if retry_after %}
+    <script>
+        // Auto-refresh after retry period
+        var retryAfter = {{ retry_after|int|default(60) }};
+        setTimeout(function() {
+            location.reload();
+        }, retryAfter * 1000);
+    </script>
+    {% endif %}
+</body>
+</html>

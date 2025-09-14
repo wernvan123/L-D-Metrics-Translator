@@ -1,0 +1,11 @@
+{
+  "folders": [
+    { "path": "." }
+  ],
+  "settings": {
+    // Keep this workspace pinned to the OneDrive directory
+    "workbench.editor.enablePreview": false,
+    // Optional: ensure hidden files are not excluded by mistake
+    "explorer.excludeGitIgnore": false
+  }
+}

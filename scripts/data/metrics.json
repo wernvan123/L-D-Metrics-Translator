@@ -1,0 +1,23 @@
+[
+  {"name": "360 Feedback Score", "description": "Average score from 360-degree feedback assessments.", "outcome": "Engagement", "type": "Assessment"},
+  {"name": "Self-Assessment Completion Rate", "description": "Percentage of participants completing self-assessments.", "outcome": "Engagement", "type": "Behavioral"},
+  {"name": "Pulse Survey eNPS", "description": "Employee Net Promoter Score from pulse surveys.", "outcome": "Engagement", "type": "KPI"},
+  {"name": "On-Time Delivery Rate", "description": "Percent of deliverables completed by the agreed deadline.", "outcome": "Productivity", "type": "KPI"},
+  {"name": "Absenteeism Rate", "description": "Average days absent per employee per period.", "outcome": "Productivity", "type": "KPI"},
+  {"name": "Collaboration Index", "description": "Composite score reflecting cross-functional collaboration.", "outcome": "Engagement", "type": "Behavioral"},
+  {"name": "Manager Feedback Quality", "description": "Qualitative rating of feedback quality from managers.", "outcome": "Engagement", "type": "Assessment"},
+  {"name": "Time to Productivity", "description": "Time for new hires to reach target productivity.", "outcome": "Productivity", "type": "KPI"},
+  {"name": "Error Rate", "description": "Number of errors per 1,000 transactions.", "outcome": "Productivity", "type": "KPI"},
+  {"name": "Learning Retention Score", "description": "Post-training knowledge retention assessment score.", "outcome": "Retention", "type": "Assessment"},
+
+  {"name": "Peer Feedback Score", "description": "Average score from structured peer feedback.", "outcome": "Engagement", "type": "Assessment"},
+  {"name": "Cross-Functional Collaboration Score", "description": "Score reflecting collaboration quality across teams.", "outcome": "Engagement", "type": "Behavioral"},
+  {"name": "Delegation Effectiveness Score", "description": "Composite score reflecting clarity, autonomy, and follow-through in delegation.", "outcome": "Productivity", "type": "Behavioral"},
+  {"name": "Team Satisfaction Index", "description": "Survey-based team satisfaction score.", "outcome": "Engagement", "type": "KPI"},
+  {"name": "Coaching Session Completion Rate", "description": "Percentage of planned coaching sessions completed on schedule.", "outcome": "Retention", "type": "Behavioral"},
+  {"name": "Knowledge Check Pass Rate", "description": "Pass rate on formative knowledge checks after training.", "outcome": "Retention", "type": "Assessment"},
+  {"name": "Cycle Time Reduction", "description": "Percent reduction in average process cycle time post-intervention.", "outcome": "Productivity", "type": "KPI"},
+  {"name": "Customer Satisfaction (CSAT)", "description": "Customer satisfaction score post-interaction.", "outcome": "Engagement", "type": "KPI"},
+  {"name": "Knowledge Application Rate", "description": "Percentage of learners applying new skills within 60 days.", "outcome": "Productivity", "type": "Behavioral"},
+  {"name": "Mentoring Hours per Employee", "description": "Average mentoring hours received per employee.", "outcome": "Retention", "type": "Behavioral"}
+]

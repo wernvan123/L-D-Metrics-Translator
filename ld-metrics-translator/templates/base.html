@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="google-site-verification" content="FrsW7gqmlGfg8c_ELN0T8U37qHx-VJ0w5tCJTjdcOW8" />
+    <meta name="csrf-token" content="{{ csrf_token() }}">
+    <title>{% if title %}{{ title }}{% else %}L & D Metrics Translator{% endif %}</title>
+    <link rel="icon" href="{{ url_for('static', filename='favicon.ico') }}" type="image/x-icon">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=20250914-3">
+</head>
+<body>
+    <header class="header">
+        {% block top_nav %}
+        <nav class="navbar">
+            <div class="nav-container">
+                <div class="nav-left">
+                    <a href="{{ url_for('main.index') }}" class="nav-brand">
+                        L & D Metrics Translator
+                    </a>
+                    {% if UI_TABS_V2 %}
+                    <div class="nav-tabs-inline">
+                        <a href="{{ url_for('main.dashboard') }}" class="nav-link{% if request.path == url_for('main.dashboard') %} active{% endif %}">Dashboard</a>
+                        <a href="{{ url_for('main.diagnostics') }}" class="nav-link{% if request.path.startswith(url_for('main.diagnostics')) %} active{% endif %}">Diagnostics</a>
+                        <a href="{{ url_for('main.playbook') }}" class="nav-link{% if request.path.startswith(url_for('main.playbook')) %} active{% endif %}">Playbook</a>
+                        <a href="{{ url_for('main.plan_builder') }}" class="nav-link{% if request.path.startswith(url_for('main.plan_builder')) %} active{% endif %}">Plan Builder</a>
+                    </div>
+                    {% endif %}
+                </div>
+                <div class="nav-utility">
+                    <details class="util-menu">
+                        <summary class="util-trigger" title="More">
+                            <span class="util-icon">⚙️</span>
+                        </summary>
+                        <div class="util-dropdown">
+                            <a href="{{ url_for('main.detailed_status') }}" class="util-item">🧭 Status</a>
+                            <a href="{{ url_for('main.health_check') }}" class="util-item">❤️ Health</a>
+                        </div>
+                    </details>
+                </div>
+            </div>
+        </nav>
+        {% if UI_TABS_V2 and WORKFLOW_STRIP and request.path != url_for('main.dashboard') %}
+        {% block workflow_strip %}
+      <div class="workflow-strip">
+        <div class="container">
+          <ol class="workflow" id="workflow" data-step="{% block step %}{% endblock %}">
+            <li class="step" data-key="diagnostics"><a href="/diagnostics">Diagnostics</a></li>
+            <li class="sep">→</li>
+            <li class="step" data-key="plan-builder"><a href="/plan-builder">Plan Builder</a></li>
+            <li class="sep">→</li>
+            <li class="step" data-key="playbook"><a href="/playbook">Playbook</a></li>
+          </ol>
+        </div>
+      </div>
+      {% endblock %}
+        {% endif %}
+        {% endblock %}
+    </header>
+
+    <main class="main-content">
+        <!-- Flash Messages -->
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                <div class="flash-messages">
+                    {% for category, message in messages %}
+                        <div class="flash-message flash-{{ category }}">
+                            <span class="flash-text">{{ message }}</span>
+                            <button class="flash-close" onclick="this.parentElement.style.display='none'">&times;</button>
+                        </div>
+                    {% endfor %}
+                </div>
+            {% endif %}
+        {% endwith %}
+        
+        {% block content %}{% endblock %}
+    </main>
+
+    <footer class="footer">
+        <div class="footer-container">
+            <p>&copy; 2024 L & D Metrics Translator. Built for Learning & Development professionals.</p>
+        </div>
+    </footer>
+
+    <script src="{{ url_for('static', filename='js/app.js') }}?v=20250809070559"></script>
+    <script src="{{ url_for('static', filename='js/search.js') }}?v=20250809070559"></script>
+    <!-- Enhanced Navigation Script -->
+    <script src="{{ url_for('static', filename='js/navigation.js') }}?v=20250809070559"></script>
+    <!-- Multi-Select Navigation Script -->
+    <script src="{{ url_for('static', filename='js/multi-select-nav.js') }}?v=20250809070559"></script>
+    <!-- Smart Filter Integration -->
+    <script src="{{ url_for('static', filename='js/smart-filter.js') }}?v=20250809070559"></script>
+    
+    <!-- Core Application Scripts -->
+    <script src="{{ url_for('static', filename='js/context-manager.js') }}?v=20250825"></script>
+    <script src="{{ url_for('static', filename='js/event-analysis.js') }}?v=20250910-1"></script>
+    <!-- Frameworks Browser (framework-centric navigation) -->
+    <script src="{{ url_for('static', filename='js/frameworks.js') }}?v=20250829"></script>
+    <!-- Tabs Router -->
+    <script src="{{ url_for('static', filename='js/tabs.js') }}?v=20250829"></script>
+    
+    <!-- Initialize Event Analyzer -->
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            // Only initialize EventAnalyzer when its root input exists on the page
+            const hasEventAnalysisUI = !!document.getElementById('event-description');
+            if (!hasEventAnalysisUI) {
+                console.info('EventAnalyzer: UI not present on this page. Skipping initialization.');
+                return;
+            }
+
+            try {
+                if (typeof EventAnalyzer !== 'undefined') {
+                    const eventAnalyzer = new EventAnalyzer();
+                    window.eventAnalyzer = eventAnalyzer; // Expose for debugging
+                    console.log('EventAnalyzer initialized successfully');
+                } else {
+                    console.warn('EventAnalyzer class not found - event-analysis.js may not have loaded');
+                }
+            } catch (error) {
+                console.error('Error initializing EventAnalyzer:', error);
+            }
+        });
+    </script>
+</body>
+</html>

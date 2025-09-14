@@ -1,0 +1,3351 @@
+from functools import wraps
+from flask import Blueprint, jsonify, request, session, current_app, abort
+from app.models import AdminUser, Metric, LDOutcome, MetricType, ReportTemplate, DynamicReport, ReportAnalytics, Framework, Competency, UserSession
+from app import db
+from app.ollama_integration import recommendation_engine, report_generator, event_analyzer
+from app.database import create_event_analysis, get_recent_event_analyses
+from sqlalchemy import or_, func, text
+from sqlalchemy.orm import aliased
+import json
+import time
+import os
+import logging
+import re
+
+logger = logging.getLogger(__name__)
+
+api = Blueprint('api', __name__, url_prefix='/api')
+
+def login_required(f):
+    """Decorator to require authentication for API endpoints."""
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        user = authenticate_user()
+        if not user:
+            return jsonify({
+                'error': 'Authentication required',
+                'success': False,
+                'login_url': '/login'
+            }), 401
+        return f(*args, **kwargs)
+    return decorated_function
+
+
+# -------------------------------
+# Helpers
+# -------------------------------
+def _slugify(value: str) -> str:
+    """Create a simple URL-friendly slug from a string.
+
+    Keeps letters, numbers, and single hyphens. Collapses spaces and separators to '-'.
+    """
+    try:
+        import re
+        value = (value or '').strip().lower()
+        # Replace separators with hyphen
+        value = re.sub(r"[\s_+/]+", "-", value)
+        # Remove invalid chars
+        value = re.sub(r"[^a-z0-9-]", "", value)
+        # Collapse multiple hyphens
+        value = re.sub(r"-+", "-", value).strip('-')
+        return value or 'item'
+    except Exception:
+        return 'item'
+
+
+def _normalize_identifier_type(value: str | None) -> str | None:
+    if not value:
+        return None
+    v = str(value).strip().lower()
+    mapping = {
+        'concept': 'concept',
+        'outcome': 'outcome',
+        'behaviour': 'behavior',
+        'behavior': 'behavior',
+        'kpi': 'kpi',
+    }
+    return mapping.get(v)
+
+
+def _parse_driver_chain(obj) -> dict | None:
+    try:
+        if obj is None:
+            return None
+        if isinstance(obj, str):
+            return json.loads(obj)
+        if isinstance(obj, (dict, list)):
+            return obj
+    except Exception:
+        pass
+    return None
+
+
+@api.route('/__debug__/routes2', methods=['GET'])
+def debug_list_routes_early():
+    """
+    Early-registered route to list all routes. Useful if later import failures stop registration.
+    """
+    if not current_app.debug:
+        abort(404)
+    try:
+        routes = []
+        for rule in current_app.url_map.iter_rules():
+            methods = sorted([m for m in rule.methods if m not in ('HEAD', 'OPTIONS')])
+            routes.append({
+                'rule': str(rule),
+                'endpoint': rule.endpoint,
+                'methods': methods,
+            })
+        routes = sorted(routes, key=lambda r: r['rule'])
+        return jsonify({'routes': routes, 'count': len(routes)}), 200
+    except Exception as e:
+        return jsonify({'error': 'Failed to list routes', 'details': str(e)}), 500
+
+# Track application start time for uptime calculation
+start_time = time.time()
+
+
+def validate_query_params(request_args):
+    """Validate and sanitize query parameters."""
+    errors = []
+    
+    # Validate outcome parameter
+    outcome_id = request_args.get('outcome')
+    if outcome_id:
+        try:
+            outcome_id = int(outcome_id)
+            if not LDOutcome.query.get(outcome_id):
+                errors.append(f"L&D outcome with ID {outcome_id} not found")
+        except ValueError:
+            errors.append("Invalid outcome ID format")
+    
+    # Validate type parameter
+    type_id = request_args.get('type')
+    if type_id:
+        try:
+            type_id = int(type_id)
+            if not MetricType.query.get(type_id):
+                errors.append(f"Metric type with ID {type_id} not found")
+        except ValueError:
+            errors.append("Invalid type ID format")
+    
+    return errors, outcome_id, type_id
+
+
+@api.route('/auth_status', methods=['GET'])
+def auth_status():
+    """Return simple auth status for frontend checks.
+
+    Expected by static/js/event-analysis.js as /api/auth_status.
+    """
+    try:
+        is_authenticated = session.get('admin_user_id') is not None
+        username = session.get('admin_username')
+        return jsonify({
+            'success': True,
+            'authenticated': is_authenticated,
+            'username': username
+        }), 200
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@api.route('/health', methods=['GET'])
+def health_check():
+    """Health check endpoint for monitoring and load balancers."""
+    try:
+        # Check database connectivity
+        db.session.execute(text('SELECT 1'))
+        db_status = 'healthy'
+    except Exception as e:
+        db_status = f'unhealthy: {str(e)}'
+    
+    # Basic system info
+    health_data = {
+        'status': 'healthy' if db_status == 'healthy' else 'unhealthy',
+        'timestamp': time.time(),
+        'version': os.environ.get('APP_VERSION', '1.0.0'),
+        'database': db_status,
+        'uptime': time.time() - start_time if 'start_time' in globals() else 'unknown',
+        'api_file': __file__,
+        'api_version_marker': 'fw-crud-v1'
+    }
+    
+    status_code = 200 if health_data['status'] == 'healthy' else 503
+    return jsonify(health_data), status_code
+
+
+@api.route('/metrics', methods=['GET'])
+def get_metrics():
+    """
+    GET /api/metrics - return all metrics with optional filters
+    Query parameters:
+    - outcome / outcome_id: filter by L&D outcome (accepts ID or exact name, case-insensitive)
+    - type / metric_type_id: filter by metric type (accepts ID or exact name, case-insensitive)
+    - q / search: search term for name, description, example
+    - page: page number (default: 1)
+    - per_page: items per page (default: 20, max: 100)
+    """
+    try:
+        # Support test-expected param names (IDs) first
+        outcome_id = request.args.get('outcome_id', type=int) or request.args.get('outcome', type=int)
+        type_id = request.args.get('metric_type_id', type=int) or request.args.get('type', type=int)
+
+        # Also accept human-readable names for outcome/type
+        resolved_outcome_name = None
+        resolved_type_name = None
+
+        # Outcome name resolution (case-insensitive exact match)
+        if outcome_id is None:
+            outcome_param_raw = request.args.get('outcome')
+            if outcome_param_raw:
+                # Only attempt name resolution if not an int
+                try:
+                    int(outcome_param_raw)
+                except (TypeError, ValueError):
+                    outcome_name_lower = outcome_param_raw.strip().lower()
+                    match = LDOutcome.query.filter(func.lower(LDOutcome.name) == outcome_name_lower).all()
+                    if len(match) == 1:
+                        outcome_id = match[0].id
+                        resolved_outcome_name = match[0].name
+                    elif len(match) == 0:
+                        return jsonify({
+                            'error': 'Invalid outcome filter',
+                            'details': f'Outcome name "{outcome_param_raw}" not found'
+                        }), 400
+                    else:
+                        return jsonify({
+                            'error': 'Ambiguous outcome filter',
+                            'details': f'Multiple outcomes match name "{outcome_param_raw}"'
+                        }), 400
+
+        # Type name resolution (case-insensitive exact match)
+        if type_id is None:
+            type_param_raw = request.args.get('type')
+            if type_param_raw is None:
+                type_param_raw = request.args.get('metric_type_name')  # optional alias
+            if type_param_raw:
+                # Only attempt name resolution if not an int
+                try:
+                    int(type_param_raw)
+                except (TypeError, ValueError):
+                    type_name_lower = type_param_raw.strip().lower()
+                    match = MetricType.query.filter(func.lower(MetricType.name) == type_name_lower).all()
+                    if len(match) == 1:
+                        type_id = match[0].id
+                        resolved_type_name = match[0].name
+                    elif len(match) == 0:
+                        return jsonify({
+                            'error': 'Invalid type filter',
+                            'details': f'Metric type name "{type_param_raw}" not found'
+                        }), 400
+                    else:
+                        return jsonify({
+                            'error': 'Ambiguous type filter',
+                            'details': f'Multiple metric types match name "{type_param_raw}"'
+                        }), 400
+        
+        # Get pagination parameters
+        page = request.args.get('page', 1, type=int)
+        per_page = min(request.args.get('per_page', 20, type=int), 100)  # Cap at 100
+        search_query = request.args.get('search', request.args.get('q', '')).strip()
+        
+        # Build query with joins for efficient data loading
+        query = Metric.query.join(LDOutcome).join(MetricType)
+        
+        # Apply filters
+        if outcome_id:
+            query = query.filter(Metric.outcome_id == outcome_id)
+        if type_id:
+            query = query.filter(Metric.metric_type_id == type_id)
+        if search_query:
+            query = query.filter(
+                or_(
+                    Metric.name.ilike(f'%{search_query}%'),
+                    Metric.description.ilike(f'%{search_query}%'),
+                    Metric.example.ilike(f'%{search_query}%')
+                )
+            )
+        
+        # Get paginated results
+        metrics_pagination = query.paginate(
+            page=page, per_page=per_page, error_out=False
+        )
+        
+        # Format response
+        response = {
+            'metrics': [metric.to_dict() for metric in metrics_pagination.items],
+            'pagination': {
+                'page': metrics_pagination.page,
+                'per_page': metrics_pagination.per_page,
+                'total': metrics_pagination.total,
+                'pages': metrics_pagination.pages,
+                'has_next': metrics_pagination.has_next,
+                'has_prev': metrics_pagination.has_prev,
+                'next_num': metrics_pagination.next_num,
+                'prev_num': metrics_pagination.prev_num
+            },
+            'filters': {
+                'outcome': outcome_id,
+                'type': type_id,
+                'search': search_query,
+                'outcome_name': resolved_outcome_name,
+                'type_name': resolved_type_name
+            }
+        }
+        
+        return jsonify(response), 200
+        
+    except ValueError as e:
+        return jsonify({
+            'error': 'Invalid parameter format',
+            'details': str(e)
+        }), 400
+    except Exception as e:
+        return jsonify({
+            'error': 'Internal server error',
+            'details': str(e)
+        }), 500
+
+
+# New: get a single metric by id (used by driver card demo fallback)
+@api.route('/metrics/<int:metric_id>', methods=['GET'])
+def get_metric(metric_id: int):
+    try:
+        metric = Metric.query.join(LDOutcome).join(MetricType).filter(Metric.id == metric_id).first()
+        if not metric:
+            return jsonify({'error': f'Metric with id {metric_id} not found'}), 404
+        return jsonify({'metric': metric.to_dict()}), 200
+    except Exception as e:
+        return jsonify({'error': 'Failed to get metric', 'details': str(e)}), 500
+
+
+# -------------------------------------------------
+# Driver Cards API (feature-flagged via DRIVER_CARDS_V1)
+# -------------------------------------------------
+
+def _driver_cards_enabled():
+    try:
+        return bool(current_app.config.get('DRIVER_CARDS_V1'))
+    except Exception:
+        return False
+
+
+def _load_driver_mapping():
+    """Load optional mapping for kinds/tags/biases/nudges from static data files.
+    Structure example (by id):
+    {
+      "kinds": {"1": "driver", "2": "bias", "3": "heuristic"},
+      "tags": {"1": ["framework:eig", "capability:self-awareness"]},
+      "biases": {"1": ["Fixed Mindset Bias"]},
+      "nudges": {"1": ["Feedback Loop Nudge", "Challenge Assignment Nudge"]}
+    }
+
+    And an optional name-based file driver_cards_map_by_name.json with the same top-level keys
+    mapping metric names to values; names are resolved to IDs here.
+    """
+    mapping = {"kinds": {}, "tags": {}, "biases": {}, "nudges": {}}
+    try:
+        import os, json
+        data_path = os.path.join(current_app.static_folder or '', 'data', 'driver_cards_map.json')
+        if os.path.isfile(data_path):
+            with open(data_path, 'r', encoding='utf-8') as f:
+                loaded = json.load(f)
+                if isinstance(loaded, dict):
+                    mapping['kinds'] = loaded.get('kinds', {}) or {}
+                    mapping['tags'] = loaded.get('tags', {}) or {}
+                    mapping['biases'] = loaded.get('biases', {}) or {}
+                    mapping['nudges'] = loaded.get('nudges', {}) or {}
+        # Optional name-based mapping for convenience during seeding
+        names_path = os.path.join(current_app.static_folder or '', 'data', 'driver_cards_map_by_name.json')
+        if os.path.isfile(names_path):
+            try:
+                with open(names_path, 'r', encoding='utf-8') as f:
+                    nmap = json.load(f) or {}
+                name_kinds = (nmap.get('kinds') or {}) if isinstance(nmap, dict) else {}
+                name_tags = (nmap.get('tags') or {}) if isinstance(nmap, dict) else {}
+                name_biases = (nmap.get('biases') or {}) if isinstance(nmap, dict) else {}
+                name_nudges = (nmap.get('nudges') or {}) if isinstance(nmap, dict) else {}
+                if name_kinds:
+                    # Resolve names to IDs and merge
+                    for mname, k in name_kinds.items():
+                        m = Metric.query.filter(func.lower(Metric.name) == str(mname).strip().lower()).first()
+                        if m:
+                            mapping['kinds'][str(m.id)] = k
+                if name_tags:
+                    for mname, tags in name_tags.items():
+                        m = Metric.query.filter(func.lower(Metric.name) == str(mname).strip().lower()).first()
+                        if m:
+                            mapping['tags'][str(m.id)] = tags
+                if name_biases:
+                    for mname, biases in name_biases.items():
+                        m = Metric.query.filter(func.lower(Metric.name) == str(mname).strip().lower()).first()
+                        if m:
+                            mapping['biases'][str(m.id)] = biases
+                if name_nudges:
+                    for mname, nudges in name_nudges.items():
+                        m = Metric.query.filter(func.lower(Metric.name) == str(mname).strip().lower()).first()
+                        if m:
+                            mapping['nudges'][str(m.id)] = nudges
+            except Exception as e:
+                logger.warning(f"Driver name-mapping load failed: {e}")
+    except Exception as e:
+        # Log and fallback silently
+        logger.warning(f"Driver mapping load failed: {e}")
+    return mapping
+
+
+def _metric_to_driver_card(metric, mapping):
+    mid = str(metric.id)
+    kind = (mapping.get('kinds', {}).get(mid) or 'driver').lower()
+    tags = mapping.get('tags', {}).get(mid) or []
+    biases = mapping.get('biases', {}).get(mid) or []
+    nudges = mapping.get('nudges', {}).get(mid) or []
+    # Built-in fallbacks by name (no external files required)
+    try:
+        name_lower = (metric.name or '').strip().lower()
+        if not nudges:
+            if name_lower == 'growth mindset':
+                nudges = [
+                    'Feedback Loop Nudge',
+                    'Challenge Assignment Nudge',
+                ]
+        if not biases:
+            if name_lower == 'growth mindset':
+                biases = [
+                    'Fixed Mindset Bias'
+                ]
+    except Exception:
+        pass
+    return {
+        'id': metric.id,
+        'name': metric.name,
+        'description': metric.description,
+        'example': getattr(metric, 'example', None),
+        'outcome': {
+            'id': metric.outcome.id if metric.outcome else None,
+            'name': metric.outcome.name if metric.outcome else None,
+        },
+        'metric_type': {
+            'id': metric.metric_type.id if metric.metric_type else None,
+            'name': metric.metric_type.name if metric.metric_type else None,
+        },
+        'kind': kind if kind in ('driver', 'bias', 'heuristic') else 'driver',
+        'tags': tags,
+        'related_biases': biases,
+        'related_nudges': nudges,
+    }
+
+
+@api.route('/driver-cards', methods=['GET'])
+def list_driver_cards():
+    if not _driver_cards_enabled():
+        abort(404)
+    try:
+        # Params
+        q = (request.args.get('q') or '').strip()
+        kind = (request.args.get('kind') or '').strip().lower()
+        tags_raw = (request.args.get('tags') or '').strip()
+        sort = (request.args.get('sort') or 'name').strip().lower()
+        page = request.args.get('page', 1, type=int)
+        per_page = min(request.args.get('page_size', request.args.get('per_page', 20, type=int), type=int), 100)
+        framework_id = request.args.get('framework_id', type=int)
+        framework_slug = (request.args.get('framework_slug') or '').strip().lower()
+        competency_id = request.args.get('competency_id', type=int)
+        competency_slug = (request.args.get('competency_slug') or '').strip().lower()
+        # New: filter by outcome to support "Start with an Outcome" flow
+        outcome_id = request.args.get('outcome_id', type=int)
+
+        # Base query with joins
+        query = Metric.query.join(LDOutcome).join(MetricType)
+
+        # Optional filter by Outcome
+        if outcome_id:
+            query = query.filter(Metric.outcome_id == outcome_id)
+
+        # Optional filter by Framework/Competency via association table
+        # Import association table lazily to avoid circular import
+        from app.models import competency_metrics
+        if framework_id or framework_slug or competency_id or competency_slug:
+            # Join competency_metrics and competencies
+            query = query.join(competency_metrics, Metric.id == competency_metrics.c.metric_id)
+            query = query.join(Competency, Competency.id == competency_metrics.c.competency_id)
+            if framework_id:
+                query = query.join(Framework, Framework.id == Competency.framework_id).filter(Framework.id == framework_id)
+            elif framework_slug:
+                query = query.join(Framework, Framework.id == Competency.framework_id).filter(func.lower(Framework.slug) == framework_slug)
+            if competency_id:
+                query = query.filter(Competency.id == competency_id)
+            elif competency_slug:
+                query = query.filter(func.lower(Competency.slug) == competency_slug)
+        if q:
+            query = query.filter(or_(
+                Metric.name.ilike(f'%{q}%'),
+                Metric.description.ilike(f'%{q}%'),
+                Metric.example.ilike(f'%{q}%')
+            ))
+
+        # Sorting
+        if sort == 'created_date':
+            query = query.order_by(Metric.created_date.desc())
+        else:
+            query = query.order_by(Metric.name.asc())
+
+        pagination = query.paginate(page=page, per_page=per_page, error_out=False)
+        mapping = _load_driver_mapping()
+
+        items = []
+        filter_tags = [t.strip() for t in tags_raw.split(',') if t.strip()] if tags_raw else []
+        requested_kind = kind if kind in ('driver', 'bias', 'heuristic') else None
+
+        for m in pagination.items:
+            card = _metric_to_driver_card(m, mapping)
+            if requested_kind and card['kind'] != requested_kind:
+                continue
+            if filter_tags:
+                card_tags = set(card.get('tags') or [])
+                if not card_tags.issuperset(filter_tags):
+                    continue
+            items.append(card)
+
+        response = {
+            'items': items,
+            'pagination': {
+                'page': pagination.page,
+                'page_size': pagination.per_page,
+                'total': pagination.total,
+                'pages': pagination.pages,
+                'has_next': pagination.has_next,
+                'has_prev': pagination.has_prev,
+            },
+            'filters': {
+                'q': q,
+                'kind': requested_kind or 'all',
+                'tags': filter_tags,
+                'sort': sort,
+                'framework_id': framework_id,
+                'framework_slug': framework_slug or None,
+                'competency_id': competency_id,
+                'competency_slug': competency_slug or None,
+            }
+        }
+        return jsonify(response), 200
+    except Exception as e:
+        logger.exception("list_driver_cards failed")
+        return jsonify({'error': 'Failed to list driver cards', 'details': str(e)}), 500
+
+
+@api.route('/driver-cards/<int:metric_id>', methods=['GET'])
+def get_driver_card(metric_id: int):
+    if not _driver_cards_enabled():
+        abort(404)
+    try:
+        metric = Metric.query.join(LDOutcome).join(MetricType).filter(Metric.id == metric_id).first()
+        if not metric:
+            return jsonify({'error': f'Driver card with id {metric_id} not found'}), 404
+        mapping = _load_driver_mapping()
+        card = _metric_to_driver_card(metric, mapping)
+
+        # Related items: same outcome or type (limited)
+        related_q = Metric.query.join(LDOutcome).join(MetricType).filter(Metric.id != metric.id).limit(6)
+        related = []
+        for m in related_q.all():
+            related.append({
+                'id': m.id,
+                'name': m.name,
+                'kind': (mapping.get('kinds', {}).get(str(m.id)) or 'driver')
+            })
+        card['related_items'] = related
+        return jsonify({'driver_card': card}), 200
+    except Exception as e:
+        logger.exception("get_driver_card failed")
+        return jsonify({'error': 'Failed to get driver card', 'details': str(e)}), 500
+
+
+# -------------------------------------------------
+# Frameworks CRUD and Competency Management
+# -------------------------------------------------
+@api.route('/frameworks', methods=['GET'])
+def list_frameworks():
+    """List frameworks.
+
+    Query params:
+    - include: 'competencies' or 'competencies,metrics' to expand relations
+    - active: bool to filter is_active
+    """
+    try:
+        include = (request.args.get('include') or '').lower()
+        include_comp = 'competencies' in include
+        include_metrics = 'metrics' in include
+        active = request.args.get('active')
+
+        query = Framework.query
+        if active is not None:
+            val = str(active).lower() in ('1', 'true', 'yes')
+            query = query.filter(Framework.is_active.is_(val))
+
+        frameworks = query.order_by(Framework.sort_order, Framework.name).all()
+        return jsonify({
+            'frameworks': [f.to_dict(include_competencies=include_comp, include_metrics=include_metrics) for f in frameworks],
+            'count': len(frameworks)
+        }), 200
+    except Exception as e:
+        return jsonify({'error': 'Failed to list frameworks', 'details': str(e)}), 500
+
+
+@api.route('/frameworks/<int:framework_id>', methods=['GET'])
+def get_framework(framework_id: int):
+    try:
+        include = (request.args.get('include') or '').lower()
+        include_comp = 'competencies' in include
+        include_metrics = 'metrics' in include
+        fw = Framework.query.get(framework_id)
+        if not fw:
+            return jsonify({'error': f'Framework with id {framework_id} not found'}), 404
+        return jsonify({'framework': fw.to_dict(include_competencies=include_comp, include_metrics=include_metrics)}), 200
+    except Exception as e:
+        return jsonify({'error': 'Failed to get framework', 'details': str(e)}), 500
+
+
+@api.route('/frameworks', methods=['POST'])
+@login_required
+def create_framework():
+    try:
+        data = request.get_json(silent=True) or {}
+        name = (data.get('name') or '').strip()
+        slug = (data.get('slug') or '').strip().lower() or _slugify(name)
+        if not name:
+            return jsonify({'error': 'name is required'}), 400
+        # Uniqueness
+        if Framework.query.filter(func.lower(Framework.name) == name.lower()).first():
+            return jsonify({'error': f'Framework name "{name}" already exists'}), 400
+        if Framework.query.filter(func.lower(Framework.slug) == slug.lower()).first():
+            return jsonify({'error': f'Framework slug "{slug}" already exists'}), 400
+
+        fw = Framework(
+            name=name,
+            slug=slug,
+            description=data.get('description'),
+            source=data.get('source'),
+            is_builtin=bool(data.get('is_builtin', True)),
+            is_active=bool(data.get('is_active', True)),
+            sort_order=int(data.get('sort_order') or 0),
+        )
+        db.session.add(fw)
+        db.session.commit()
+        return jsonify({'framework': fw.to_dict()}), 201
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': 'Failed to create framework', 'details': str(e)}), 500
+
+
+@api.route('/frameworks/<int:framework_id>', methods=['PUT', 'PATCH'])
+@login_required
+def update_framework(framework_id: int):
+    try:
+        fw = Framework.query.get(framework_id)
+        if not fw:
+            return jsonify({'error': f'Framework with id {framework_id} not found'}), 404
+        data = request.get_json(silent=True) or {}
+
+        if 'name' in data and (data['name'] or '').strip():
+            new_name = data['name'].strip()
+            # Check uniqueness
+            conflict = Framework.query.filter(func.lower(Framework.name) == new_name.lower(), Framework.id != fw.id).first()
+            if conflict:
+                return jsonify({'error': f'Framework name "{new_name}" already exists'}), 400
+            fw.name = new_name
+        if 'slug' in data and (data['slug'] or '').strip():
+            new_slug = data['slug'].strip().lower()
+            conflict = Framework.query.filter(func.lower(Framework.slug) == new_slug.lower(), Framework.id != fw.id).first()
+            if conflict:
+                return jsonify({'error': f'Framework slug "{new_slug}" already exists'}), 400
+            fw.slug = new_slug
+        if 'description' in data:
+            fw.description = data.get('description')
+        if 'source' in data:
+            fw.source = data.get('source')
+        if 'is_builtin' in data:
+            fw.is_builtin = bool(data.get('is_builtin'))
+        if 'is_active' in data:
+            fw.is_active = bool(data.get('is_active'))
+        if 'sort_order' in data:
+            try:
+                fw.sort_order = int(data.get('sort_order') or 0)
+            except Exception:
+                pass
+
+        db.session.commit()
+        return jsonify({'framework': fw.to_dict()}), 200
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': 'Failed to update framework', 'details': str(e)}), 500
+
+
+@api.route('/frameworks/<int:framework_id>', methods=['DELETE'])
+@login_required
+def delete_framework(framework_id: int):
+    """Soft delete by default (set is_active=False). Use ?hard=true to hard delete."""
+    try:
+        fw = Framework.query.get(framework_id)
+        if not fw:
+            return jsonify({'error': f'Framework with id {framework_id} not found'}), 404
+        hard = request.args.get('hard', 'false').lower() == 'true'
+        if hard:
+            db.session.delete(fw)
+        else:
+            fw.is_active = False
+        db.session.commit()
+        return jsonify({'success': True}), 200
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': 'Failed to delete framework', 'details': str(e)}), 500
+
+
+@api.route('/frameworks/<int:framework_id>/competencies', methods=['GET'])
+def list_framework_competencies(framework_id: int):
+    try:
+        fw = Framework.query.get(framework_id)
+        if not fw:
+            return jsonify({'error': f'Framework with id {framework_id} not found'}), 404
+        include_metrics = (request.args.get('include') or '').lower().find('metrics') >= 0
+        return jsonify({
+            'framework': fw.to_dict(),
+            'competencies': [c.to_dict(include_metrics=include_metrics) for c in fw.competencies],
+            'count': len(fw.competencies)
+        }), 200
+    except Exception as e:
+        return jsonify({'error': 'Failed to list competencies', 'details': str(e)}), 500
+
+
+# -------------------------------
+# Competencies CRUD
+# -------------------------------
+@api.route('/competencies', methods=['POST'])
+@login_required
+def create_competency():
+    try:
+        data = request.get_json(silent=True) or {}
+        name = (data.get('name') or '').strip()
+        framework_id = data.get('framework_id')
+        if not name or not framework_id:
+            return jsonify({'error': 'name and framework_id are required'}), 400
+        fw = Framework.query.get(framework_id)
+        if not fw:
+            return jsonify({'error': f'Invalid framework_id: {framework_id}'}), 400
+        slug = (data.get('slug') or '').strip().lower() or _slugify(name)
+
+        comp = Competency(
+            framework_id=framework_id,
+            name=name,
+            slug=slug,
+            description=data.get('description'),
+            sort_order=int(data.get('sort_order') or 0),
+        )
+        db.session.add(comp)
+        db.session.commit()
+        return jsonify({'competency': comp.to_dict()}), 201
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': 'Failed to create competency', 'details': str(e)}), 500
+
+
+@api.route('/competencies/<int:competency_id>', methods=['GET'])
+def get_competency(competency_id: int):
+    try:
+        include_metrics = (request.args.get('include') or '').lower().find('metrics') >= 0
+        comp = Competency.query.get(competency_id)
+        if not comp:
+            return jsonify({'error': f'Competency with id {competency_id} not found'}), 404
+        return jsonify({'competency': comp.to_dict(include_metrics=include_metrics)}), 200
+    except Exception as e:
+        return jsonify({'error': 'Failed to get competency', 'details': str(e)}), 500
+
+
+@api.route('/competencies/<int:competency_id>', methods=['PUT', 'PATCH'])
+@login_required
+def update_competency(competency_id: int):
+    try:
+        comp = Competency.query.get(competency_id)
+        if not comp:
+            return jsonify({'error': f'Competency with id {competency_id} not found'}), 404
+        data = request.get_json(silent=True) or {}
+
+        if 'framework_id' in data and data.get('framework_id') is not None:
+            fw = Framework.query.get(data.get('framework_id'))
+            if not fw:
+                return jsonify({'error': f"Invalid framework_id: {data.get('framework_id')}"}), 400
+            comp.framework_id = fw.id
+        if 'name' in data and (data['name'] or '').strip():
+            comp.name = data['name'].strip()
+        if 'slug' in data and (data['slug'] or '').strip():
+            comp.slug = data['slug'].strip().lower()
+        if 'description' in data:
+            comp.description = data.get('description')
+        if 'sort_order' in data:
+            try:
+                comp.sort_order = int(data.get('sort_order') or 0)
+            except Exception:
+                pass
+
+        db.session.commit()
+        return jsonify({'competency': comp.to_dict()}), 200
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': 'Failed to update competency', 'details': str(e)}), 500
+
+
+@api.route('/competencies/<int:competency_id>', methods=['DELETE'])
+@login_required
+def delete_competency(competency_id: int):
+    try:
+        comp = Competency.query.get(competency_id)
+        if not comp:
+            return jsonify({'error': f'Competency with id {competency_id} not found'}), 404
+        db.session.delete(comp)
+        db.session.commit()
+        return jsonify({'success': True}), 200
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': 'Failed to delete competency', 'details': str(e)}), 500
+
+
+# -------------------------------
+# Competency <-> Metric association management
+# -------------------------------
+@api.route('/competencies/<int:competency_id>/metrics', methods=['GET'])
+def get_competency_metrics(competency_id: int):
+    try:
+        comp = Competency.query.get(competency_id)
+        if not comp:
+            return jsonify({'error': f'Competency with id {competency_id} not found'}), 404
+        return jsonify({
+            'competency': comp.to_dict(),
+            'metrics': [m.to_dict() for m in comp.metrics],
+            'count': len(comp.metrics)
+        }), 200
+    except Exception as e:
+        return jsonify({'error': 'Failed to get competency metrics', 'details': str(e)}), 500
+
+
+@api.route('/competencies/<int:competency_id>/metrics', methods=['PUT'])
+@login_required
+def set_competency_metrics(competency_id: int):
+    """Replace a competency's metric associations with a provided list of metric IDs.
+
+    Body: { metric_ids: [int] }
+    """
+    try:
+        comp = Competency.query.get(competency_id)
+        if not comp:
+            return jsonify({'error': f'Competency with id {competency_id} not found'}), 404
+        data = request.get_json(silent=True) or {}
+        metric_ids = data.get('metric_ids') or []
+        if not isinstance(metric_ids, list):
+            return jsonify({'error': 'metric_ids must be a list'}), 400
+        metrics = Metric.query.filter(Metric.id.in_(metric_ids)).all() if metric_ids else []
+        comp.metrics = metrics
+        db.session.commit()
+        return jsonify({'competency': comp.to_dict(include_metrics=True)}), 200
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': 'Failed to set competency metrics', 'details': str(e)}), 500
+
+
+@api.route('/competencies/<int:competency_id>/metrics/add', methods=['POST'])
+@login_required
+def add_metrics_to_competency(competency_id: int):
+    try:
+        comp = Competency.query.get(competency_id)
+        if not comp:
+            return jsonify({'error': f'Competency with id {competency_id} not found'}), 404
+        data = request.get_json(silent=True) or {}
+        metric_ids = data.get('metric_ids') or []
+        if not isinstance(metric_ids, list) or not metric_ids:
+            return jsonify({'error': 'metric_ids list required'}), 400
+        metrics = Metric.query.filter(Metric.id.in_(metric_ids)).all()
+        # Add missing ones
+        existing_ids = {m.id for m in comp.metrics}
+        for m in metrics:
+            if m.id not in existing_ids:
+                comp.metrics.append(m)
+        db.session.commit()
+        return jsonify({'competency': comp.to_dict(include_metrics=True)}), 200
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': 'Failed to add metrics to competency', 'details': str(e)}), 500
+
+
+@api.route('/competencies/<int:competency_id>/metrics/remove', methods=['POST'])
+@login_required
+def remove_metrics_from_competency(competency_id: int):
+    try:
+        comp = Competency.query.get(competency_id)
+        if not comp:
+            return jsonify({'error': f'Competency with id {competency_id} not found'}), 404
+        data = request.get_json(silent=True) or {}
+        metric_ids = data.get('metric_ids') or []
+        if not isinstance(metric_ids, list) or not metric_ids:
+            return jsonify({'error': 'metric_ids list required'}), 400
+        remaining = [m for m in comp.metrics if m.id not in set(metric_ids)]
+        comp.metrics = remaining
+        db.session.commit()
+        return jsonify({'competency': comp.to_dict(include_metrics=True)}), 200
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': 'Failed to remove metrics from competency', 'details': str(e)}), 500
+
+@api.route('/metrics/search', methods=['GET'])
+def search_metrics():
+    """
+    GET /api/metrics/search?q=<query> - full-text search across metrics
+    Query parameters:
+    - q: search term (required)
+    - page: page number (default: 1)
+    - per_page: items per page (default: 20, max: 100)
+    """
+    try:
+        search_query = request.args.get('q', '').strip()
+        if not search_query:
+            return jsonify({
+                'error': 'Missing required parameter',
+                'details': 'Search query parameter "q" is required'
+            }), 400
+        
+        # Get pagination parameters
+        page = request.args.get('page', 1, type=int)
+        per_page = min(request.args.get('per_page', 20, type=int), 100)
+        
+        # Perform search using model method that returns a SQLAlchemy query
+        query = Metric.search_query(search_query)
+        
+        # Get paginated results
+        metrics_pagination = query.paginate(
+            page=page, per_page=per_page, error_out=False
+        )
+        
+        # Format response
+        response = {
+            'metrics': [metric.to_dict() for metric in metrics_pagination.items],
+            'pagination': {
+                'page': metrics_pagination.page,
+                'per_page': metrics_pagination.per_page,
+                'total': metrics_pagination.total,
+                'pages': metrics_pagination.pages,
+                'has_next': metrics_pagination.has_next,
+                'has_prev': metrics_pagination.has_prev,
+                'next_num': metrics_pagination.next_num,
+                'prev_num': metrics_pagination.prev_num
+            },
+            'search_query': search_query
+        }
+        
+        return jsonify(response), 200
+        
+    except ValueError as e:
+        return jsonify({
+            'error': 'Invalid parameter format',
+            'details': str(e)
+        }), 400
+    except Exception as e:
+        return jsonify({
+            'error': 'Internal server error',
+            'details': str(e)
+        }), 500
+
+
+@api.route('/metrics/autocomplete', methods=['GET'])
+def autocomplete_metrics():
+    """
+    GET /api/metrics/autocomplete?q=<query> - Get autocomplete suggestions for metrics
+    Returns formatted suggestions with Title Case names and descriptions
+    Query parameters:
+    - q: search term (required, minimum 2 characters)
+    - limit: maximum number of suggestions (default: 8, max: 15)
+    """
+    try:
+        search_query = request.args.get('q', '').strip()
+        if not search_query:
+            return jsonify({
+                'error': 'Missing required parameter',
+                'details': 'Search query parameter "q" is required'
+            }), 400
+        
+        if len(search_query) < 2:
+            return jsonify({
+                'suggestions': [],
+                'query': search_query
+            }), 200
+        
+        # Get limit parameter
+        limit = min(request.args.get('limit', 8, type=int), 15)
+        
+        # Perform search using existing search functionality (query object)
+        query = Metric.search_query(search_query).limit(limit)
+        metrics = query.all()
+        
+        # Format suggestions with Title Case names and descriptions
+        suggestions = []
+        for metric in metrics:
+            # Convert name to Title Case
+            title_case_name = metric.name.title()
+            
+            # Create short description (first sentence or up to 80 chars)
+            description = metric.description or ""
+            if description:
+                # Get first sentence or truncate at 80 chars
+                first_sentence = description.split('.')[0]
+                if len(first_sentence) > 80:
+                    description = first_sentence[:77] + "..."
+                else:
+                    description = first_sentence + ("." if not first_sentence.endswith('.') else "")
+            else:
+                description = f"A {metric.metric_type.name.lower()} metric for {metric.outcome.name.lower()}"
+            
+            suggestions.append({
+                'id': metric.id,
+                'name': title_case_name,
+                'original_name': metric.name,
+                'description': description,
+                'outcome': metric.outcome.name,
+                'type': metric.metric_type.name,
+                'url': f'/metric/{metric.id}'
+            })
+        
+        return jsonify({
+            'suggestions': suggestions,
+            'query': search_query,
+            'count': len(suggestions)
+        }), 200
+        
+    except ValueError as e:
+        return jsonify({
+            'error': 'Invalid parameter format',
+            'details': str(e)
+        }), 400
+    except Exception as e:
+        return jsonify({
+            'error': 'Internal server error',
+            'details': str(e)
+        }), 500
+
+
+@api.route('/outcomes', methods=['GET'])
+def get_outcomes():
+    """
+    GET /api/outcomes - return all L&D outcomes
+    """
+    try:
+        # Filters and pagination per tests
+        search = request.args.get('search', '').strip()
+        category = request.args.get('category')
+        level = request.args.get('level')
+        page = request.args.get('page', 1, type=int)
+        per_page = min(request.args.get('per_page', 1000, type=int), 1000)
+
+        query = LDOutcome.query
+        if category:
+            query = query.filter(LDOutcome.category == category)
+        if level:
+            query = query.filter(LDOutcome.level == level)
+        if search:
+            pattern = f"%{search}%"
+            query = query.filter(or_(LDOutcome.name.ilike(pattern), LDOutcome.description.ilike(pattern)))
+
+        query = query.order_by(LDOutcome.name)
+        pagination = query.paginate(page=page, per_page=per_page, error_out=False)
+
+        response = {
+            'outcomes': [o.to_dict() for o in pagination.items],
+            'total': pagination.total,
+        }
+        # Include pagination metadata optionally
+        if request.args.get('page') or request.args.get('per_page'):
+            response['pagination'] = {
+                'page': pagination.page,
+                'per_page': pagination.per_page,
+                'total': pagination.total,
+                'pages': pagination.pages,
+            }
+
+        return jsonify(response), 200
+        
+    except Exception as e:
+        return jsonify({
+            'error': 'Internal server error',
+            'details': str(e)
+        }), 500
+
+
+@api.route('/types', methods=['GET'])
+def get_metric_types():
+    """
+    GET /api/types - return all metric types
+    """
+    try:
+        category = request.args.get('category')
+        query = MetricType.query
+        if category:
+            query = query.filter(MetricType.category == category)
+        types = query.all()
+        return jsonify({
+            'metric_types': [{
+                'id': mt.id,
+                'name': mt.name,
+                'description': mt.description,
+                'category': mt.category,
+                'metrics_count': len(mt.metrics)
+            } for mt in types]
+        })
+    except Exception as e:
+        return jsonify({
+            'error': 'Failed to fetch metric types',
+            'details': str(e)
+        }), 500
+
+
+@api.route('/recommendations', methods=['POST'])
+def get_recommendations():
+    """
+    POST /api/recommendations - Generate intelligent metric recommendations
+    Request body:
+    {
+        "categories": [1, 2],
+        "outcomes": [1, 3],
+        "metrics": [5, 7],
+        "context": "performance_enhancement"
+    }
+    """
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'Request body required'}), 400
+        
+        # Extract selection data
+        category_ids = data.get('categories', [])
+        outcome_ids = data.get('outcomes', [])
+        metric_ids = data.get('metrics', [])
+        context = data.get('context', 'general')
+        
+        # Generate recommendations based on selections
+        # Use internal rule-based generator (avoid name collision with route below)
+        recommendations = generate_rule_based_recommendations(
+            category_ids, outcome_ids, metric_ids, context
+        )
+        
+        return jsonify({
+            'recommendations': recommendations,
+            'context': context,
+            'timestamp': time.time()
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'error': 'Failed to generate recommendations',
+            'details': str(e)
+        }), 500
+
+
+def generate_rule_based_recommendations(category_ids, outcome_ids, metric_ids, context):
+    """Rule-based recommendation generator used by /api/recommendations.
+
+    Note: Named distinctly to avoid colliding with the
+    `/api/smart-recommendations/generate` route function defined later in this module.
+    """
+    recommendations = {
+        'primary': [],
+        'secondary': [],
+        'synergies': [],
+        'insights': []
+    }
+    
+    # Get actual database objects
+    categories = MetricType.query.filter(MetricType.id.in_(category_ids)).all() if category_ids else []
+    outcomes = LDOutcome.query.filter(LDOutcome.id.in_(outcome_ids)).all() if outcome_ids else []
+    selected_metrics = Metric.query.filter(Metric.id.in_(metric_ids)).all() if metric_ids else []
+    
+    # Rule 1: If no selections, provide foundational recommendations
+    if not categories and not outcomes:
+        recommendations['primary'] = [
+            {
+                'title': 'Start with Employee Engagement',
+                'metrics': ['Active Participation Rate', 'Voluntary Learning Hours'],
+                'reasoning': 'Engagement is the foundation of all successful L&D programs.',
+                'priority': 'high',
+                'type': 'behavioral'
+            },
+            {
+                'title': 'Measure Training Effectiveness',
+                'metrics': ['Completion Rate', 'Time to Competency'],
+                'reasoning': 'Essential operational metrics for program ROI.',
+                'priority': 'high',
+                'type': 'operational'
+            }
+        ]
+        return recommendations
+
+
+# Detail endpoints expected by tests
+@api.route('/outcomes/<int:outcome_id>', methods=['GET'])
+def get_outcome_by_id(outcome_id):
+    outcome = LDOutcome.query.get(outcome_id)
+    if not outcome:
+        return jsonify({'error': f'Outcome with id {outcome_id} not found'}), 404
+    return jsonify(outcome.to_dict()), 200
+
+
+@api.route('/types/<int:type_id>', methods=['GET'])
+def get_metric_type_by_id(type_id):
+    metric_type = MetricType.query.get(type_id)
+    if not metric_type:
+        return jsonify({'error': f'Metric type with id {type_id} not found'}), 404
+    return jsonify(metric_type.to_dict()), 200
+
+
+@api.route('/metrics/<int:metric_id>', methods=['GET'])
+def get_metric_by_id(metric_id):
+    metric = Metric.query.get(metric_id)
+    if not metric:
+        return jsonify({'error': f'Metric with id {metric_id} not found'}), 404
+    return jsonify(metric.to_dict()), 200
+
+
+# -------------------------------
+# Metrics CRUD (admin only)
+# -------------------------------
+@api.route('/metrics', methods=['POST'])
+@login_required
+def create_metric():
+    """
+    POST /api/metrics
+    Body: { name, outcome_id, metric_type_id, description?, measurement_method?, data_collection?,
+            success_criteria?, frequency?, unit_of_measure?, example?, data_source?, is_active?,
+            competency_ids?: [int] }
+    """
+    try:
+        data = request.get_json(silent=True) or {}
+
+        name = (data.get('name') or '').strip()
+        outcome_id = data.get('outcome_id')
+        metric_type_id = data.get('metric_type_id')
+        if not name or not outcome_id or not metric_type_id:
+            return jsonify({'error': 'name, outcome_id, and metric_type_id are required'}), 400
+
+        # Validate foreign keys
+        outcome = LDOutcome.query.get(outcome_id)
+        if not outcome:
+            return jsonify({'error': f'Invalid outcome_id: {outcome_id}'}), 400
+        mtype = MetricType.query.get(metric_type_id)
+        if not mtype:
+            return jsonify({'error': f'Invalid metric_type_id: {metric_type_id}'}), 400
+
+        identifier_type = _normalize_identifier_type(data.get('identifier_type'))
+        driver_chain = _parse_driver_chain(data.get('driver_chain'))
+
+        metric = Metric(
+            name=name,
+            description=data.get('description'),
+            outcome_id=outcome.id,
+            metric_type_id=mtype.id,
+            identifier_type=identifier_type,
+            driver_chain=json.dumps(driver_chain) if isinstance(driver_chain, (dict, list)) else None,
+            measurement_method=data.get('measurement_method'),
+            data_collection=data.get('data_collection'),
+            success_criteria=data.get('success_criteria'),
+            frequency=data.get('frequency'),
+            unit_of_measure=data.get('unit_of_measure'),
+            example=data.get('example'),
+            data_source=data.get('data_source'),
+            is_active=bool(data.get('is_active', True)),
+        )
+
+        # Optional competency associations
+        competency_ids = data.get('competency_ids') or []
+        if isinstance(competency_ids, list) and competency_ids:
+            comps = Competency.query.filter(Competency.id.in_(competency_ids)).all()
+            # Replace associations
+            metric.competencies = comps
+
+        db.session.add(metric)
+        db.session.commit()
+        return jsonify({'metric': metric.to_dict()}), 201
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': 'Failed to create metric', 'details': str(e)}), 500
+
+
+@api.route('/metrics/<int:metric_id>', methods=['PUT', 'PATCH'])
+@login_required
+def update_metric(metric_id: int):
+    """
+    PUT/PATCH /api/metrics/<id>
+    Body: updatable fields { name?, outcome_id?, metric_type_id?, description?, measurement_method?,
+            data_collection?, success_criteria?, frequency?, unit_of_measure?, example?, data_source?,
+            is_active?, competency_ids?: [int] }
+    """
+    try:
+        metric = Metric.query.get(metric_id)
+        if not metric:
+            return jsonify({'error': f'Metric with id {metric_id} not found'}), 404
+
+        data = request.get_json(silent=True) or {}
+
+        if 'name' in data and (data['name'] or '').strip():
+            metric.name = data['name'].strip()
+        if 'description' in data:
+            metric.description = data.get('description')
+        if 'measurement_method' in data:
+            metric.measurement_method = data.get('measurement_method')
+        if 'data_collection' in data:
+            metric.data_collection = data.get('data_collection')
+        if 'success_criteria' in data:
+            metric.success_criteria = data.get('success_criteria')
+        if 'frequency' in data:
+            metric.frequency = data.get('frequency')
+        if 'unit_of_measure' in data:
+            metric.unit_of_measure = data.get('unit_of_measure')
+        if 'example' in data:
+            metric.example = data.get('example')
+        if 'data_source' in data:
+            metric.data_source = data.get('data_source')
+        if 'is_active' in data:
+            metric.is_active = bool(data.get('is_active'))
+        if 'identifier_type' in data:
+            metric.identifier_type = _normalize_identifier_type(data.get('identifier_type'))
+        if 'driver_chain' in data:
+            dc = _parse_driver_chain(data.get('driver_chain'))
+            metric.driver_chain = json.dumps(dc) if isinstance(dc, (dict, list)) else None
+
+        # Update foreign keys if provided
+        if 'outcome_id' in data and data.get('outcome_id') is not None:
+            outcome = LDOutcome.query.get(data.get('outcome_id'))
+            if not outcome:
+                return jsonify({'error': f"Invalid outcome_id: {data.get('outcome_id')}"}), 400
+            metric.outcome_id = outcome.id
+        if 'metric_type_id' in data and data.get('metric_type_id') is not None:
+            mtype = MetricType.query.get(data.get('metric_type_id'))
+            if not mtype:
+                return jsonify({'error': f"Invalid metric_type_id: {data.get('metric_type_id')}"}), 400
+            metric.metric_type_id = mtype.id
+
+        # Replace competency associations if provided
+        if 'competency_ids' in data:
+            competency_ids = data.get('competency_ids') or []
+            if isinstance(competency_ids, list) and competency_ids:
+                comps = Competency.query.filter(Competency.id.in_(competency_ids)).all()
+                metric.competencies = comps
+            else:
+                metric.competencies = []
+
+        db.session.commit()
+        return jsonify({'metric': metric.to_dict()}), 200
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': 'Failed to update metric', 'details': str(e)}), 500
+
+
+@api.route('/metrics/<int:metric_id>', methods=['DELETE'])
+@login_required
+def delete_metric(metric_id: int):
+    """
+    DELETE /api/metrics/<id>
+    Soft-delete by default (set is_active=False). Use ?hard=true to hard delete.
+    """
+    try:
+        metric = Metric.query.get(metric_id)
+        if not metric:
+            return jsonify({'error': f'Metric with id {metric_id} not found'}), 404
+
+        hard = request.args.get('hard', 'false').lower() == 'true'
+        if hard:
+            db.session.delete(metric)
+        else:
+            metric.is_active = False
+        db.session.commit()
+        return jsonify({'success': True}), 200
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': 'Failed to delete metric', 'details': str(e)}), 500
+
+
+@api.route('/translate', methods=['POST'])
+def translate_metrics():
+    # Validate content type
+    if not request.is_json:
+        return jsonify({'error': 'Invalid or missing JSON body'}), 400
+    try:
+        data = request.get_json(silent=True)
+    except Exception:
+        data = None
+    if not data:
+        return jsonify({'error': 'Invalid JSON payload'}), 400
+
+    outcome_id = data.get('outcome_id')
+    metric_type_id = data.get('metric_type_id')
+    if not outcome_id or not metric_type_id:
+        return jsonify({'error': 'Both outcome_id and metric_type_id are required'}), 400
+
+    outcome = LDOutcome.query.get(outcome_id)
+    if not outcome:
+        return jsonify({'error': f'Invalid outcome_id: {outcome_id}'}), 400
+    metric_type = MetricType.query.get(metric_type_id)
+    if not metric_type:
+        return jsonify({'error': f'Invalid metric_type_id: {metric_type_id}'}), 400
+
+    # Produce simple deterministic suggestions used for tests
+    suggestions = [
+        {
+            'name': f'{outcome.name} - {metric_type.name} Suggestion 1',
+            'description': f'Measure {outcome.name.lower()} using a {metric_type.name.lower()} approach.',
+            'measurement_method': 'Survey',
+            'data_collection': 'Monthly',
+            'success_criteria': '80%'
+        }
+    ]
+    return jsonify({'suggestions': suggestions}), 200
+
+
+# JSON error handlers for API blueprint
+@api.errorhandler(404)
+def api_handle_404(e):
+    return jsonify({'error': 'Resource not found'}), 404
+
+
+@api.errorhandler(405)
+def api_handle_405(e):
+    return jsonify({'error': 'Method not allowed'}), 405
+
+
+# ---------------------------------------------
+# Metric Card - enriched response aggregation
+# ---------------------------------------------
+@api.route('/metric-cards/<int:metric_id>', methods=['GET'])
+def get_metric_card(metric_id: int):
+    """Return a fully enriched metric card structure for UI rendering.
+
+    Includes:
+    - identifier_type label
+    - associated frameworks (via competencies)
+    - ordered driver chain based on identifier_type
+    - classification details mapping existing fields
+    """
+    try:
+        metric = Metric.query.join(LDOutcome).join(MetricType).filter(Metric.id == metric_id).first()
+        if not metric:
+            return jsonify({'error': f'Metric card with id {metric_id} not found'}), 404
+
+        base = metric.to_dict()
+
+        id_type = (base.get('identifier_type') or '').lower()
+        chain = base.get('driver_chain') or {}
+        # Build ordered stages according to identifier type
+        stages = []
+        if id_type == 'concept':
+            stages = [
+                {'key': 'drives_behaviors', 'title': 'Drives Behavior', 'items': chain.get('drives_behaviors') or []},
+                {'key': 'measured_by_kpis', 'title': 'Measured by KPI', 'items': chain.get('measured_by_kpis') or []},
+                {'key': 'leads_to_outcomes', 'title': 'Leads to Outcome', 'items': chain.get('leads_to_outcomes') or []},
+            ]
+        elif id_type == 'behavior':
+            stages = [
+                {'key': 'driven_by_concepts', 'title': 'Driven by Concept', 'items': chain.get('driven_by_concepts') or []},
+                {'key': 'measured_by_kpis', 'title': 'Measured by KPI', 'items': chain.get('measured_by_kpis') or []},
+                {'key': 'leads_to_outcomes', 'title': 'Leads to Outcome', 'items': chain.get('leads_to_outcomes') or []},
+            ]
+        elif id_type == 'kpi':
+            stages = [
+                {'key': 'measures_behaviors', 'title': 'Measures Behavior', 'items': chain.get('measures_behaviors') or chain.get('drives_behaviors') or []},
+                {'key': 'indicates_concepts', 'title': 'Indicates Concept', 'items': chain.get('indicates_concepts') or chain.get('driven_by_concepts') or []},
+                {'key': 'leads_to_outcomes', 'title': 'Leads to Outcome', 'items': chain.get('leads_to_outcomes') or []},
+            ]
+        elif id_type == 'outcome':
+            stages = [
+                {'key': 'driven_by_behaviors', 'title': 'Driven by Behavior', 'items': chain.get('driven_by_behaviors') or chain.get('drives_behaviors') or []},
+                {'key': 'driven_by_concepts', 'title': 'Driven by Concept', 'items': chain.get('driven_by_concepts') or []},
+                {'key': 'measured_by_kpis', 'title': 'Measured by KPI', 'items': chain.get('measured_by_kpis') or []},
+            ]
+        else:
+            # Fallback neutral ordering
+            stages = [
+                {'key': 'drives_behaviors', 'title': 'Drives Behavior', 'items': chain.get('drives_behaviors') or []},
+                {'key': 'measured_by_kpis', 'title': 'Measured by KPI', 'items': chain.get('measured_by_kpis') or []},
+                {'key': 'leads_to_outcomes', 'title': 'Leads to Outcome', 'items': chain.get('leads_to_outcomes') or []},
+            ]
+
+        card = {
+            'id': base['id'],
+            'title': base['name'],
+            'description': base.get('description'),
+            'identifier_type': id_type or 'concept',
+            'outcome': {'id': base.get('outcome_id'), 'name': base.get('outcome_name')},
+            'metric_type': {'id': base.get('metric_type_id'), 'name': base.get('metric_type_name')},
+            'associated_frameworks': base.get('associated_frameworks') or [],
+            'driver_chain': stages,
+            'classification': {
+                'ld_outcome': base.get('outcome_name'),
+                'metric_type': base.get('metric_type_name'),
+                'data_collection': base.get('data_collection'),
+                'frequency': base.get('frequency'),
+            },
+        }
+        return jsonify({'metric_card': card}), 200
+    except Exception as e:
+        logger.exception('get_metric_card failed')
+        return jsonify({'error': 'Failed to get metric card', 'details': str(e)}), 500
+    
+    # Rule 2: Single category recommendations
+    if len(categories) == 1:
+        category = categories[0]
+        category_name = category.name.lower()
+        
+        if 'operational' in category_name:
+            recommendations['primary'].append({
+                'title': 'Operational Excellence Focus',
+                'metrics': ['Training ROI', 'Cost per Employee', 'Performance Improvement'],
+                'reasoning': 'Operational metrics provide clear business value and efficiency tracking.',
+                'priority': 'high',
+                'type': 'operational'
+            })
+            recommendations['secondary'].append({
+                'title': 'Consider Adding Behavioral Insights',
+                'metrics': ['Employee Satisfaction', 'Engagement Score'],
+                'reasoning': 'Behavioral metrics complement operational data with human insights.',
+                'priority': 'medium',
+                'type': 'behavioral'
+            })
+        
+        elif 'behavioral' in category_name:
+            recommendations['primary'].append({
+                'title': 'Human-Centered Approach',
+                'metrics': ['Learning Motivation', 'Peer Collaboration', 'Cultural Adoption'],
+                'reasoning': 'Behavioral metrics reveal the human side of learning effectiveness.',
+                'priority': 'high',
+                'type': 'behavioral'
+            })
+            recommendations['secondary'].append({
+                'title': 'Add Scientific Validation',
+                'metrics': ['Memory Retention', 'Cognitive Load'],
+                'reasoning': 'Neuroscience metrics provide scientific backing for behavioral observations.',
+                'priority': 'medium',
+                'type': 'neuroscience'
+            })
+        
+        elif 'neuroscience' in category_name:
+            recommendations['primary'].append({
+                'title': 'Science-Based Learning',
+                'metrics': ['Memory Consolidation', 'Attention Span', 'Neuroplasticity Index'],
+                'reasoning': 'Neuroscience metrics provide evidence-based insights into learning processes.',
+                'priority': 'high',
+                'type': 'neuroscience'
+            })
+            recommendations['secondary'].append({
+                'title': 'Connect to Business Outcomes',
+                'metrics': ['Performance Metrics', 'Productivity Gains'],
+                'reasoning': 'Operational metrics help translate scientific insights into business value.',
+                'priority': 'medium',
+                'type': 'operational'
+            })
+    
+    # Rule 3: Multiple category synergies
+    if len(categories) >= 2:
+        category_types = [cat.name.lower() for cat in categories]
+        
+        if 'operational' in str(category_types) and 'behavioral' in str(category_types):
+            recommendations['synergies'].append({
+                'title': 'Performance & Culture Balance',
+                'combination': ['operational', 'behavioral'],
+                'synergy_score': 0.85,
+                'metrics': ['ROI + Engagement', 'Efficiency + Satisfaction', 'Results + Culture'],
+                'reasoning': 'Combining operational efficiency with behavioral insights creates comprehensive L&D measurement.'
+            })
+        
+        if 'neuroscience' in str(category_types):
+            recommendations['synergies'].append({
+                'title': 'Scientific Learning Optimization',
+                'combination': category_types,
+                'synergy_score': 0.92,
+                'metrics': ['Cognitive Load + Performance', 'Memory + Retention', 'Attention + Engagement'],
+                'reasoning': 'Neuroscience provides the scientific foundation for optimizing all other metrics.'
+            })
+    
+    # Rule 4: Outcome-specific recommendations
+    for outcome in outcomes:
+        outcome_name = outcome.name.lower()
+        
+        if 'engagement' in outcome_name:
+            recommendations['insights'].append({
+                'title': 'Employee Engagement Strategy',
+                'outcome': outcome.name,
+                'recommended_metrics': ['Voluntary Participation', 'Learning Satisfaction', 'Peer Interaction'],
+                'success_factors': ['Intrinsic motivation', 'Social learning', 'Recognition programs'],
+                'priority': 'high'
+            })
+        
+        elif 'performance' in outcome_name:
+            recommendations['insights'].append({
+                'title': 'Performance Enhancement Focus',
+                'outcome': outcome.name,
+                'recommended_metrics': ['Skill Assessment', 'Productivity Gains', 'Quality Metrics'],
+                'success_factors': ['Clear objectives', 'Regular feedback', 'Practical application'],
+                'priority': 'high'
+            })
+        
+        elif 'retention' in outcome_name:
+            recommendations['insights'].append({
+                'title': 'Retention Improvement Strategy',
+                'outcome': outcome.name,
+                'recommended_metrics': ['Career Development', 'Internal Mobility', 'Job Satisfaction'],
+                'success_factors': ['Growth opportunities', 'Work-life balance', 'Recognition'],
+                'priority': 'high'
+            })
+    
+    # Rule 5: Context-specific recommendations
+    if context == 'performance_enhancement':
+        recommendations['insights'].append({
+            'title': 'Performance-Driven Learning',
+            'context': context,
+            'recommended_approach': 'Focus on measurable skill improvements and productivity gains',
+            'key_metrics': ['Time to Proficiency', 'Performance Scores', 'Error Reduction'],
+            'timeline': '3-6 months for visible results'
+        })
+    
+    elif context == 'culture_transformation':
+        recommendations['insights'].append({
+            'title': 'Culture Change Through Learning',
+            'context': context,
+            'recommended_approach': 'Emphasize behavioral metrics and social learning indicators',
+            'key_metrics': ['Collaboration Index', 'Knowledge Sharing', 'Cultural Adoption'],
+            'timeline': '6-12 months for cultural shifts'
+        })
+    
+    return recommendations
+
+
+def generate_external_concept_recommendations(selected_metrics, context, org_context):
+    """Generate recommendations for concepts NOT in the database based on selected metrics."""
+    
+    # Extract metric names and descriptions for AI context
+    metric_info = []
+    for metric in selected_metrics:
+        metric_info.append({
+            'name': metric.name,
+            'description': metric.description,
+            'outcome': metric.outcome.name,
+            'type': metric.metric_type.name
+        })
+    
+    # Try AI-powered recommendations first
+    if recommendation_engine.ollama.available:
+        ai_recommendations = _generate_ai_external_recommendations(metric_info, context, org_context)
+        if ai_recommendations:
+            return ai_recommendations
+    
+    # Fallback to rules-based external recommendations
+    return _generate_rules_external_recommendations(metric_info, context, org_context)
+
+
+def _generate_ai_external_recommendations(metric_info, context, org_context):
+    """Generate AI-powered external concept recommendations."""
+    try:
+        system_prompt = """You are an expert Learning & Development consultant. Based on selected metrics, 
+        suggest 3-5 related concepts that are NOT already in the user's database but would complement 
+        their current metrics. Focus on practical, measurable concepts with clear definitions.
+        
+        Return your response in JSON format:
+        {
+            "recommendations": [
+                {
+                    "concept": "Concept Name",
+                    "definition": "Clear, practical definition",
+                    "relevance": "Why this relates to selected metrics",
+                    "measurement_approach": "How to measure this concept"
+                }
+            ]
+        }"""
+        
+        user_prompt = f"""
+        Based on these selected L&D metrics, suggest related concepts NOT in the database:
+        
+        Selected Metrics:
+        {chr(10).join([f"- {m['name']}: {m['description']}" for m in metric_info])}
+        
+        Context: {context}
+        Organization Context: {org_context}
+        
+        Suggest 3-5 complementary concepts that would enhance this metric selection.
+        Focus on concepts like mindfulness, cognitive load, psychological safety, etc.
+        """
+        
+        response = recommendation_engine.ollama.generate(
+            model=recommendation_engine.model_name,
+            prompt=user_prompt,
+            system_prompt=system_prompt,
+            format="json",
+            temperature=0.7
+        )
+        
+        if response:
+            import json
+            try:
+                parsed_response = json.loads(response)
+                return parsed_response.get('recommendations', [])
+            except json.JSONDecodeError:
+                logger.warning("Failed to parse AI response as JSON, falling back to rules")
+                return None
+                
+    except Exception as e:
+        logger.error(f"AI external recommendations failed: {str(e)}")
+        return None
+
+
+def _generate_rules_external_recommendations(metric_info, context, org_context):
+    """Generate rules-based external concept recommendations."""
+    
+    # Analyze selected metrics to determine focus areas
+    metric_names = [m['name'].lower() for m in metric_info]
+    metric_types = [m['type'].lower() for m in metric_info]
+    outcomes = [m['outcome'].lower() for m in metric_info]
+    
+    recommendations = []
+    
+    # Rule 1: If attention/focus metrics are selected, suggest mindfulness
+    if any('attention' in name or 'focus' in name for name in metric_names):
+        recommendations.append({
+            'concept': 'Mindfulness',
+            'definition': 'Being present and aware in the workplace; the practice of focused attention and emotional regulation',
+            'relevance': 'Directly enhances attention and focus capabilities measured in your selected metrics',
+            'measurement_approach': 'Mindfulness surveys, attention span tests, stress level assessments'
+        })
+    
+    # Rule 2: If engagement metrics are selected, suggest psychological safety
+    if any('engagement' in name or 'participation' in name for name in metric_names):
+        recommendations.append({
+            'concept': 'Psychological Safety',
+            'definition': 'The belief that one can speak up without risk of punishment or humiliation',
+            'relevance': 'Creates the foundation for authentic engagement and participation in learning activities',
+            'measurement_approach': 'Team climate surveys, speaking-up frequency, error reporting rates'
+        })
+    
+    # Rule 3: If cognitive/memory metrics are selected, suggest cognitive load
+    if any('memory' in name or 'cognitive' in name or 'retention' in name for name in metric_names):
+        recommendations.append({
+            'concept': 'Cognitive Load',
+            'definition': 'The mental effort required to process information; managing complexity in learning materials',
+            'relevance': 'Optimizing cognitive load improves memory retention and learning effectiveness',
+            'measurement_approach': 'Task complexity ratings, mental effort scales, performance under different load conditions'
+        })
+    
+    # Rule 4: If performance metrics are selected, suggest flow state
+    if any('performance' in name or 'productivity' in name for name in metric_names):
+        recommendations.append({
+            'concept': 'Flow State',
+            'definition': 'The mental state of complete immersion and optimal performance in an activity',
+            'relevance': 'Flow states maximize performance and learning efficiency in your measured areas',
+            'measurement_approach': 'Flow experience questionnaires, time-on-task metrics, performance quality indicators'
+        })
+    
+    # Rule 5: If behavioral metrics are present, suggest emotional intelligence
+    if any('behavioral' in mtype for mtype in metric_types):
+        recommendations.append({
+            'concept': 'Emotional Intelligence',
+            'definition': 'The ability to recognize, understand, and manage emotions in oneself and others',
+            'relevance': 'Underlies many behavioral metrics and interpersonal learning effectiveness',
+            'measurement_approach': 'EQ assessments, 360-degree feedback, conflict resolution success rates'
+        })
+    
+    # Rule 6: Context-specific recommendations
+    if 'remote' in org_context.lower() or 'virtual' in org_context.lower():
+        recommendations.append({
+            'concept': 'Digital Wellness',
+            'definition': 'Healthy technology use patterns and managing digital overwhelm in remote work environments',
+            'relevance': 'Critical for remote workforce effectiveness and sustainable learning practices',
+            'measurement_approach': 'Screen time analytics, digital break frequency, virtual meeting fatigue scores'
+        })
+    
+    # Ensure we have at least 3 recommendations
+    if len(recommendations) < 3:
+        default_recommendations = [
+            {
+                'concept': 'Growth Mindset',
+                'definition': 'The belief that abilities and intelligence can be developed through effort and learning',
+                'relevance': 'Fundamental to all learning and development initiatives',
+                'measurement_approach': 'Mindset surveys, response to challenges, learning goal orientation'
+            },
+            {
+                'concept': 'Self-Efficacy',
+                'definition': 'Confidence in one\'s ability to execute behaviors necessary to produce specific performance attainments',
+                'relevance': 'Drives motivation and persistence in learning activities',
+                'measurement_approach': 'Self-efficacy scales, goal achievement rates, challenge-seeking behavior'
+            }
+        ]
+        
+        for rec in default_recommendations:
+            if len(recommendations) < 5 and rec not in recommendations:
+                recommendations.append(rec)
+    
+    return recommendations[:5]  # Return max 5 recommendations
+
+
+@api.route('/ai-recommendations', methods=['POST'])
+def get_ai_recommendations():
+    """
+    POST /api/ai-recommendations - Generate AI-powered recommendations
+    Request body:
+    {
+        "categories": [1, 2],
+        "outcomes": [1, 3],
+        "context": "performance improvement"
+    }
+    """
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'No JSON data provided'}), 400
+        
+        selections = {
+            'categories': data.get('categories', []),
+            'outcomes': data.get('outcomes', []),
+            'metrics': data.get('metrics', [])
+        }
+        context = data.get('context', '')
+        
+        recommendations = recommendation_engine.generate_recommendations(selections, context)
+        
+        return jsonify({
+            'success': True,
+            'recommendations': recommendations,
+            'generated_by': 'ai' if recommendation_engine.ollama.available else 'rules',
+            'timestamp': time.time()
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'error': 'Failed to generate AI recommendations',
+            'details': str(e)
+        }), 500
+
+
+@api.route('/smart-recommendations', methods=['POST'])
+def get_smart_recommendations():
+    """
+    POST /api/smart-recommendations - Generate smart AI recommendations based on selected metric cards
+    Request body:
+    {
+        "selected_metrics": [1, 5, 12],
+        "context": "performance improvement",
+        "organization_context": "tech company with remote workforce"
+    }
+    """
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'No JSON data provided'}), 400
+        
+        selected_metric_ids = data.get('selected_metrics', [])
+        context = data.get('context', '')
+        org_context = data.get('organization_context', '')
+        
+        if not selected_metric_ids:
+            return jsonify({'error': 'At least one metric must be selected'}), 400
+        
+        # Get selected metrics from database
+        selected_metrics = Metric.query.filter(Metric.id.in_(selected_metric_ids)).all()
+        if not selected_metrics:
+            return jsonify({'error': 'No valid metrics found for the provided IDs'}), 400
+        
+        # Generate smart recommendations for concepts NOT in database
+        recommendations = generate_external_concept_recommendations(selected_metrics, context, org_context)
+        
+        return jsonify({
+            'success': True,
+            'recommendations': recommendations,
+            'selected_metrics_count': len(selected_metrics),
+            'generated_by': 'ai' if recommendation_engine.ollama.available else 'rules',
+            'timestamp': time.time()
+        })
+        
+    except Exception as e:
+        logger.error(f"Smart recommendations error: {str(e)}")
+        return jsonify({
+            'error': 'Failed to generate smart recommendations',
+            'details': str(e)
+        }), 500
+
+
+@api.route('/dynamic-reports', methods=['POST'])
+def create_dynamic_report():
+    """
+    POST /api/dynamic-reports - Create and generate a dynamic PDF report
+    Request body:
+    {
+        "title": "Q4 L&D Metrics Report",
+        "template_type": "comprehensive",
+        "selected_outcomes": [1, 2, 3],
+        "selected_metrics": [5, 7, 12, 15],
+        "ai_recommendations": [...],
+        "session_id": 123,
+        "generation_context": {...}
+    }
+    """
+    try:
+        from app.services.report_generator import DynamicReportGenerator, ReportConfig
+        
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'No JSON data provided'}), 400
+        
+        # Validate required fields
+        required_fields = ['title', 'template_type', 'selected_outcomes', 'selected_metrics', 'session_id']
+        missing_fields = [field for field in required_fields if field not in data]
+        if missing_fields:
+            return jsonify({
+                'error': 'Missing required fields',
+                'missing_fields': missing_fields
+            }), 400
+        
+        # Validate template type
+        if data['template_type'] not in ['comprehensive', 'basic']:
+            return jsonify({
+                'error': 'Invalid template_type',
+                'details': 'Must be either "comprehensive" or "basic"'
+            }), 400
+        
+        # Create report configuration
+        config = ReportConfig(
+            title=data['title'],
+            template_type=data['template_type'],
+            selected_outcomes=data['selected_outcomes'],
+            selected_metrics=data['selected_metrics'],
+            ai_recommendations=data.get('ai_recommendations', []),
+            session_id=data['session_id'],
+            generation_context=data.get('generation_context', {})
+        )
+        
+        # Generate report
+        generator = DynamicReportGenerator()
+        report = generator.generate_report(config)
+        
+        return jsonify({
+            'success': True,
+            'report': report.to_dict(),
+            'message': 'Report generation completed successfully'
+        }), 201
+        
+    except Exception as e:
+        logger.error(f"Dynamic report creation error: {str(e)}")
+        return jsonify({
+            'error': 'Failed to create dynamic report',
+            'details': str(e)
+        }), 500
+
+
+@api.route('/dynamic-reports/<int:report_id>', methods=['GET'])
+def get_dynamic_report(report_id):
+    """GET /api/dynamic-reports/<id> - Get dynamic report details"""
+    try:
+        report = DynamicReport.query.get_or_404(report_id)
+        include_content = request.args.get('include_content', 'false').lower() == 'true'
+        
+        return jsonify({
+            'success': True,
+            'report': report.to_dict(include_content=include_content)
+        }), 200
+        
+    except Exception as e:
+        return jsonify({
+            'error': 'Failed to retrieve report',
+            'details': str(e)
+        }), 500
+
+
+@api.route('/dynamic-reports/<int:report_id>/download', methods=['GET'])
+def download_dynamic_report(report_id):
+    """GET /api/dynamic-reports/<id>/download - Download PDF report"""
+    try:
+        from flask import send_file
+        
+        report = DynamicReport.query.get_or_404(report_id)
+        
+        if not report.pdf_path or not os.path.exists(report.pdf_path):
+            return jsonify({
+                'error': 'PDF file not found',
+                'details': 'Report may still be generating or file was deleted'
+            }), 404
+        
+        # Increment download counter
+        report.increment_download()
+        
+        return send_file(
+            report.pdf_path,
+            as_attachment=True,
+            download_name=f"{report.title.replace(' ', '_')}.pdf",
+            mimetype='application/pdf'
+        )
+        
+    except Exception as e:
+        return jsonify({
+            'error': 'Failed to download report',
+            'details': str(e)
+        }), 500
+
+
+@api.route('/dynamic-reports/<int:report_id>/progress', methods=['GET'])
+def get_report_progress(report_id):
+    """GET /api/dynamic-reports/<id>/progress - Get report generation progress"""
+    try:
+        report = DynamicReport.query.get_or_404(report_id)
+        
+        return jsonify({
+            'success': True,
+            'progress': {
+                'status': report.generation_status,
+                'progress': report.generation_progress,
+                'estimated_pages': report.estimated_pages,
+                'created_date': report.created_date.isoformat() if report.created_date else None,
+                'generated_date': report.generated_date.isoformat() if report.generated_date else None
+            }
+        }), 200
+        
+    except Exception as e:
+        return jsonify({
+            'error': 'Failed to get report progress',
+            'details': str(e)
+        }), 500
+
+
+@api.route('/dynamic-reports/session/<session_id>', methods=['GET'])
+def get_session_reports(session_id):
+    """GET /api/dynamic-reports/session/<id> - Get all reports for a session"""
+    try:
+        # Query reports for session
+        reports = DynamicReport.query.filter_by(session_id=str(session_id)).order_by(
+            DynamicReport.created_date.desc()
+        ).all()
+        return jsonify({
+            'success': True,
+            'reports': [r.to_dict() for r in reports],
+            'total': len(reports),
+            'session_id': session_id
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'error': 'Failed to retrieve session reports',
+            'details': str(e)
+        }), 500
+
+
+@api.route('/report-templates', methods=['GET'])
+def get_report_templates():
+    """GET /api/report-templates - Get available report templates"""
+    try:
+        templates = ReportTemplate.query.filter_by(is_active=True).all()
+        
+        return jsonify({
+            'success': True,
+            'templates': [template.to_dict() for template in templates],
+            'count': len(templates)
+        }), 200
+        
+    except Exception as e:
+        return jsonify({
+            'error': 'Failed to retrieve report templates',
+            'details': str(e)
+        }), 500
+
+
+@api.route('/report-templates', methods=['POST'])
+def create_report_template():
+    """POST /api/report-templates - Create a new report template"""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'No JSON data provided'}), 400
+        
+        # Validate required fields
+        required_fields = ['name', 'template_type', 'sections']
+        missing_fields = [field for field in required_fields if field not in data]
+        if missing_fields:
+            return jsonify({
+                'error': 'Missing required fields',
+                'missing_fields': missing_fields
+            }), 400
+        
+        # Create template
+        template = ReportTemplate(
+            name=data['name'],
+            description=data.get('description', ''),
+            template_type=data['template_type'],
+            sections=json.dumps(data['sections']),
+            styling=json.dumps(data.get('styling', {})),
+            created_by=data.get('created_by')
+        )
+        
+        db.session.add(template)
+        db.session.commit()
+        
+        return jsonify({
+            'success': True,
+            'template': template.to_dict(),
+            'message': 'Template created successfully'
+        }), 201
+        
+    except Exception as e:
+        return jsonify({
+            'error': 'Failed to create report template',
+            'details': str(e)
+        }), 500
+
+
+@api.route('/report-analytics/<int:report_id>', methods=['GET'])
+def get_report_analytics(report_id):
+    """GET /api/report-analytics/<id> - Get analytics for a specific report"""
+    try:
+        report = DynamicReport.query.get_or_404(report_id)
+        analytics = report.analytics
+        
+        if not analytics:
+            return jsonify({
+                'success': True,
+                'analytics': None,
+                'message': 'No analytics available for this report'
+            }), 200
+        
+        return jsonify({
+            'success': True,
+            'analytics': analytics.to_dict()
+        }), 200
+        
+    except Exception as e:
+        return jsonify({
+            'error': 'Failed to retrieve report analytics',
+            'details': str(e)
+        }), 500
+
+
+@api.route('/report-analytics/summary', methods=['GET'])
+def get_analytics_summary():
+    """GET /api/report-analytics/summary - Get overall analytics summary"""
+    try:
+        # Get basic statistics
+        total_reports = DynamicReport.query.count()
+        completed_reports = DynamicReport.query.filter_by(generation_status='completed').count()
+        failed_reports = DynamicReport.query.filter_by(generation_status='failed').count()
+        
+        # Get template usage
+        template_usage = db.session.query(
+            ReportTemplate.name,
+            func.count(DynamicReport.id).label('usage_count')
+        ).join(DynamicReport).group_by(ReportTemplate.name).all()
+        
+        # Get recent reports
+        recent_reports = DynamicReport.query.order_by(
+            DynamicReport.created_date.desc()
+        ).limit(5).all()
+        
+        return jsonify({
+            'success': True,
+            'summary': {
+                'total_reports': total_reports,
+                'completed_reports': completed_reports,
+                'failed_reports': failed_reports,
+                'success_rate': (completed_reports / total_reports * 100) if total_reports > 0 else 0,
+                'template_usage': [
+                    {'template': name, 'count': count} 
+                    for name, count in template_usage
+                ],
+                'recent_reports': [report.to_dict() for report in recent_reports]
+            }
+        }), 200
+        
+    except Exception as e:
+        return jsonify({
+            'error': 'Failed to retrieve analytics summary',
+            'details': str(e)
+        }), 500
+
+
+@api.route('/generate-report', methods=['POST'])
+def generate_report():
+    """
+    POST /api/generate-report - Generate AI-powered L&D report
+    Request body:
+    {
+        "metrics": ["Employee Engagement Score", "Training Completion Rate"],
+        "outcomes": ["Performance Improvement", "Skill Development"],
+        "context": "Q4 performance review context"
+    }
+    """
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'No JSON data provided'}), 400
+        
+        metrics = data.get('metrics', [])
+        outcomes = data.get('outcomes', [])
+        context = data.get('context', '')
+        
+        if not metrics:
+            return jsonify({'error': 'At least one metric must be selected'}), 400
+        
+        report_content = report_generator.generate_report_content(metrics, outcomes, context)
+        
+        return jsonify({
+            'success': True,
+            'report_content': report_content,
+            'generated_by': 'ai' if report_generator.ollama.available else 'template',
+            'timestamp': time.time(),
+            'metrics_count': len(metrics),
+            'outcomes_count': len(outcomes)
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'error': 'Failed to generate report',
+            'details': str(e)
+        }), 500
+
+
+def authenticate_user():
+    """Check if user is authenticated via session or API key."""
+    # Check for API key in headers
+    api_key = request.headers.get('X-API-Key')
+    if api_key:
+        user = AdminUser.query.filter_by(api_key=api_key).first()
+        if user and user.is_active:
+            return user
+    
+    # Check for session authentication
+    if 'user_id' in session:
+        user = AdminUser.query.get(session['user_id'])
+        if user and user.is_active:
+            return user
+    
+    return None
+
+@api.route('/auth/login', methods=['POST'])
+def login():
+    """
+    POST /api/auth/login - Authenticate user for AI event analysis
+    Request body:
+    {
+        "username": "admin",
+        "password": "password"
+    }
+    """
+    data = request.get_json()
+    if not data:
+        return jsonify({'error': 'No JSON data provided', 'success': False}), 400
+    
+    username = data.get('username')
+    password = data.get('password')
+    
+    if not username or not password:
+        return jsonify({'error': 'Username and password are required', 'success': False}), 400
+    
+    user = AdminUser.query.filter_by(username=username).first()
+    if not user or not user.check_password(password) or not user.is_active:
+        return jsonify({'error': 'Invalid username or password', 'success': False}), 401
+    
+    # Create session
+    session['user_id'] = user.id
+    session.permanent = True
+    
+    return jsonify({
+        'success': True,
+        'user': user.to_dict(),
+        'message': 'Login successful'
+    })
+
+@api.route('/auth/logout', methods=['POST'])
+def logout():
+    """Log out the current user."""
+    session.pop('user_id', None)
+    return jsonify({'success': True, 'message': 'Logged out successfully'})
+
+@api.route('/auth/status', methods=['GET'])
+def auth_status_v2():
+    """Check if user is authenticated.
+
+    Note: This route exists alongside `/api/auth_status` which is used by the
+    frontend. The function name was changed to avoid Flask endpoint name
+    collisions within the same blueprint.
+    """
+    user = authenticate_user()
+    if user:
+        return jsonify({
+            'authenticated': True,
+            'user': user.to_dict(),
+            'success': True
+        })
+    return jsonify({'authenticated': False, 'success': True})
+
+@api.route('/analyze-event', methods=['POST', 'OPTIONS'])
+def analyze_event():
+    """
+    POST /api/analyze-event - Analyze workplace event for L&D insights
+    Anonymous access allowed. If the user is authenticated, their session may be used for
+    enhanced features (e.g., personalized history) while anonymous users are still permitted
+    to analyze events. The request IP is stored for basic abuse monitoring.
+    
+    Headers:
+    - X-API-Key: <api_key> (optional)
+    
+    Request body:
+    {
+        "event_description": "Team struggled with project deadline due to communication issues"
+    }
+    """
+    # Handle CORS preflight
+    if request.method == 'OPTIONS':
+        response = jsonify({'status': 'ok'})
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        response.headers.add('Access-Control-Allow-Headers', 'Content-Type, X-API-Key')
+        response.headers.add('Access-Control-Allow-Methods', 'POST')
+        response.headers.add('Access-Control-Allow-Credentials', 'true')
+        return response
+        
+    try:
+        # Log request details for debugging
+        logger.info(f"Request content type: {request.content_type}")
+        logger.info(f"Request headers: {dict(request.headers)}")
+        
+        # Get raw request data
+        raw_data = request.get_data(as_text=True)
+        logger.info(f"Raw request data: {raw_data}")
+        
+        # Try to parse JSON data
+        try:
+            data = request.get_json(force=True, silent=True)
+            logger.info(f"Parsed JSON data: {data}")
+            
+            if data is None:
+                # If get_json() returns None, the content type might be wrong
+                if not request.is_json:
+                    return jsonify({
+                        'error': 'Content-Type must be application/json',
+                        'received_content_type': request.content_type,
+                        'success': False
+                    }), 400
+                return jsonify({
+                    'error': 'Invalid JSON data in request',
+                    'details': 'Failed to parse JSON data',
+                    'success': False
+                }), 400
+                
+        except Exception as e:
+            logger.error(f"JSON parsing error: {str(e)}")
+            return jsonify({
+                'error': 'Invalid JSON data in request',
+                'details': str(e)
+            }), 400
+        
+        # Validate required fields
+        if not isinstance(data, dict):
+            return jsonify({
+                'error': 'Invalid request format',
+                'details': 'Expected a JSON object',
+                'success': False
+            }), 400
+            
+        event_description = data.get('event_description')
+        if not event_description or not isinstance(event_description, str):
+            return jsonify({
+                'error': 'Event description is required and must be a string',
+                'success': False
+            }), 400
+            
+        event_description = event_description.strip()
+        if not event_description:
+            return jsonify({
+                'error': 'Event description cannot be empty',
+                'success': False
+            }), 400
+        
+        # Get selected metrics for context-aware analysis
+        selected_metrics = data.get('selected_metrics', [])
+        logger.info(f"Selected metrics for context: {len(selected_metrics)} metrics")
+        
+        # Check Ollama availability and provide helpful feedback
+        if not event_analyzer.ollama.available:
+            logger.info("Ollama not available, using rules-based analysis")
+        
+        # Get client IP for tracking
+        client_ip = request.environ.get('HTTP_X_FORWARDED_FOR', request.environ.get('REMOTE_ADDR', 'unknown'))
+        
+        try:
+            # Pass selected metrics context to the analyzer
+            analysis = event_analyzer.analyze_event(event_description, selected_metrics=selected_metrics)
+            generated_by = 'ai' if event_analyzer.ollama.available else 'rules'
+            
+            # Store successful analysis in database
+            stored_analysis = create_event_analysis(
+                event_description=event_description,
+                analysis_result=str(analysis),  # Convert to string for storage
+                generated_by=generated_by,
+                success=True,
+                ip_address=client_ip
+            )
+            
+            return jsonify({
+                'success': True,
+                'analysis': analysis,
+                'generated_by': generated_by,
+                'ollama_status': 'available' if event_analyzer.ollama.available else 'unavailable',
+                'timestamp': time.time(),
+                'analysis_id': stored_analysis.id
+            })
+            
+        except Exception as analysis_error:
+            # Store failed analysis in database
+            error_msg = str(analysis_error)
+            stored_analysis = create_event_analysis(
+                event_description=event_description,
+                generated_by='error',
+                success=False,
+                error_message=error_msg,
+                ip_address=client_ip
+            )
+            raise analysis_error
+        
+    except Exception as e:
+        logger.error(f"Event analysis error: {str(e)}")
+        # Always provide a graceful fallback so the UI can proceed
+        return jsonify({
+            'success': False,
+            'error': 'AI service error. Using fallback analysis.',
+            'analysis': {
+                'learning_needs': ['Communication skills', 'Problem-solving', 'Team collaboration'],
+                'recommended_metrics': ['Training completion rate', 'Skill assessment scores', 'Behavioral change indicators'],
+                'interventions': ['Targeted training programs', 'Mentoring initiatives', 'Peer learning sessions'],
+                'success_measures': ['Performance improvement', 'Employee engagement', 'Knowledge retention']
+            },
+            'generated_by': 'rules',
+            'details': str(e)
+        }), 200
+
+
+@api.route('/ollama-status', methods=['GET'])
+def ollama_status():
+    """
+    GET /api/ollama-status - Check Ollama availability and models
+    """
+    try:
+        # Refresh availability check
+        recommendation_engine.ollama._check_availability()
+        
+        return jsonify({
+            'available': recommendation_engine.ollama.available,
+            'models': recommendation_engine.ollama.list_models() if recommendation_engine.ollama.available else [],
+            'base_url': recommendation_engine.ollama.base_url,
+            'timestamp': time.time()
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'available': False,
+            'error': str(e),
+            'timestamp': time.time()
+        })
+
+
+# Error handlers for the API blueprint
+@api.errorhandler(404)
+def api_not_found(error):
+    """Handle 404 errors for API routes."""
+    return jsonify({
+        'error': 'Not found',
+        'details': 'The requested API endpoint was not found'
+    }), 404
+
+
+@api.errorhandler(405)
+def api_method_not_allowed(error):
+    """Handle 405 errors for API routes."""
+    return jsonify({
+        'error': 'Method not allowed',
+        'details': 'The HTTP method is not allowed for this endpoint'
+    }), 405
+
+
+@api.errorhandler(500)
+def api_internal_error(error):
+    """Handle 500 errors for API routes."""
+    db.session.rollback()
+    return jsonify({
+        'error': 'Internal server error',
+        'details': 'An unexpected error occurred'
+    }), 500
+
+
+@api.route('/event-analyses/recent', methods=['GET'])
+def get_recent_analyses():
+    """
+    GET /api/event-analyses/recent?limit=<limit>
+    Get recent successful event analyses for display
+    """
+    try:
+        limit = min(int(request.args.get('limit', 5)), 20)  # Max 20 results
+        
+        recent_analyses = get_recent_event_analyses(limit=limit)
+        
+        # Format for frontend consumption
+        analyses_data = []
+        for analysis in recent_analyses:
+            analyses_data.append({
+                'id': analysis.id,
+                'event_description': analysis.event_description,
+                'created_date': analysis.created_date.isoformat() if analysis.created_date else None,
+                'generated_by': analysis.generated_by,
+                # Truncate description for display
+                'display_text': analysis.event_description[:100] + '...' if len(analysis.event_description) > 100 else analysis.event_description
+            })
+        
+        return jsonify({
+            'success': True,
+            'analyses': analyses_data,
+            'count': len(analyses_data),
+            'timestamp': time.time()
+        })
+        
+    except Exception as e:
+        logger.error(f"Error retrieving recent analyses: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': 'Failed to retrieve recent analyses',
+            'details': str(e)
+        }), 500
+
+
+@api.route('/event-analyses/<int:analysis_id>', methods=['GET'])
+def get_analysis_by_id(analysis_id):
+    """
+    GET /api/event-analyses/<id>
+    Get a specific event analysis by ID
+    """
+    try:
+        analysis = EventAnalysis.query.get(analysis_id)
+        
+        if not analysis:
+            return jsonify({
+                'success': False,
+                'error': 'Analysis not found'
+            }), 404
+        
+        return jsonify({
+            'success': True,
+            'analysis': analysis.to_dict(),
+            'timestamp': time.time()
+        })
+        
+    except Exception as e:
+        logger.error(f"Error retrieving analysis {analysis_id}: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': 'Failed to retrieve analysis',
+            'details': str(e)
+        }), 500
+
+
+def to_title_case(text):
+    """Convert text to Title Case, handling special cases for L&D terminology."""
+    if not text:
+        return text
+    
+    # Special cases for L&D terminology
+    special_cases = {
+        'l&d': 'L&D',
+        'kpi': 'KPI',
+        'roi': 'ROI',
+        'hr': 'HR',
+        'ai': 'AI',
+        'it': 'IT'
+    }
+    
+    # Convert to title case
+    title_text = text.title()
+    
+    # Apply special cases
+    for key, value in special_cases.items():
+        title_text = re.sub(r'\b' + key.title() + r'\b', value, title_text, flags=re.IGNORECASE)
+    
+    return title_text
+
+
+@api.route('/autocomplete', methods=['GET'])
+def autocomplete():
+    """
+    GET /api/autocomplete?q=<query>&limit=<limit>
+    Enhanced autocomplete endpoint for search suggestions with Title Case formatting
+    """
+    try:
+        query = request.args.get('q', '').strip()
+        limit = min(int(request.args.get('limit', 8)), 20)  # Max 20 suggestions
+        
+        if not query or len(query) < 2:
+            return jsonify({
+                'suggestions': [],
+                'query': query,
+                'count': 0
+            })
+        
+        # Search metrics with relevance scoring
+        search_term = f"%{query.lower()}%"
+        
+        # Query with relevance scoring (name matches score higher)
+        metrics = db.session.query(
+            Metric,
+            # Score: name match = 3, description match = 1
+            (func.case(
+                (func.lower(Metric.name).like(search_term), 3),
+                else_=1
+            )).label('relevance_score')
+        ).join(LDOutcome).join(MetricType).filter(
+            or_(
+                func.lower(Metric.name).like(search_term),
+                func.lower(Metric.description).like(search_term),
+                func.lower(LDOutcome.name).like(search_term),
+                func.lower(MetricType.name).like(search_term)
+            )
+        ).order_by(
+            db.text('relevance_score DESC'),
+            Metric.name
+        ).limit(limit).all()
+        
+        suggestions = []
+        for metric, score in metrics:
+            # Create title case name and description
+            title_name = to_title_case(metric.name)
+            description = metric.description[:100] + ('...' if len(metric.description) > 100 else '')
+            
+            suggestions.append({
+                'id': metric.id,
+                'name': title_name,
+                'description': description,
+                'outcome': to_title_case(metric.outcome.name),
+                'type': to_title_case(metric.metric_type.name),
+                'relevance_score': score,
+                'url': f'/metric/{metric.id}'
+            })
+        
+        return jsonify({
+            'suggestions': suggestions,
+            'query': query,
+            'count': len(suggestions)
+        })
+        
+    except Exception as e:
+        logger.error(f"Autocomplete error: {str(e)}")
+        return jsonify({
+            'error': 'Failed to fetch suggestions',
+            'suggestions': [],
+            'query': query,
+            'count': 0
+        }), 500
+
+
+# Context Management API Endpoints
+
+@api.route('/context/session', methods=['GET'])
+def get_session_info():
+    """
+    GET /api/context/session - Get current session information
+    """
+    try:
+        from app.context_manager import context_manager
+        
+        session = context_manager.get_or_create_session()
+        stats = context_manager.get_session_stats()
+        
+        return jsonify({
+            'success': True,
+            'session': session.to_dict(),
+            'stats': stats
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error getting session info: {str(e)}")
+        return jsonify({
+            'error': 'Failed to get session information',
+            'details': str(e)
+        }), 500
+
+
+@api.route('/context/store', methods=['POST'])
+def store_context():
+    """
+    POST /api/context/store - Store context data
+    Request body:
+    {
+        "context_type": "search",
+        "context_key": "last_query",
+        "context_data": {"query": "engagement", "filters": {}},
+        "expires_in_hours": 24
+    }
+    """
+    try:
+        from app.context_manager import context_manager
+        from datetime import timedelta
+        
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'Request body required'}), 400
+        
+        context_type = data.get('context_type')
+        context_key = data.get('context_key')
+        context_data = data.get('context_data')
+        expires_in_hours = data.get('expires_in_hours')
+        
+        if not all([context_type, context_key, context_data]):
+            return jsonify({
+                'error': 'Missing required fields',
+                'required': ['context_type', 'context_key', 'context_data']
+            }), 400
+        
+        # Calculate expiration
+        expires_in = None
+        if expires_in_hours:
+            expires_in = timedelta(hours=expires_in_hours)
+        
+        context = context_manager.store_context(
+            context_type=context_type,
+            context_key=context_key,
+            context_data=context_data,
+            expires_in=expires_in
+        )
+        
+        return jsonify({
+            'success': True,
+            'context': context.to_dict()
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error storing context: {str(e)}")
+        return jsonify({
+            'error': 'Failed to store context',
+            'details': str(e)
+        }), 500
+
+
+@api.route('/context/get/<context_type>/<context_key>', methods=['GET'])
+def get_context(context_type, context_key):
+    """
+    GET /api/context/get/<context_type>/<context_key> - Get specific context data
+    """
+    try:
+        from app.context_manager import context_manager
+        
+        context_data = context_manager.get_context(context_type, context_key)
+        
+        if context_data is None:
+            return jsonify({
+                'success': False,
+                'message': 'Context not found or expired'
+            }), 404
+        
+        return jsonify({
+            'success': True,
+            'context_type': context_type,
+            'context_key': context_key,
+            'context_data': context_data
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error getting context: {str(e)}")
+        return jsonify({
+            'error': 'Failed to get context',
+            'details': str(e)
+        }), 500
+
+
+@api.route('/context/metrics/select', methods=['POST'])
+def select_metric():
+    """
+    POST /api/context/metrics/select - Select a metric for current session
+    Request body:
+    {
+        "metric_id": 123,
+        "selection_type": "manual",
+        "context_tags": ["performance", "engagement"]
+    }
+    """
+    try:
+        from app.context_manager import context_manager
+        
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'Request body required'}), 400
+        
+        metric_id = data.get('metric_id')
+        selection_type = data.get('selection_type', 'manual')
+        context_tags = data.get('context_tags')
+        
+        if not metric_id:
+            return jsonify({'error': 'metric_id is required'}), 400
+        
+        selected, selection = context_manager.select_metric(
+            metric_id=metric_id,
+            selection_type=selection_type,
+            context_tags=context_tags
+        )
+        
+        return jsonify({
+            'success': True,
+            'selected': selected,
+            'selection': selection.to_dict(),
+            'action': 'selected' if selected else 'deselected'
+        }), 200
+        
+    except ValueError as e:
+        return jsonify({
+            'error': 'Invalid metric ID',
+            'details': str(e)
+        }), 400
+    except Exception as e:
+        logger.error(f"Error selecting metric: {str(e)}")
+        return jsonify({
+            'error': 'Failed to select metric',
+            'details': str(e)
+        }), 500
+
+
+@api.route('/context/metrics/selected', methods=['GET'])
+def get_selected_metrics():
+    """
+    GET /api/context/metrics/selected - Get all selected metrics for current session
+    """
+    try:
+        from app.context_manager import context_manager
+        
+        selections = context_manager.get_selected_metrics()
+        
+        return jsonify({
+            'success': True,
+            'selected_metrics': selections,
+            'count': len(selections)
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error getting selected metrics: {str(e)}")
+        return jsonify({
+            'error': 'Failed to get selected metrics',
+            'details': str(e)
+        }), 500
+
+
+@api.route('/context/initialize', methods=['POST'])
+def initialize_context():
+    """
+    POST /api/context/initialize - Initialize context for page load
+    Request body:
+    {
+        "page": "dashboard",
+        "user_agent": "Mozilla/5.0...",
+        "preferences": {...}
+    }
+    """
+    try:
+        from app.context_manager import context_manager
+        
+        data = request.get_json() or {}
+        page = data.get('page', 'unknown')
+        preferences = data.get('preferences', {})
+        
+        # Get or create session
+        session = context_manager.get_or_create_session()
+        
+        # Store page context
+        page_context = {
+            'page': page,
+            'initialized_at': time.time(),
+            'user_agent': request.headers.get('User-Agent', ''),
+            'referrer': request.headers.get('Referer', '')
+        }
+        
+        context_manager.store_context(
+            context_type='page',
+            context_key='current',
+            context_data=page_context
+        )
+        
+        # Store preferences if provided
+        if preferences:
+            context_manager.store_user_preferences(preferences)
+        
+        # Get current state
+        current_preferences = context_manager.get_user_preferences()
+        selected_metrics = context_manager.get_selected_metrics()
+        
+        return jsonify({
+            'success': True,
+            'session': session.to_dict(),
+            'preferences': current_preferences,
+            'selected_metrics': selected_metrics,
+            'initialization_time': time.time()
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error initializing context: {str(e)}")
+        return jsonify({
+            'error': 'Failed to initialize context',
+            'details': str(e)
+        }), 500
+
+
+# Smart AI Recommendations API Endpoints
+
+@api.route('/smart-recommendations/generate', methods=['POST'])
+def generate_smart_recommendations():
+    """
+    POST /api/smart-recommendations/generate - Generate context-aware recommendations
+    Request body:
+    {
+        "session_id": "session_uuid",
+        "recommendation_type": "metric",  // 'metric', 'outcome', 'analysis'
+        "context_data": {
+            "search_query": "engagement metrics",
+            "current_page": "metrics_selection"
+        },
+        "limit": 5
+    }
+    """
+    try:
+        from app.recommendation_service import recommendation_service
+        
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'Request body required'}), 400
+        
+        session_id = data.get('session_id')
+        if not session_id:
+            return jsonify({'error': 'session_id is required'}), 400
+        
+        # Get or create session
+        session = UserSession.query.filter_by(session_id=session_id).first()
+        if not session:
+            return jsonify({'error': 'Session not found'}), 404
+        
+        recommendation_type = data.get('recommendation_type', 'metric')
+        context_data = data.get('context_data', {})
+        limit = min(data.get('limit', 5), 10)  # Cap at 10
+        
+        # Generate recommendations
+        recommendations = recommendation_service.generate_recommendations(
+            session_id=session.id,
+            context_data=context_data,
+            recommendation_type=recommendation_type,
+            limit=limit
+        )
+        
+        return jsonify({
+            'success': True,
+            'recommendations': recommendations,
+            'session_id': session_id,
+            'recommendation_type': recommendation_type,
+            'count': len(recommendations),
+            'timestamp': time.time()
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error generating smart recommendations: {str(e)}")
+        return jsonify({
+            'error': 'Failed to generate recommendations',
+            'details': str(e)
+        }), 500
+
+
+@api.route('/smart-recommendations/interact', methods=['POST'])
+def record_recommendation_interaction():
+    """
+    POST /api/smart-recommendations/interact - Record user interaction with recommendation
+    Request body:
+    {
+        "recommendation_id": 123,
+        "interaction_type": "clicked",  // 'viewed', 'clicked', 'dismissed', 'accepted'
+        "additional_data": {}
+    }
+    """
+    try:
+        from app.recommendation_service import recommendation_service
+        
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'Request body required'}), 400
+        
+        recommendation_id = data.get('recommendation_id')
+        interaction_type = data.get('interaction_type')
+        
+        if not recommendation_id or not interaction_type:
+            return jsonify({'error': 'recommendation_id and interaction_type are required'}), 400
+        
+        if interaction_type not in ['viewed', 'clicked', 'dismissed', 'accepted']:
+            return jsonify({'error': 'Invalid interaction_type'}), 400
+        
+        additional_data = data.get('additional_data', {})
+        
+        success = recommendation_service.record_user_interaction(
+            recommendation_id=recommendation_id,
+            interaction_type=interaction_type,
+            additional_data=additional_data
+        )
+        
+        if success:
+            return jsonify({
+                'success': True,
+                'recommendation_id': recommendation_id,
+                'interaction_type': interaction_type,
+                'timestamp': time.time()
+            }), 200
+        else:
+            return jsonify({'error': 'Failed to record interaction'}), 400
+        
+    except Exception as e:
+        logger.error(f"Error recording interaction: {str(e)}")
+        return jsonify({
+            'error': 'Failed to record interaction',
+            'details': str(e)
+        }), 500
+
+
+@api.route('/smart-recommendations/feedback', methods=['POST'])
+def add_recommendation_feedback():
+    """
+    POST /api/smart-recommendations/feedback - Add user feedback for recommendation
+    Request body:
+    {
+        "recommendation_id": 123,
+        "feedback_type": "useful",  // 'useful', 'not_useful', 'rating', 'irrelevant'
+        "feedback_value": "5",  // Optional rating value or category
+        "feedback_text": "This was very helpful"  // Optional comment
+    }
+    """
+    try:
+        from app.recommendation_service import recommendation_service
+        
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'Request body required'}), 400
+        
+        recommendation_id = data.get('recommendation_id')
+        feedback_type = data.get('feedback_type')
+        
+        if not recommendation_id or not feedback_type:
+            return jsonify({'error': 'recommendation_id and feedback_type are required'}), 400
+        
+        feedback_value = data.get('feedback_value')
+        feedback_text = data.get('feedback_text')
+        client_ip = request.environ.get('HTTP_X_FORWARDED_FOR', request.environ.get('REMOTE_ADDR', 'unknown'))
+        
+        feedback = recommendation_service.add_feedback(
+            recommendation_id=recommendation_id,
+            feedback_type=feedback_type,
+            feedback_value=feedback_value,
+            feedback_text=feedback_text,
+            ip_address=client_ip
+        )
+        
+        if feedback:
+            return jsonify({
+                'success': True,
+                'feedback_id': feedback.id,
+                'recommendation_id': recommendation_id,
+                'feedback_type': feedback_type,
+                'timestamp': time.time()
+            }), 200
+        else:
+            return jsonify({'error': 'Failed to add feedback'}), 400
+        
+    except Exception as e:
+        logger.error(f"Error adding feedback: {str(e)}")
+        return jsonify({
+            'error': 'Failed to add feedback',
+            'details': str(e)
+        }), 500
+
+
+@api.route('/smart-recommendations/preferences', methods=['POST'])
+def update_user_preferences():
+    """
+    POST /api/smart-recommendations/preferences - Update user preferences
+    Request body:
+    {
+        "session_id": "session_uuid",
+        "preferences": {
+            "metric_type": {
+                "key": "preferred_types",
+                "value": ["Operational KPI", "Behavioral Metric"],
+                "weight": 0.8
+            },
+            "outcome": {
+                "key": "focus_areas",
+                "value": ["Employee Engagement", "Performance"],
+                "weight": 0.9
+            }
+        }
+    }
+    """
+    try:
+        from app.recommendation_service import recommendation_service
+        
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'Request body required'}), 400
+        
+        session_id = data.get('session_id')
+        preferences = data.get('preferences', {})
+        
+        if not session_id:
+            return jsonify({'error': 'session_id is required'}), 400
+        
+        # Get session
+        session = UserSession.query.filter_by(session_id=session_id).first()
+        if not session:
+            return jsonify({'error': 'Session not found'}), 404
+        
+        success = recommendation_service.update_user_preferences(
+            session_id=session.id,
+            preferences=preferences
+        )
+        
+        if success:
+            return jsonify({
+                'success': True,
+                'session_id': session_id,
+                'preferences_updated': len(preferences),
+                'timestamp': time.time()
+            }), 200
+        else:
+            return jsonify({'error': 'Failed to update preferences'}), 400
+        
+    except Exception as e:
+        logger.error(f"Error updating preferences: {str(e)}")
+        return jsonify({
+            'error': 'Failed to update preferences',
+            'details': str(e)
+        }), 500
+
+
+@api.route('/smart-recommendations/analytics', methods=['GET'])
+def get_recommendation_analytics():
+    """
+    GET /api/smart-recommendations/analytics?session_id=<session_id>
+    Get analytics for recommendations in a session
+    """
+    try:
+        from app.recommendation_service import recommendation_service
+        
+        session_id = request.args.get('session_id')
+        if not session_id:
+            return jsonify({'error': 'session_id parameter is required'}), 400
+        
+        # Get session
+        session = UserSession.query.filter_by(session_id=session_id).first()
+        if not session:
+            return jsonify({'error': 'Session not found'}), 404
+        
+        analytics = recommendation_service.get_recommendation_analytics(session.id)
+        
+        return jsonify({
+            'success': True,
+            'session_id': session_id,
+            'analytics': analytics,
+            'timestamp': time.time()
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error getting analytics: {str(e)}")
+        return jsonify({
+            'error': 'Failed to get analytics',
+            'details': str(e)
+        }), 500
+
+
+@api.route('/smart-recommendations/history', methods=['GET'])
+def get_recommendation_history():
+    """
+    GET /api/smart-recommendations/history?session_id=<session_id>&type=<type>&limit=<limit>
+    Get recommendation history for a session
+    """
+    try:
+        session_id = request.args.get('session_id')
+        if not session_id:
+            return jsonify({'error': 'session_id parameter is required'}), 400
+        
+        # Get session
+        session = UserSession.query.filter_by(session_id=session_id).first()
+        if not session:
+            return jsonify({'error': 'Session not found'}), 404
+        
+        recommendation_type = request.args.get('type')
+        limit = min(int(request.args.get('limit', 20)), 50)  # Cap at 50
+        
+        # Get recommendations
+        recommendations = Recommendation.get_for_session(
+            session_id=session.id,
+            recommendation_type=recommendation_type,
+            limit=limit
+        )
+        
+        return jsonify({
+            'success': True,
+            'session_id': session_id,
+            'recommendations': [rec.to_dict() for rec in recommendations],
+            'count': len(recommendations),
+            'filters': {
+                'type': recommendation_type,
+                'limit': limit
+            },
+            'timestamp': time.time()
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error getting recommendation history: {str(e)}")
+        return jsonify({
+            'error': 'Failed to get recommendation history',
+            'details': str(e)
+        }), 500
+
+
+@api.route('/smart-recommendations/active', methods=['GET'])
+def get_active_recommendations():
+    """
+    GET /api/smart-recommendations/active?session_id=<session_id>&type=<type>
+    Get active (not dismissed) recommendations for a session
+    """
+    try:
+        session_id = request.args.get('session_id')
+        if not session_id:
+            return jsonify({'error': 'session_id parameter is required'}), 400
+        
+        # Get session
+        session = UserSession.query.filter_by(session_id=session_id).first()
+        if not session:
+            return jsonify({'error': 'Session not found'}), 404
+        
+        recommendation_type = request.args.get('type')
+        
+        # Get active recommendations
+        recommendations = Recommendation.get_active_for_session(
+            session_id=session.id,
+            recommendation_type=recommendation_type
+        )
+        
+        return jsonify({
+            'success': True,
+            'session_id': session_id,
+            'recommendations': [rec.to_dict() for rec in recommendations],
+            'count': len(recommendations),
+            'filters': {
+                'type': recommendation_type
+            },
+            'timestamp': time.time()
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error getting active recommendations: {str(e)}")
+        return jsonify({
+            'error': 'Failed to get active recommendations',
+            'details': str(e)
+        }), 500
+
+
+# Context Management API Endpoints
+@api.route('/context/recent-sessions', methods=['GET'])
+def get_recent_sessions():
+    """GET /api/context/recent-sessions - Get recent user sessions"""
+    try:
+        limit = min(request.args.get('limit', 10, type=int), 50)
+        
+        # For now, return mock data since we don't have session storage implemented
+        # In a full implementation, this would query a sessions table
+        recent_sessions = []
+        
+        # Check if there are any existing session IDs in localStorage that we can reference
+        # This is a placeholder implementation
+        return jsonify({
+            'success': True,
+            'sessions': recent_sessions,
+            'count': len(recent_sessions)
+        }), 200
+        
+    except Exception as e:
+        return jsonify({
+            'error': 'Failed to retrieve recent sessions',
+            'details': str(e)
+        }), 500
+
+
+# Framework-centric endpoints
+@api.route('/frameworks', methods=['GET'])
+def get_frameworks():
+    """
+    GET /api/frameworks
+    Query params:
+    - include_competencies: bool (default false)
+    - include_metrics: bool (default false) — only applies if include_competencies=true
+    - active_only: bool (default true)
+    """
+    try:
+        include_competencies = str(request.args.get('include_competencies', 'false')).lower() == 'true'
+        include_metrics = str(request.args.get('include_metrics', 'false')).lower() == 'true'
+        active_only = str(request.args.get('active_only', 'true')).lower() != 'false'
+
+        query = Framework.query
+        if active_only:
+            query = query.filter(Framework.is_active.is_(True))
+        query = query.order_by(Framework.sort_order, Framework.name)
+
+        frameworks = query.all()
+        return jsonify({
+            'frameworks': [fw.to_dict(include_competencies=include_competencies, include_metrics=include_metrics) for fw in frameworks],
+            'total': len(frameworks)
+        }), 200
+    except Exception as e:
+        return jsonify({'error': 'Failed to fetch frameworks', 'details': str(e)}), 500
+
+
+@api.route('/frameworks/<string:slug>', methods=['GET'])
+def get_framework_by_slug(slug: str):
+    """
+    GET /api/frameworks/<slug>
+    Query params:
+    - include_metrics: bool (default true)
+    """
+    try:
+        include_metrics = str(request.args.get('include_metrics', 'true')).lower() == 'true'
+        fw = Framework.query.filter(func.lower(Framework.slug) == slug.lower()).first()
+        if not fw:
+            return jsonify({'error': f'Framework with slug "{slug}" not found'}), 404
+        return jsonify({'framework': fw.to_dict(include_competencies=True, include_metrics=include_metrics)}), 200
+    except Exception as e:
+        return jsonify({'error': 'Failed to fetch framework', 'details': str(e)}), 500
+
+
+@api.route('/__debug__/routes', methods=['GET'])
+@api.route('/debug/routes', methods=['GET'])
+def debug_list_routes():
+    """
+    GET /api/__debug__/routes?only_api=true
+    Returns the app's registered routes to diagnose routing issues.
+    """
+    if not current_app.debug:
+        abort(404)
+    try:
+        routes = []
+        for rule in current_app.url_map.iter_rules():
+            methods = sorted([m for m in rule.methods if m not in ('HEAD', 'OPTIONS')])
+            routes.append({
+                'rule': str(rule),
+                'endpoint': rule.endpoint,
+                'methods': methods,
+            })
+        only_api = str(request.args.get('only_api', 'true')).lower() == 'true'
+        if only_api:
+            routes = [r for r in routes if r['rule'].startswith('/api')]
+        routes = sorted(routes, key=lambda r: r['rule'])
+        return jsonify({'routes': routes, 'count': len(routes)}), 200
+    except Exception as e:
+        return jsonify({'error': 'Failed to list routes', 'details': str(e)}), 500
+
+
+ 
