@@ -1,0 +1,17 @@
+﻿__pycache__/
+*.pyc
+.pytest_cache/
+.env
+.venv/
+venv/
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+desktop.ini
+node_modules/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
