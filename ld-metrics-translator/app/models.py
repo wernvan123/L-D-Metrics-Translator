@@ -670,6 +670,144 @@ class Competency(db.Model):
 
 
 # ------------------------------------------------------------
+# Role Profiling (KSAO) models
+# ------------------------------------------------------------
+
+class RoleProfile(db.Model):
+    __tablename__ = 'role_profiles'
+
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(200), nullable=False, unique=True)
+    description = db.Column(db.Text)
+    department = db.Column(db.String(200))
+    is_active = db.Column(db.Boolean, default=True, nullable=False)
+    created_date = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+
+    knowledge_items = db.relationship('RoleKnowledge', backref='role_profile', cascade='all, delete-orphan')
+    skill_items = db.relationship('RoleSkill', backref='role_profile', cascade='all, delete-orphan')
+    ability_items = db.relationship('RoleAbility', backref='role_profile', cascade='all, delete-orphan')
+    other_requirements = db.relationship('RoleOtherRequirement', backref='role_profile', cascade='all, delete-orphan')
+    competency_targets = db.relationship('RoleCompetencyTarget', backref='role_profile', cascade='all, delete-orphan')
+
+    def __repr__(self):
+        return f'<RoleProfile {self.name}>'
+
+    def to_dict(self, include_ksaos: bool = True, include_targets: bool = True):
+        data = {
+            'id': self.id,
+            'name': self.name,
+            'description': self.description,
+            'department': self.department,
+            'is_active': self.is_active,
+            'created_date': self.created_date.isoformat() if self.created_date else None,
+        }
+        if include_ksaos:
+            data.update({
+                'knowledge': [k.to_dict() for k in self.knowledge_items],
+                'skills': [s.to_dict() for s in self.skill_items],
+                'abilities': [a.to_dict() for a in self.ability_items],
+                'others': [o.to_dict() for o in self.other_requirements],
+            })
+        if include_targets:
+            data['competency_targets'] = [t.to_dict() for t in self.competency_targets]
+        return data
+
+
+class RoleKnowledge(db.Model):
+    __tablename__ = 'role_knowledge'
+
+    id = db.Column(db.Integer, primary_key=True)
+    role_profile_id = db.Column(db.Integer, db.ForeignKey('role_profiles.id'), nullable=False, index=True)
+    name = db.Column(db.String(300), nullable=False)
+    description = db.Column(db.Text)
+
+    def to_dict(self):
+        return {'id': self.id, 'name': self.name, 'description': self.description}
+
+
+class RoleSkill(db.Model):
+    __tablename__ = 'role_skills'
+
+    id = db.Column(db.Integer, primary_key=True)
+    role_profile_id = db.Column(db.Integer, db.ForeignKey('role_profiles.id'), nullable=False, index=True)
+    name = db.Column(db.String(300), nullable=False)
+    description = db.Column(db.Text)
+
+    def to_dict(self):
+        return {'id': self.id, 'name': self.name, 'description': self.description}
+
+
+class RoleAbility(db.Model):
+    __tablename__ = 'role_abilities'
+
+    id = db.Column(db.Integer, primary_key=True)
+    role_profile_id = db.Column(db.Integer, db.ForeignKey('role_profiles.id'), nullable=False, index=True)
+    name = db.Column(db.String(300), nullable=False)
+    description = db.Column(db.Text)
+
+    def to_dict(self):
+        return {'id': self.id, 'name': self.name, 'description': self.description}
+
+
+class RoleOtherRequirement(db.Model):
+    __tablename__ = 'role_other_requirements'
+
+    id = db.Column(db.Integer, primary_key=True)
+    role_profile_id = db.Column(db.Integer, db.ForeignKey('role_profiles.id'), nullable=False, index=True)
+    name = db.Column(db.String(300), nullable=False)
+    description = db.Column(db.Text)
+
+    def to_dict(self):
+        return {'id': self.id, 'name': self.name, 'description': self.description}
+
+
+class RoleCompetencyTarget(db.Model):
+    __tablename__ = 'role_competency_targets'
+
+    id = db.Column(db.Integer, primary_key=True)
+    role_profile_id = db.Column(db.Integer, db.ForeignKey('role_profiles.id'), nullable=False, index=True)
+    competency_id = db.Column(db.Integer, db.ForeignKey('competencies.id'), nullable=False, index=True)
+    target_level = db.Column(db.Integer, nullable=False, default=3)  # 1-5 scale
+    weight = db.Column(db.Float, default=1.0)
+
+    competency = db.relationship('Competency')
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'competency_id': self.competency_id,
+            'competency_name': self.competency.name if self.competency else None,
+            'target_level': self.target_level,
+            'weight': self.weight,
+        }
+
+
+class RoleAssignment(db.Model):
+    """Assign a role profile to a specific person/user identifier.
+
+    We keep this generic by storing an external reference such as employee_id or email.
+    """
+    __tablename__ = 'role_assignments'
+
+    id = db.Column(db.Integer, primary_key=True)
+    role_profile_id = db.Column(db.Integer, db.ForeignKey('role_profiles.id'), nullable=False, index=True)
+    person_identifier = db.Column(db.String(255), nullable=False, index=True)  # e.g., user email or employee ID
+    assigned_date = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+    is_active = db.Column(db.Boolean, default=True, nullable=False)
+
+    role_profile = db.relationship('RoleProfile')
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'role_profile_id': self.role_profile_id,
+            'person_identifier': self.person_identifier,
+            'assigned_date': self.assigned_date.isoformat() if self.assigned_date else None,
+            'is_active': self.is_active,
+            'role_profile': {'id': self.role_profile.id, 'name': self.role_profile.name} if self.role_profile else None,
+        }
+
+# ------------------------------------------------------------
 # Dynamic PDF Report Models required by report generator
 # ------------------------------------------------------------
 

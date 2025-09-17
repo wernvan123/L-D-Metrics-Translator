@@ -1,4 +1,4 @@
-from flask import Flask, render_template, jsonify, session
+from flask import Flask, render_template, request, jsonify, send_from_directory, session
 from flask import request, redirect, url_for
 from flask import make_response
 from datetime import datetime
@@ -11,12 +11,8 @@ TEMPLATES_DIR = os.path.join(SUB_APP_DIR, 'templates')
 STATIC_DIR = os.path.join(SUB_APP_DIR, 'static')
 
 # Point Flask to the sub-app's templates and static assets to ensure we serve the latest UI
-app = Flask(
-    __name__,
-    template_folder=TEMPLATES_DIR if os.path.isdir(TEMPLATES_DIR) else None,
-    static_folder=STATIC_DIR if os.path.isdir(STATIC_DIR) else None
-)
-app.secret_key = os.environ.get("FLASK_SECRET_KEY", "dev-secret-key")
+app = Flask(__name__, static_folder=str(STATIC_DIR), template_folder=str(TEMPLATES_DIR))
+app.secret_key = os.environ.get("FLASK_SECRET", "dev-secret-key")
 app.config['TEMPLATES_AUTO_RELOAD'] = True
 app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0  # disable static caching in dev
 try:
@@ -82,14 +78,47 @@ def inject_flags():
     except Exception:
         is_debug = False
     prod_parity = (not MOCKS_ENABLED) and (not is_debug)
-    # Expose feature flags for UI
+    # Derive auth flags (best-effort in dev)
+    is_authenticated = False
+    is_admin = False
+    try:
+        uid = session.get('user_id') or session.get('admin_user_id')
+        if uid and BACKEND_AVAILABLE and backend_models is not None and backend_app is not None:
+            with backend_app.app_context():
+                AdminUser = getattr(backend_models, 'AdminUser', None)
+                if AdminUser is not None:
+                    u = AdminUser.query.get(int(uid))
+                    if u and getattr(u, 'is_active', True):
+                        is_authenticated = True
+                        is_admin = bool(getattr(u, 'is_admin', False)) or (str(getattr(u, 'role', '')).lower() == 'admin') or (str(getattr(u, 'username', '')).lower() == 'admin')
+        else:
+            # Dev/session-only heuristic: allow toggling via session keys
+            is_authenticated = bool(uid)
+            is_admin = bool(session.get('is_admin'))
+    except Exception:
+        pass
+    # Expose feature and auth flags for UI
     return {
         "mocks_enabled": MOCKS_ENABLED,
         "prod_parity": prod_parity,
         "DRIVER_CARDS_V1": True,
         "UI_TABS_V2": True,
         "WORKFLOW_STRIP": False,
+        "is_authenticated": is_authenticated,
+        "is_admin": is_admin,
     }
+
+# In debug/dev, disable HTTP caching so latest JS/CSS is always served
+@app.after_request
+def add_no_cache_headers(response):
+    try:
+        if app.debug:
+            response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+            response.headers["Pragma"] = "no-cache"
+            response.headers["Expires"] = "0"
+    except Exception:
+        pass
+    return response
 
 
 # Ensure csrf_token is defined for templates used by the dev server
@@ -129,18 +158,351 @@ def plan_builder():
 def playbook():
     return render_template("playbook.html")
 
+# Role Architect and Reports (dev server routes)
+@app.route("/roles")
+def roles():
+    return render_template("roles_list.html")
+
+
+@app.route("/roles/new")
+def role_new():
+    return render_template("role_wizard.html")
+
+
+@app.route("/reports")
+def reports():
+    # Use the v2 template that includes the external reports-list.js loader
+    return render_template("reports_v2.html")
+
+
+@app.route("/reports/compare")
+def reports_compare():
+    return render_template("reports_compare.html")
+
+
+# ---------------- Dev Admin fallbacks (login/logout) ----------------
+@app.route('/admin/login', methods=['GET', 'POST'])
+def dev_admin_login():
+    """Provide a simple admin login fallback in the dev server.
+
+    - GET renders a minimal HTML login form (not Flask-WTF) to avoid template/form dependencies.
+    - POST sets session flags and redirects to Role Architect.
+    """
+    # Always provide a simple, dependency-free login page in the dev server
+    # to avoid redirect loops regardless of BACKEND_AVAILABLE.
+    if request.method == 'POST':
+        username = (request.form.get('username') or '').strip() or 'admin'
+        # Mark session as admin
+        session['admin_user_id'] = 1
+        session['admin_username'] = username
+        session['is_admin'] = True
+        # After login, take admins directly to Role Architect under admin path
+        return redirect('/admin/roles')
+    return """
+        <!doctype html>
+        <html><head><meta charset='utf-8'><title>Admin Login</title>
+        <style>body{font-family:system-ui,Arial;margin:2rem}label{display:block;margin:.5rem 0}</style>
+        </head><body>
+        <h1>Admin Login (Dev)</h1>
+        <form method="post">
+          <label>Username <input name="username" placeholder="admin" /></label>
+          <label>Password <input name="password" type="password" placeholder="••••••" /></label>
+          <button type="submit">Login</button>
+        </form>
+        <p style="margin-top:1rem;color:#555">This is a lightweight dev-only login. In production, use the Admin login page.</p>
+        </body></html>
+        """
+
+
+@app.route('/login')
+def dev_login_alias():
+    """Convenience alias to the admin login in dev server."""
+    return redirect('/admin/login')
+
+
+@app.route('/admin/logout')
+def dev_admin_logout():
+    session.pop('admin_user_id', None)
+    session.pop('admin_username', None)
+    session.pop('is_admin', None)
+    return redirect('/')
+
+
+# ---------------- Dev Auth status fallback ----------------
+@app.route('/api/auth_status', methods=['GET'])
+def dev_auth_status():
+    """Return auth status based on session (dev fallback)."""
+    try:
+        is_authenticated = session.get('admin_user_id') is not None
+        username = session.get('admin_username')
+        return jsonify({'success': True, 'authenticated': is_authenticated, 'username': username})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# ---------------- Dev Admin Role Architect routes ----------------
+@app.route('/admin/roles')
+def dev_admin_roles_list():
+    # Render the same template as public roles, but under the admin path
+    return render_template('roles_list.html', is_admin=True)
+
+
+@app.route('/admin/roles/new')
+def dev_admin_roles_new():
+    return render_template('role_wizard.html', is_admin=True)
+
+
+# ---------------- Public Role Architect (dev) with admin auto-redirect ----------------
+@app.route('/roles')
+def dev_public_roles():
+    # If logged in as admin in this dev server, redirect to admin list
+    if session.get('is_admin') or session.get('admin_user_id'):
+        saved = request.args.get('saved')
+        target = '/admin/roles'
+        if saved:
+            target += f'?saved={saved}'
+        return redirect(target)
+    return render_template('roles_list.html', is_admin=False)
+
+
+@app.route('/roles/new')
+def dev_public_roles_new():
+    if session.get('is_admin') or session.get('admin_user_id'):
+        return redirect('/admin/roles/new')
+    return render_template('role_wizard.html', is_admin=False)
+
+
+# ---------------- Public debug: list key routes ----------------
+@app.route('/api/routes_summary', methods=['GET'])
+def dev_routes_summary():
+    try:
+        subset_prefixes = ('/api/roles', '/api/auth_status', '/api/health', '/admin')
+        routes = []
+        for rule in app.url_map.iter_rules():
+            rule_str = str(rule)
+            if any(rule_str.startswith(p) for p in subset_prefixes):
+                methods = sorted([m for m in rule.methods if m not in ('HEAD', 'OPTIONS')])
+                routes.append({'rule': rule_str, 'endpoint': rule.endpoint, 'methods': methods})
+        routes = sorted(routes, key=lambda r: r['rule'])
+        return jsonify({'routes': routes, 'count': len(routes)})
+    except Exception as e:
+        return jsonify({'error': 'Failed to summarize routes', 'details': str(e)}), 500
+
+# Dev alias to hard-bust any cached HTML under a fresh URL
+@app.route("/reports2")
+def reports2():
+    return render_template("reports_v2.html")
+
+@app.route("/report/<int:report_id>")
+def report_view(report_id: int):
+    """Single report view page (dev)."""
+    return render_template("report_view.html", report_id=report_id)
+
 # Alias endpoints to match blueprint-style names used in templates (main.*)
 app.add_url_rule('/', endpoint='main.index', view_func=dashboard)
 app.add_url_rule('/', endpoint='main.dashboard', view_func=dashboard)
 app.add_url_rule('/diagnostics', endpoint='main.diagnostics', view_func=diagnostics)
 app.add_url_rule('/plan-builder', endpoint='main.plan_builder', view_func=plan_builder)
 app.add_url_rule('/playbook', endpoint='main.playbook', view_func=playbook)
+app.add_url_rule('/roles', endpoint='main.roles', view_func=roles)
+app.add_url_rule('/roles/new', endpoint='main.role_new', view_func=role_new)
+app.add_url_rule('/reports', endpoint='main.reports', view_func=reports)
+app.add_url_rule('/reports/compare', endpoint='main.reports_compare', view_func=reports_compare)
+app.add_url_rule('/reports2', endpoint='main.reports2', view_func=reports2)
+app.add_url_rule('/report/<int:report_id>', endpoint='main.report_view', view_func=report_view)
 
 
 @app.route("/plan/report")
 def plan_report():
     """Simple report page that can start and monitor a dynamic report job."""
     return render_template("plan_report.html")
+
+# ---------------- Minimal Role APIs for dev server ----------------
+import sqlite3
+
+DB_PATH = os.path.join(SUB_APP_DIR, 'app.db')
+
+def _db_conn():
+    try:
+        return sqlite3.connect(DB_PATH)
+    except Exception:
+        return None
+
+def _rows_to_dicts(cur):
+    cols = [c[0] for c in cur.description] if cur.description else []
+    return [dict(zip(cols, r)) for r in cur.fetchall()]
+
+@app.route('/api/roles', methods=['GET'])
+def dev_list_roles():
+    """List Role Profiles from local SQLite for dev/demo. Gracefully fallback to empty list."""
+    try:
+        q = (request.args.get('q') or '').strip().lower()
+        con = _db_conn()
+        if not con:
+            return jsonify({'roles': [], 'count': 0})
+        cur = con.cursor()
+        sql = "SELECT id, name, department, is_active, created_date FROM role_profiles ORDER BY name"
+        cur.execute(sql)
+        rows = _rows_to_dicts(cur)
+        if q:
+            rows = [r for r in rows if q in (r.get('name') or '').lower()]
+        return jsonify({'roles': rows, 'count': len(rows)})
+    except Exception:
+        return jsonify({'roles': [], 'count': 0})
+
+
+@app.route('/api/roles/<int:role_id>/targets', methods=['GET'])
+def dev_role_targets(role_id: int):
+    """Return role competency targets, including competency name when present."""
+    try:
+        con = _db_conn()
+        if not con:
+            return jsonify({'targets': [], 'count': 0})
+        cur = con.cursor()
+        cur.execute(
+            """
+            SELECT t.id, t.role_profile_id, t.competency_id, t.target_level, t.weight,
+                   c.name AS competency_name
+            FROM role_competency_targets t
+            LEFT JOIN competencies c ON c.id = t.competency_id
+            WHERE t.role_profile_id = ?
+            ORDER BY t.id
+            """,
+            (role_id,)
+        )
+        items = _rows_to_dicts(cur)
+        return jsonify({'targets': items, 'count': len(items)})
+    except Exception:
+        return jsonify({'targets': [], 'count': 0})
+
+
+@app.route('/api/proficiency', methods=['GET', 'POST'])
+def dev_proficiency():
+    """Session-scoped competency proficiency mapping used for gap calculations."""
+    try:
+        if request.method == 'GET':
+            return jsonify({'competency_proficiency': session.get('competency_proficiency') or {}})
+        data = request.get_json(silent=True) or {}
+        mapping = data.get('competency_proficiency') or {}
+        clean = {}
+        for k, v in (mapping.items() if isinstance(mapping, dict) else []):
+            try:
+                key = int(k)
+                val = int(v)
+            except Exception:
+                continue
+            clean[str(key)] = max(0, min(5, val))
+        session['competency_proficiency'] = clean
+        session.modified = True
+        return jsonify({'ok': True, 'competency_proficiency': clean})
+    except Exception as e:
+        return jsonify({'error': 'Failed to update proficiency', 'details': str(e)}), 500
+
+
+@app.route('/api/roles/select', methods=['GET', 'POST'])
+def dev_role_select():
+    try:
+        if request.method == 'GET':
+            rid = session.get('selected_role_profile_id')
+            return jsonify({'selected_role_profile_id': rid})
+        data = request.get_json(silent=True) or {}
+        rid = data.get('role_profile_id') or data.get('id') or data.get('role_id')
+        if rid in (None, '', 0, '0'):
+            session.pop('selected_role_profile_id', None)
+        else:
+            session['selected_role_profile_id'] = int(rid)
+        session.modified = True
+        return jsonify({'ok': True, 'selected_role_profile_id': session.get('selected_role_profile_id')})
+    except Exception as e:
+        return jsonify({'error': 'Failed to set selected role', 'details': str(e)}), 500
+
+
+@app.route('/api/roles/<int:role_id>/gaps', methods=['GET'])
+def dev_role_gaps(role_id: int):
+    """Compute gaps vs targets using session proficiency with basic weighting."""
+    try:
+        con = _db_conn()
+        if not con:
+            return jsonify({'gaps': [], 'weighted_gap': 0.0})
+        # Load targets
+        cur = con.cursor()
+        cur.execute(
+            """
+            SELECT t.competency_id, t.target_level, t.weight, c.name AS competency_name
+            FROM role_competency_targets t
+            LEFT JOIN competencies c ON c.id = t.competency_id
+            WHERE t.role_profile_id = ?
+            """,
+            (role_id,)
+        )
+        targets = _rows_to_dicts(cur)
+        prof = session.get('competency_proficiency') or {}
+        gaps = []
+        total_w = 0.0
+        total_g = 0.0
+        for t in targets:
+            cid = t.get('competency_id')
+            tgt = int(t.get('target_level') or 0)
+            wt = float(t.get('weight') or 1.0)
+            curr = int(prof.get(str(cid)) or prof.get(cid) or 0)
+            gap = max(0, tgt - curr)
+            gaps.append({
+                'competency_id': cid,
+                'competency_name': t.get('competency_name'),
+                'target_level': tgt,
+                'current_level': curr,
+                'gap': gap,
+                'weight': wt,
+            })
+            total_w += wt
+            total_g += gap * wt
+        weighted = (total_g / total_w) if total_w > 0 else 0.0
+        return jsonify({'gaps': gaps, 'count': len(gaps), 'weighted_gap': round(weighted, 4)})
+    except Exception:
+        return jsonify({'gaps': [], 'weighted_gap': 0.0})
+
+# ---------------- Minimal Reports APIs for dev server ----------------
+@app.route('/api/reports', methods=['GET'])
+def dev_reports_list():
+    """Return an empty list or a lightweight list if a table exists. Safe fallback to empty."""
+    try:
+        con = _db_conn()
+        if not con:
+            return jsonify({'reports': [], 'count': 0})
+        cur = con.cursor()
+        # Try to select if table exists
+        try:
+            cur.execute("SELECT id, title, created_date, generation_status FROM dynamic_reports ORDER BY created_date DESC LIMIT 50")
+            rows = _rows_to_dicts(cur)
+            return jsonify({'reports': rows, 'count': len(rows)})
+        except Exception:
+            return jsonify({'reports': [], 'count': 0})
+    except Exception:
+        return jsonify({'reports': [], 'count': 0})
+
+
+@app.route('/api/reports/<int:report_id>', methods=['GET'])
+def dev_reports_get(report_id: int):
+    try:
+        con = _db_conn()
+        if not con:
+            return jsonify({'error': 'not found'}), 404
+        cur = con.cursor()
+        try:
+            cur.execute("SELECT id, title, created_date, generation_status, content FROM dynamic_reports WHERE id = ?", (report_id,))
+            row = cur.fetchone()
+            if not row:
+                return jsonify({'error': 'not found'}), 404
+            cols = [c[0] for c in cur.description]
+            rec = dict(zip(cols, row))
+            include = (request.args.get('include') or '').lower()
+            if 'content' not in include:
+                rec.pop('content', None)
+            return jsonify({'report': rec})
+        except Exception:
+            return jsonify({'error': 'not found'}), 404
+    except Exception:
+        return jsonify({'error': 'not found'}), 404
 
 # Provide simple status/health pages for dev to satisfy base.html links
 @app.route('/status')

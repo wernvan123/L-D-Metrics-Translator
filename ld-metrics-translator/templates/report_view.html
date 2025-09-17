@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="page report-view">
+  <div class="card">
+    <div class="card-header">
+      <h2 id="rv-title">Report {{ report_id }}</h2>
+      <div class="actions">
+        <a class="btn" href="/reports">Back to Reports</a>
+      </div>
+    </div>
+    <div class="card-body">
+      <div id="rv-status" class="notice" style="display:none"></div>
+      <div id="rv-meta" class="meta" style="margin-bottom:8px;"></div>
+      <div id="rv-content" class="mt"></div>
+      <details class="mt">
+        <summary>Troubleshooting</summary>
+        <ul>
+          <li>If content does not load, ensure the report exists via <code>/api/reports/{{ report_id }}</code>.</li>
+          <li>Check that the report was generated successfully (status and timestamps).</li>
+        </ul>
+      </details>
+    </div>
+  </div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  window.__REPORT_ID__ = {{ report_id|int }};
+</script>
+<script src="{{ url_for('static', filename='js/report-view.js') }}?v=20250915"></script>
+<script>
+  document.addEventListener('DOMContentLoaded', function(){
+    if (window.ReportView) ReportView.init();
+  });
+</script>
+{% endblock %}

@@ -20,6 +20,8 @@
     competencyList: null,
     searchRow: null,
     btnStartNew: null,
+    roleSelect: null,
+    roleGap: null,
   };
 
   const state = {
@@ -92,6 +94,31 @@
 
   function escapeHtml(str){ return (str||'').replace(/[&<>"']/g, s => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[s])); }
   function escapeAttr(str){ return String(str||'').replace(/"/g,'&quot;'); }
+
+  async function fetchJSON(url, opts){
+    const res = await fetch(url, Object.assign({ headers: { 'Accept':'application/json' } }, opts||{}));
+    if(!res.ok) throw new Error(`Request failed (${res.status})`);
+    return await res.json();
+  }
+
+  async function refreshRoleGap(){
+    try{
+      if(!els.roleGap) return;
+      const sel = await fetchJSON('/api/roles/select');
+      const rid = sel.selected_role_profile_id;
+      if(!rid){ els.roleGap.style.display='none'; els.roleGap.textContent=''; return; }
+      const data = await fetchJSON(`/api/roles/${rid}/gaps`);
+      const items = data.gaps || [];
+      if(!items.length){ els.roleGap.style.display='none'; els.roleGap.textContent=''; return; }
+      const lines = items.slice(0,6).map(x=>`• ${escapeHtml(x.competency_name || `#${x.competency_id}`)}: current ${x.current_level}/ target ${x.target_level} (gap ${x.gap})`);
+      const more = items.length>6 ? ` +${items.length-6} more` : '';
+      const score = typeof data.weighted_gap === 'number' ? `Weighted gap: ${data.weighted_gap.toFixed(2)}` : '';
+      els.roleGap.innerHTML = `<strong>Gaps vs Role Target</strong><br>${lines.join('<br>')}<br>${escapeHtml(score)}${escapeHtml(more)}`;
+      els.roleGap.style.display='block';
+    }catch(e){
+      if(els.roleGap){ els.roleGap.style.display='none'; }
+    }
+  }
 
   function updateInitialChoiceUI(){
     if(!els.initialChoice) return;
@@ -213,6 +240,7 @@
       });
       if(!res.ok){ throw new Error('Failed to add to plan'); }
       await refreshSidebar();
+    await refreshRoleGap();
       if(window.notify){ window.notify('success', `Added to plan: ${label}`); }
       if(buttonEl){
         buttonEl.disabled = true;
@@ -329,6 +357,22 @@
       await refreshSidebar();
       els.grid.innerHTML = '';
     }); }
+    // Role selection changes should refresh gap view
+    els.roleSelect = document.getElementById('pb-role-select');
+    els.roleGap = document.getElementById('pb-role-gap');
+    if(els.roleSelect){ els.roleSelect.addEventListener('change', ()=>{ setTimeout(refreshRoleGap, 50); }); }
+    const profSave = document.getElementById('pb-prof-save');
+    const profJson = document.getElementById('pb-prof-json');
+    if(profSave && profJson){
+      profSave.addEventListener('click', async ()=>{
+        try{
+          const mapping = JSON.parse(profJson.value||'{}');
+          await fetch('/api/proficiency', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ competency_proficiency: mapping }) });
+          await refreshRoleGap();
+          if(window.notify) window.notify('success','Saved current proficiency');
+        }catch(e){ (window.notify? window.notify('error','Invalid JSON'): alert('Invalid JSON')); }
+      });
+    }
   }
 
   async function init(){
@@ -347,6 +391,8 @@
     els.competencyList = $('#pb-competency-list');
     els.searchRow = $('#pb-search-row');
     els.btnStartNew = $('#pb-start-new');
+    els.roleSelect = document.getElementById('pb-role-select');
+    els.roleGap = document.getElementById('pb-role-gap');
 
     await initSelectors();
     initEvents();

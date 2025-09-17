@@ -497,6 +497,26 @@ def delete_competency(id):
     
     return render_template('admin/metric_type_form.html', form=form, title='Add Metric Type')
 
+# ------------------------------------------------------------
+# Role Architect (Admin entry) — reuse public templates
+# ------------------------------------------------------------
+
+@admin.route('/roles')
+@admin_required
+def roles_admin():
+    """Admin entry to Role Architect library."""
+    # Pass is_admin=True so templates show create/edit affordances
+    if (request.args.get('saved') or '').strip() in ('1', 'true', 'yes'):
+        flash('Role Profile saved successfully!', 'success')
+    return render_template('roles_list.html', title='Role Architect', is_admin=True)
+
+
+@admin.route('/roles/new')
+@admin_required
+def roles_admin_new():
+    """Admin entry to Role Profile wizard."""
+    return render_template('role_wizard.html', title='New Role Profile', is_admin=True)
+
 @admin.route('/types/<int:id>/edit', methods=['GET', 'POST'])
 @admin_required
 def edit_metric_type(id):

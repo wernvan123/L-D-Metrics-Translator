@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+
+{% block page_styles %}
+<style>
+  /* Comparison View page-scoped styles */
+  .reports-compare .section-title { margin: 0 0 4px; color: #fff !important; font-size: 13px; letter-spacing: .2px; text-transform: uppercase; text-shadow: 0 1px 2px rgba(0,0,0,0.25); opacity: 1 !important; mix-blend-mode: normal !important; position: relative; z-index: 2; }
+  .reports-compare h3.section-title { color: #fff !important; }
+  /* Force white text in the visual columns for strong contrast */
+  .reports-compare .grid.two { color: #fff; }
+  .reports-compare .grid.two .report-title { color: #fff; }
+  .reports-compare .grid.two .meta { color: #e8ecff; }
+  .reports-compare .report-title { margin: 4px 0 6px; }
+  .reports-compare .visual-placeholder { margin-top: 8px; border: 1px dashed var(--border); border-radius: 10px; background: #fbfbfd; color: var(--muted); padding: 12px; text-align: center; font-size: 13px; }
+  .reports-compare .analysis-card { background: #fff; border: 1px solid var(--border); border-radius: 12px; padding: 14px; box-shadow: var(--shadow); color: var(--text); }
+  .reports-compare .key-changes { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 12px; }
+  @media (max-width: 900px) { .reports-compare .key-changes { grid-template-columns: 1fr; } }
+  .reports-compare .change-item { border: 1px solid var(--border); border-radius: 10px; background: #fff; padding: 10px 12px; display: grid; grid-template-columns: 1fr auto; gap: 6px 10px; align-items: center; }
+  .reports-compare .change-item .change-metric { font-weight: 600; }
+  .reports-compare .change-item .change-delta { font-weight: 700; }
+  .reports-compare .change-item .change-note { grid-column: 1 / -1; color: var(--muted); font-size: 12px; }
+  .reports-compare .change-item.chg-up { border-color: #c9f3df; background: #e8fbef; }
+  .reports-compare .change-item.chg-up .change-delta { color: #0e6b3b; }
+  .reports-compare .change-item.chg-down { border-color: #ffd0db; background: #ffe9ef; }
+  .reports-compare .change-item.chg-down .change-delta { color: #8a1231; }
+  .reports-compare .change-item.chg-flat { border-color: #e5e7eb; background: #f3f4f6; }
+  .reports-compare .change-item .arrow { margin-right: 4px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<section class="page reports-compare">
+  <div class="card">
+    <div class="card-header">
+      <h2>Comparison Report</h2>
+      <div class="actions cta-row">
+        <a class="btn" href="/reports">Back to Reports</a>
+        <button id="btn-share-comparison" class="btn">Share Comparison</button>
+        <button id="btn-export-comparison" class="btn primary">Export Comparison as PDF</button>
+      </div>
+    </div>
+    <div class="card-body">
+      <div class="notice" id="rc-status" style="display:none"></div>
+
+      <div class="grid two" style="gap:16px; align-items:start;">
+        <div>
+          <h3 class="section-title" style="color:#fff;opacity:1;mix-blend-mode:normal;position:relative;z-index:2;">Before</h3>
+          <h4 id="rA-title" class="report-title">Baseline: —</h4>
+          <div class="meta" id="rA-meta"></div>
+          <div class="visual-placeholder" id="rA-visual">Competency Tree / Radar will render here.</div>
+          <div id="rA-content" class="mt"></div>
+        </div>
+        <div>
+          <h3 class="section-title" style="color:#fff;opacity:1;mix-blend-mode:normal;position:relative;z-index:2;">After</h3>
+          <h4 id="rB-title" class="report-title">Follow-up: —</h4>
+          <div class="meta" id="rB-meta"></div>
+          <div class="visual-placeholder" id="rB-visual">Competency Tree / Radar will render here.</div>
+          <div id="rB-content" class="mt"></div>
+        </div>
+      </div>
+
+      <hr class="mt"/>
+
+      <div class="analysis-card">
+        <h3>Summary of Changes</h3>
+        <div id="rc-summary" class="mt">Select two reports to see a synthesized comparison summary.</div>
+        <div id="rc-key-changes" class="key-changes mt"></div>
+      </div>
+    </div>
+  </div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/reports.js') }}?v=20250917"></script>
+<script>
+  document.addEventListener('DOMContentLoaded', function(){
+    if (window.ReportsCompare) ReportsCompare.init();
+  });
+</script>
+{% endblock %}

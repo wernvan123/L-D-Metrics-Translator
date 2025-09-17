@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="page role-wizard">
+  <div class="card">
+    <div class="card-header">
+      <h2>Role Profile Wizard</h2>
+      <div class="actions">
+        <a class="btn" href="/roles">Back to Roles</a>
+      </div>
+    </div>
+    <div class="card-body">
+      {% if not is_admin %}
+      <div class="notice" role="alert" style="margin-bottom:12px;">
+        You need admin access to create or edit Role Profiles. You can view this page, but actions will be disabled.
+      </div>
+      {% endif %}
+      <ol class="wizard-steps">
+        <li class="active">Basics</li>
+        <li>Knowledge</li>
+        <li>Skills</li>
+        <li>Abilities</li>
+        <li>Others</li>
+        <li>Targets</li>
+        <li>Review & Save</li>
+      </ol>
+
+      <div id="role-wizard" class="wizard" {% if not is_admin %}aria-disabled="true"{% endif %}>
+        <!-- Dynamic step content will be rendered here by JS -->
+      </div>
+
+      <div class="wizard-actions">
+        <button id="wiz-prev" class="btn" disabled>Back</button>
+        <button id="wiz-next" class="btn">Next</button>
+        <button id="wiz-save" class="btn primary" style="display:none">Save Role</button>
+      </div>
+    </div>
+  </div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/role-architect.js') }}"></script>
+<script>
+  window.addEventListener('DOMContentLoaded', () => {
+    RoleArchitect.initWizard();
+  });
+</script>
+{% endblock %}

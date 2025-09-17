@@ -22,6 +22,42 @@ def favicon():
         return send_from_directory(current_app.static_folder, 'favicon.ico')
 
 
+# -----------------------------
+# Convenience fallbacks & debug
+# -----------------------------
+
+@main.route('/login')
+def login_alias():
+    """Public login alias that redirects to Admin login.
+
+    Helpful when users try /login or when admin blueprint URL is not obvious.
+    """
+    try:
+        return redirect(url_for('admin.login'))
+    except Exception:
+        return redirect('/')
+
+
+@main.route('/api/routes_summary', methods=['GET'])
+def routes_summary_public():
+    """Lightweight public routes summary for debugging in non-debug environments.
+
+    Only exposes a small, non-sensitive subset helpful for troubleshooting.
+    """
+    try:
+        subset_prefixes = ('/api/roles', '/api/auth_status', '/api/health')
+        routes = []
+        for rule in current_app.url_map.iter_rules():
+            rule_str = str(rule)
+            if any(rule_str.startswith(p) for p in subset_prefixes):
+                methods = sorted([m for m in rule.methods if m not in ('HEAD', 'OPTIONS')])
+                routes.append({'rule': rule_str, 'endpoint': rule.endpoint, 'methods': methods})
+        routes = sorted(routes, key=lambda r: r['rule'])
+        return jsonify({'routes': routes, 'count': len(routes)}), 200
+    except Exception as e:
+        return jsonify({'error': 'Failed to summarize routes', 'details': str(e)}), 500
+
+
 @main.route('/')
 def index():
     """Home page displaying all metrics with pagination and efficient queries."""
@@ -218,6 +254,54 @@ def plan_builder():
     """Plan Builder area (integrates Dynamic Report Generator)."""
     return render_template('plan_builder.html', title='Plan Builder')
 
+
+# -----------------------------
+# Role Architect (Role Profiles)
+# -----------------------------
+
+@main.route('/roles')
+def roles():
+    """Role Architect list and entry point."""
+    # If logged in as admin (dev or real), route to admin path so full actions are enabled
+    if session.get('is_admin') or session.get('admin_user_id'):
+        # Preserve success indicator if present to allow admin page to flash
+        saved = request.args.get('saved')
+        target = '/admin/roles'
+        if saved:
+            target += f'?saved={saved}'
+        return redirect(target)
+    return render_template('roles_list.html', title='Role Architect')
+
+
+@main.route('/roles/new')
+def role_new():
+    """Role Architect wizard for creating a new Role Profile."""
+    if session.get('is_admin') or session.get('admin_user_id'):
+        return redirect('/admin/roles/new')
+    return render_template('role_wizard.html', title='New Role Profile')
+
+
+@main.route('/reports')
+def reports():
+    """Reports history page (list all generated reports for current user/session)."""
+    # Use v2 template to avoid cached HTML in some dev browsers
+    return render_template('reports_v2.html', title='Reports')
+
+
+@main.route('/reports/compare')
+def reports_compare():
+    """Comparison view for two selected reports."""
+    return render_template('reports_compare.html', title='Compare Reports')
+
+@main.route('/report/<int:report_id>')
+def report_view(report_id: int):
+    """Single report view with client-side fetch and graceful fallbacks."""
+    return render_template('report_view.html', title=f'Report #{report_id}', report_id=report_id)
+
+# Temporary alias to force-bust template HTML caching during dev
+@main.route('/reports2')
+def reports_v2_alias():
+    return render_template('reports_v2.html', title='Reports')
 
 @main.route('/api/__debug__/routes_main', methods=['GET'])
 @main.route('/api/debug/routes_main', methods=['GET'])

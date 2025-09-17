@@ -75,6 +75,189 @@ This guide provides comprehensive information for developers working on the L&D 
    cd ld-metrics-translator
    ```
 
+### Reports API
+
+The application exposes lightweight Reports endpoints to support the Reports list, single report view and comparison UI. In local development, the dev server in `app.py` serves safe SQLite-backed fallbacks under the same paths, returning empty results when no local DB is available. In the full backend, these endpoints are provided by the Flask package in `ld-metrics-translator/`.
+
+Endpoints:
+
+- GET `/api/reports`
+  - Description: Return a recent list of generated reports.
+  - Response: `{ "reports": [ReportSummary...], "count": <int> }`
+  - ReportSummary fields:
+    - `id: int`
+    - `title: str`
+    - `generation_status: str` — one of `completed`, `in_progress`, `queued`, `failed` (UI maps to status badges)
+    - `created_date: str` — creation timestamp (e.g. `YYYY-MM-DD HH:MM:SS`)
+    - `generated_date: str|null` — set when `generation_status == completed`
+
+- GET `/api/reports/<id>`
+  - Description: Return a single report record.
+  - Query params:
+    - `include=content` — when present, include `content` or `content_html` fields if available
+  - Response (200): `{ "report": ReportDetail }` or (404) `{ "error": "not found" }`
+  - ReportDetail fields (superset of summary):
+    - `id, title, generation_status, created_date, generated_date`
+    - `content: object|string|null` — raw JSON/text content
+    - `content_html: string|null` — optional pre-rendered HTML
+    - `meta: object|null` — optional metadata (e.g. `meta.role_profile.name`)
+
+Status meanings:
+
+- `completed`: Report generation finished; `generated_date` populated.
+- `in_progress` or `queued`: Generation in progress; `generated_date` may be null.
+- `failed`: Generation failed; UI shows an error badge.
+
+Date fields:
+
+- `created_date`: When the report was first created.
+- `generated_date`: When generation completed (if applicable).
+
+Notes for dev server behavior (see `app.py`):
+
+- `GET /api/reports` tries to read from `dynamic_reports` in `ld-metrics-translator/app.db` and gracefully falls back to an empty list.
+- `GET /api/reports/<id>` returns 404 if the table or record is missing; when `?include=content` is passed, `content` is included if present in the table.
+
+### Roles API
+
+The Roles API supports CRUD operations for role profiles as well as selection and competency target management. In production, these endpoints require admin authentication (e.g., API key headers). Local dev stubs exist in `app.py` to exercise the UI:
+
+Endpoints (dev stubs):
+
+- GET `/api/roles`
+  - Description: List role profiles.
+  - Response: `{ "roles": [ { id, name, department, is_active, created_date }... ], "count": <int> }`
+
+- POST `/api/roles` (admin required in real backend)
+  - Description: Create a role profile.
+  - Body: `{ name: str, department?: str, is_active?: bool }`
+  - Response: `{ "role": { id, name, department, is_active, ... } }`
+
+- GET `/api/roles/<id>`
+  - Description: Get a single role profile.
+  - Response: `{ "role": {...} }`
+
+- PATCH `/api/roles/<id>` (admin required in real backend)
+  - Description: Update a role profile.
+  - Body: Partial fields (e.g., `{ name: "QA Engineer II" }`).
+  - Response: `{ "role": {...} }`
+
+- DELETE `/api/roles/<id>` (admin required in real backend)
+  - Description: Delete/deactivate a role profile.
+  - Response: `{ "ok": true }` or `{ "deleted": true }`
+
+- GET `/api/roles/select`
+  - Description: Retrieve the session-selected role id for the current user session.
+  - Response: `{ "selected_role_profile_id": int|null }`
+
+- POST `/api/roles/select`
+  - Description: Set or clear the session-selected role id.
+  - Body: `{ role_profile_id: int }` (or null/0 to clear)
+  - Response: `{ "ok": true, "selected_role_profile_id": int|null }`
+
+- GET `/api/roles/<id>/targets`
+  - Description: Get competency targets for a role profile.
+  - Response: `{ "targets": [ { competency_id, target_level, weight, competency_name? }... ], "count": <int> }`
+
+- POST `/api/roles/<id>/targets` (admin required in real backend)
+  - Description: Upsert competency targets for a role profile.
+  - Body: `{ targets: [ { competency_id: int, target_level: int (0..5), weight?: number }... ] }`
+  - Response: `{ "ok": true }` or created resource details
+
+Admin requirements:
+
+- In the real backend, `POST`, `PATCH`, and `DELETE` operations typically require admin authorization, e.g. an `X-API-Key` header associated with an active admin user. The tests (see `tests/test_roles_api.py`) demonstrate usage via `auth_headers`.
+
+## Role Architect (Admin) Workflow
+
+This feature allows HR/admins to create and manage Role Profiles (KSAOs) and connect them to Diagnostics and downstream planning.
+
+### Admin entry points
+
+- GET `/admin/roles` — Role Profile Library. Uses template `templates/roles_list.html` with `is_admin=True` to enable create/edit affordances.
+- GET `/admin/roles/new` — Role Profile Wizard. Uses `templates/role_wizard.html` with `is_admin=True`.
+
+In development (top-level `app.py`), lightweight routes exist to ensure these pages work even without the full Flask package loaded.
+
+### Public entry points (auto-redirect for admins)
+
+- GET `/roles` and `/roles/new` render the same templates for non-admin viewers with actions disabled.
+- If the session indicates an admin is logged in, these public routes automatically redirect to the equivalent admin routes.
+
+### Wizard behavior
+
+- Multi-step: Basics → Knowledge → Skills → Abilities → Others → Targets → Review & Save.
+- On Save:
+  1. Create role `POST /api/roles` (if new) or update `PATCH /api/roles/<id>`.
+  2. Bulk replace KSAOs `POST /api/roles/<id>/ksaos`.
+  3. Bulk replace competency targets `POST /api/roles/<id>/targets`.
+- Redirects:
+  - If launched from `/admin/roles/new`, redirect to `/admin/roles?saved=1` so the Admin Library flashes a success message.
+  - If launched from `/roles/new` (public), redirect to `/roles`.
+
+### Flash messages
+
+- Server-side flashes are rendered in `templates/base.html` via `get_flashed_messages()`.
+- `/admin/roles` flashes “Role Profile saved successfully!” when `?saved=1` is present (set by the wizard on admin path).
+
+### Diagnostics integration
+
+- The Diagnostics page (`templates/diagnostics.html`) includes a "Role Profile" dropdown loaded from `GET /api/roles`.
+- Selection is stored via `POST /api/roles/select` and restored using `GET /api/roles/select` (session-scoped).
+
+### Seeding demo roles
+
+- Use `scripts/seed_demo_roles.py` to insert demo roles with basic KSAOs into `ld-metrics-translator/app.db`.
+
+```bash
+python scripts/seed_demo_roles.py
+```
+
+### Dev login and route discovery
+
+- Dev server provides a simplified admin login at `/admin/login` (no Flask-WTF dependencies). On successful POST, it sets admin flags in session and takes you to `/admin/roles`.
+- To list key routes quickly, use `GET /api/routes_summary` (dev-only convenience).
+
+### Dev caching guidance (templates/JS/CSS)
+
+During development, browser caching can lead to stale templates and static assets. We employ two complementary strategies:
+
+- Flask config in `app.py` sets `TEMPLATES_AUTO_RELOAD=True` and sends `Cache-Control: no-store` headers in debug mode.
+- We append a version query parameter when referencing static assets from templates, e.g.:
+
+  - `report_view.html` loads: `{{ url_for('static', filename='js/report-view.js') }}?v=20250915`
+  - `reports_compare.html` loads: `{{ url_for('static', filename='js/reports.js') }}?v=20250915`
+  - `reports_v2.html` loads: `{{ url_for('static', filename='js/reports-list.js') }}?v=20250916`
+
+Best practice: When you change a static file (JS/CSS) and need to hard-refresh in dev or a demo environment, bump the `?v=` value in the template to invalidate caches.
+
+### Seed demo data for Reports and UI verification
+
+To quickly populate local demo data for the Reports UI, use the seeding script:
+
+1. Ensure you are at the repository root and Python can write to `ld-metrics-translator/app.db`.
+2. Run:
+
+   ```bash
+   python scripts/seed_demo_reports.py
+   ```
+
+   This will create tables `report_templates` and `dynamic_reports` if absent and insert three demo reports with realistic fields (`created_date`, `generated_date`, `generation_status`, etc.).
+
+3. Start the dev server (e.g., via `run_dev.bat` or `python app.py`).
+
+4. UI verification steps:
+
+   - Reports list: Navigate to `/reports`. You should see demo rows with status badges and a working "Compare Reports" button enabling only when exactly two checkboxes are selected.
+   - Single report view: Click "View" on a row to open `/report/<id>`. Page `report_view.html` initializes `report-view.js` which calls `GET /api/reports/<id>?include=content`. Verify the title, timestamps, and content rendering (raw JSON or `content_html` if present). Console should be clean of errors.
+   - Compare two reports: From `/reports`, select two items and click "Compare Reports". This navigates to `/reports/compare?a=<idA>&b=<idB>`, loading `reports_compare.html` and `reports.js`. Each side loads its report, and the page shows a synthesized summary.
+
+Troubleshooting:
+
+- If the Reports list shows "No reports yet.", confirm the SQLite database path `ld-metrics-translator/app.db` exists and the `dynamic_reports` table contains rows (re-run the seed script if needed).
+- If single report view shows a fallback message, verify the record exists with `GET /api/reports/<id>`.
+
+
 2. **Python Environment:**
    ```bash
    python -m venv venv
@@ -100,6 +283,20 @@ This guide provides comprehensive information for developers working on the L&D 
    ```bash
    python run.py
    ```
+
+#### Dev server port (8080 vs 5000)
+
+- When you run the app via `python app.py` (used by `run_dev.bat` and `run_prod_parity.bat`), it binds to port 8080 by default, so the site will be at:
+  - http://localhost:8080
+
+- If you instead run via Flask CLI (`flask run`), Flask defaults to port 5000 unless you specify otherwise, so the site will be at:
+  - http://localhost:5000
+
+- To choose a port when using Flask CLI:
+  - One‑off: `flask run --port 8080`
+  - Or set an env var: `set FLASK_RUN_PORT=8080` (Windows) or `export FLASK_RUN_PORT=8080` (bash/zsh)
+
+- To change the port for `python app.py`, update the `app.run(..., port=8080)` line in `app.py` to your preferred port.
 
 ### Development Tools
 
@@ -285,36 +482,12 @@ CREATE INDEX idx_metrics_name ON metrics(name);
 
 -- Full-text search (PostgreSQL)
 CREATE INDEX idx_metrics_search ON metrics USING gin(to_tsvector('english', name || ' ' || description || ' ' || example));
-```
 
 ## API Development
 
 ### RESTful Design Principles
 
 The API follows REST conventions:
-
-- **GET**: Retrieve resources
-- **POST**: Create new resources
-- **PUT**: Update entire resources
-- **PATCH**: Partial resource updates
-- **DELETE**: Remove resources
-
-### API Endpoints Structure
-
-```python
-# app/api.py
-@api.route('/metrics', methods=['GET'])
-def get_metrics():
-    """Get all metrics with filtering and pagination."""
-    
-@api.route('/metrics/<int:id>', methods=['GET'])
-def get_metric(id):
-    """Get specific metric by ID."""
-    
-@api.route('/metrics/search', methods=['GET'])
-def search_metrics():
-    """Full-text search across metrics."""
-```
 
 ### Response Format Standardization
 

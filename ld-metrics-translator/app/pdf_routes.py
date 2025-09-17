@@ -111,8 +111,6 @@ def generate_from_current_selections():
         
         # Build query based on selections
         query = Metric.query.join(LDOutcome).join(MetricType)
-        
-        # Apply filters based on selections
         filters_applied = False
         
         if category_ids:
@@ -124,7 +122,6 @@ def generate_from_current_selections():
             filters_applied = True
         
         if metric_ids:
-            # If specific metrics are selected, use those
             specific_metrics = Metric.query.filter(Metric.id.in_(metric_ids)).all()
             if specific_metrics:
                 metrics = specific_metrics
@@ -136,7 +133,6 @@ def generate_from_current_selections():
         # Include neuroscience metrics if selected
         if neuroscience_ids:
             neuroscience_metrics = Metric.query.filter(Metric.id.in_(neuroscience_ids)).all()
-            # Combine with existing metrics, avoiding duplicates
             existing_ids = {m.id for m in metrics}
             for nm in neuroscience_metrics:
                 if nm.id not in existing_ids:
@@ -269,6 +265,51 @@ def preview_selected_metrics():
         }), 500
 
 
+@pdf_bp.route('/generate-comparison', methods=['POST'])
+def generate_comparison_report():
+    """Generate a comparison PDF for two reports with summary and key changes.
+
+    Expected JSON payload:
+    {
+        "a_report": {"title": "Baseline: Q1 Report (July 15, 2025)", "date": "2025-07-15"},
+        "b_report": {"title": "Follow-up: Q3 Report (September 15, 2025)", "date": "2025-09-15"},
+        "summary_html": "<p>Summary...</p>",
+        "key_changes": [
+            {"label": "Strategic Acumen", "change": 25, "note": "..."},
+            {"label": "Delegation Effectiveness Score", "change": 40 }
+        ],
+        "filename": "LD_Comparison_Report.pdf"
+    }
+    """
+    try:
+        data = request.get_json() or {}
+        a_report = data.get('a_report') or {}
+        b_report = data.get('b_report') or {}
+        summary_html = data.get('summary_html') or ''
+        key_changes = data.get('key_changes') or []
+        filename = data.get('filename') or f"LD_Comparison_Report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+
+        pdf_generator = PDFReportGenerator()
+        pdf_buffer = pdf_generator.generate_comparison_report(
+            a_report=a_report,
+            b_report=b_report,
+            summary_html=summary_html,
+            key_changes=key_changes
+        )
+        return send_file(
+            pdf_buffer,
+            as_attachment=True,
+            download_name=filename,
+            mimetype='application/pdf'
+        )
+    except Exception as e:
+        current_app.logger.error(f"Comparison PDF generation error: {str(e)}")
+        return jsonify({
+            'error': 'Failed to generate comparison PDF',
+            'details': str(e)
+        }), 500
+
+
 @pdf_bp.route('/health', methods=['GET'])
 def pdf_health_check():
     """Health check for PDF generation service."""
@@ -309,6 +350,7 @@ def pdf_not_found(error):
             '/pdf/generate-report',
             '/pdf/generate-from-selections', 
             '/pdf/preview-metrics',
+            '/pdf/generate-comparison',
             '/pdf/health'
         ]
     }), 404

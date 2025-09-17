@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="page reports">
+  <div class="card">
+    <div class="card-header">
+      <h2>Reports</h2>
+      <div class="actions">
+        <button id="btn-compare" class="btn" disabled>Compare Reports</button>
+      </div>
+    </div>
+    <div class="card-body">
+      <div class="row" style="gap:12px;align-items:center;margin-bottom:12px;">
+        <label for="report-search">Search</label>
+        <input id="report-search" placeholder="Search reports..." />
+      </div>
+      <table class="table">
+        <thead>
+          <tr>
+            <th style="width:36px"></th>
+            <th>Title</th>
+            <th>Date</th>
+            <th>Status</th>
+            <th style="width:120px">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="reports-tbody">
+          <tr><td colspan="5">Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/reports-list.js') }}?v=20250916"></script>
+{% endblock %}

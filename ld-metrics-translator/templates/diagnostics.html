@@ -22,6 +22,11 @@
 <section id="diag-ai" class="page-section diag-panel" role="tabpanel">
   <div class="container">
     <div class="event-analysis-container">
+      <div class="row" style="margin-bottom:12px; gap:12px; align-items:center;">
+        <label for="diag-role-select" class="control-label">Role Profile</label>
+        <select id="diag-role-select" class="library-filter-select" style="max-width:360px;"><option value="">— Select Role —</option></select>
+      </div>
+      <div id="diag-role-targets" class="notice" style="display:none"></div>
       <!-- Inline Login Prompt within Enter Scenario card (Option A) -->
       <div id="login-prompt" class="login-prompt inline" style="display: none;">
         <div class="login-prompt-content">
@@ -107,4 +112,10 @@
 </section>
 
 <script src="{{ url_for('static', filename='js/diagnostics.js') }}?v=20250912-2"></script>
+<script src="{{ url_for('static', filename='js/role-selection.js') }}?v=20250915"></script>
+<script>
+  document.addEventListener('DOMContentLoaded', function(){
+    if (window.RoleSelection) RoleSelection.init('diag-role-select');
+  });
+</script>
 {% endblock %}

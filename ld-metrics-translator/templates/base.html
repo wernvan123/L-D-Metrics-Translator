@@ -10,7 +10,8 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=20250914-3">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=20250916-2">
+    {% block page_styles %}{% endblock %}
 </head>
 <body>
     <header class="header">
@@ -25,6 +26,10 @@
                     <div class="nav-tabs-inline">
                         <a href="{{ url_for('main.dashboard') }}" class="nav-link{% if request.path == url_for('main.dashboard') %} active{% endif %}">Dashboard</a>
                         <a href="{{ url_for('main.diagnostics') }}" class="nav-link{% if request.path.startswith(url_for('main.diagnostics')) %} active{% endif %}">Diagnostics</a>
+                        {% if is_admin %}
+                        <a href="{{ url_for('main.roles') }}" class="nav-link{% if request.path.startswith('/roles') %} active{% endif %}">Role Architect</a>
+                        {% endif %}
+                        <a href="{{ url_for('main.reports') }}" class="nav-link{% if request.path.startswith('/reports') %} active{% endif %}">Reports</a>
                         <a href="{{ url_for('main.playbook') }}" class="nav-link{% if request.path.startswith(url_for('main.playbook')) %} active{% endif %}">Playbook</a>
                         <a href="{{ url_for('main.plan_builder') }}" class="nav-link{% if request.path.startswith(url_for('main.plan_builder')) %} active{% endif %}">Plan Builder</a>
                     </div>
@@ -125,5 +130,8 @@
             }
         });
     </script>
+    
+    {# Allow pages to include page-specific scripts (e.g., reports-list.js) #}
+    {% block scripts %}{% endblock %}
 </body>
 </html>

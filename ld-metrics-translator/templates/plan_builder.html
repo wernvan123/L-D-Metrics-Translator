@@ -97,6 +97,21 @@
       </div>
 
       <aside class="pb-sidebar" aria-label="Current Selections">
+        <div class="pb-step">Role Profile</div>
+        <div class="control-group" style="margin-bottom:12px;">
+          <select id="pb-role-select" class="library-filter-select" style="width:100%">
+            <option value="">— Select Role —</option>
+          </select>
+        </div>
+        <div id="pb-role-gap" class="notice" style="display:none"></div>
+        <details class="mt" style="margin:8px 0;">
+          <summary>Current Proficiency (demo)</summary>
+          <div class="mt">
+            <p class="pb-empty">Paste a JSON map of competency_id → level (0-5), then Save to update the gap view.</p>
+            <textarea id="pb-prof-json" rows="4" placeholder='{"1": 2, "2": 3}' style="width:100%"></textarea>
+            <div class="mt"><button id="pb-prof-save" class="btn">Save Proficiency</button></div>
+          </div>
+        </details>
         <h3>Current Selections</h3>
         <div class="meta" id="pb-selection-count">0 selected</div>
         <div id="pb-sidebar-content">
@@ -121,4 +136,10 @@
 </div>
 
 <script src="{{ url_for('static', filename='js/plan-builder.js') }}?v=20250914-3"></script>
+<script src="{{ url_for('static', filename='js/role-selection.js') }}?v=20250915"></script>
+<script>
+  document.addEventListener('DOMContentLoaded', function(){
+    if (window.RoleSelection) RoleSelection.init('pb-role-select');
+  });
+</script>
 {% endblock %}

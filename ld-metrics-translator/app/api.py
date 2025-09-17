@@ -1,6 +1,7 @@
 from functools import wraps
 from flask import Blueprint, jsonify, request, session, current_app, abort
 from app.models import AdminUser, Metric, LDOutcome, MetricType, ReportTemplate, DynamicReport, ReportAnalytics, Framework, Competency, UserSession
+from app.models import RoleProfile, RoleKnowledge, RoleSkill, RoleAbility, RoleOtherRequirement, RoleCompetencyTarget, RoleAssignment
 from app import db
 from app.ollama_integration import recommendation_engine, report_generator, event_analyzer
 from app.database import create_event_analysis, get_recent_event_analyses
@@ -27,6 +28,37 @@ def login_required(f):
                 'success': False,
                 'login_url': '/login'
             }), 401
+        return f(*args, **kwargs)
+    return decorated_function
+
+
+def admin_required(f):
+    """Decorator to require an authenticated admin user for sensitive endpoints.
+
+    It attempts a permissive check to avoid hard failures if the model changes:
+    - Prefer AdminUser.is_admin if present
+    - Fallback to AdminUser.role == 'admin' if available
+    - Fallback to username == 'admin' as a last resort
+    """
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        user = authenticate_user()
+        if not user:
+            return jsonify({'error': 'Authentication required', 'success': False, 'login_url': '/login'}), 401
+        try:
+            is_admin = bool(getattr(user, 'is_admin', False))
+            if not is_admin:
+                role_val = getattr(user, 'role', None)
+                if isinstance(role_val, str) and role_val.strip().lower() == 'admin':
+                    is_admin = True
+            if not is_admin:
+                username = getattr(user, 'username', '')
+                if str(username).strip().lower() == 'admin':
+                    is_admin = True
+        except Exception:
+            is_admin = False
+        if not is_admin:
+            return jsonify({'error': 'Forbidden: admin access required', 'success': False}), 403
         return f(*args, **kwargs)
     return decorated_function
 
@@ -809,6 +841,396 @@ def delete_competency(competency_id: int):
         db.session.rollback()
         return jsonify({'error': 'Failed to delete competency', 'details': str(e)}), 500
 
+
+# -------------------------------------------------
+# Role Profiles (KSAO) CRUD and management
+# -------------------------------------------------
+
+def _parse_list(val):
+    if val is None:
+        return []
+    if isinstance(val, list):
+        return val
+    try:
+        return json.loads(val) if isinstance(val, str) else []
+    except Exception:
+        return []
+
+
+@api.route('/roles', methods=['GET'])
+def list_roles():
+    try:
+        q = (request.args.get('q') or '').strip().lower()
+        include = (request.args.get('include') or '').lower()
+        include_ksaos = 'ksaos' in include
+        include_targets = 'targets' in include
+        query = RoleProfile.query
+        if q:
+            query = query.filter(func.lower(RoleProfile.name).like(f"%{q}%"))
+        roles = query.order_by(RoleProfile.name.asc()).all()
+        return jsonify({
+            'roles': [r.to_dict(include_ksaos=include_ksaos, include_targets=include_targets) for r in roles],
+            'count': len(roles)
+        }), 200
+    except Exception as e:
+        return jsonify({'error': 'Failed to list roles', 'details': str(e)}), 500
+
+
+@api.route('/roles', methods=['POST'])
+@admin_required
+def create_role():
+    try:
+        data = request.get_json(silent=True) or {}
+        name = (data.get('name') or '').strip()
+        if not name:
+            return jsonify({'error': 'name is required'}), 400
+        if RoleProfile.query.filter(func.lower(RoleProfile.name) == name.lower()).first():
+            return jsonify({'error': f'Role profile "{name}" already exists'}), 400
+        role = RoleProfile(
+            name=name,
+            description=data.get('description'),
+            department=data.get('department'),
+            is_active=bool(data.get('is_active', True)),
+        )
+        db.session.add(role)
+        db.session.commit()
+        return jsonify({'role': role.to_dict(include_ksaos=True, include_targets=True)}), 201
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': 'Failed to create role', 'details': str(e)}), 500
+
+
+@api.route('/roles/<int:role_id>', methods=['GET'])
+def get_role(role_id: int):
+    try:
+        include = (request.args.get('include') or '').lower()
+        include_ksaos = 'ksaos' in include
+        include_targets = 'targets' in include
+        role = RoleProfile.query.get(role_id)
+        if not role:
+            return jsonify({'error': f'Role with id {role_id} not found'}), 404
+        return jsonify({'role': role.to_dict(include_ksaos=include_ksaos, include_targets=include_targets)}), 200
+    except Exception as e:
+        return jsonify({'error': 'Failed to get role', 'details': str(e)}), 500
+
+
+@api.route('/roles/<int:role_id>', methods=['PUT', 'PATCH'])
+@admin_required
+def update_role(role_id: int):
+    try:
+        role = RoleProfile.query.get(role_id)
+        if not role:
+            return jsonify({'error': f'Role with id {role_id} not found'}), 404
+        data = request.get_json(silent=True) or {}
+        if 'name' in data and (data['name'] or '').strip():
+            new_name = data['name'].strip()
+            conflict = RoleProfile.query.filter(func.lower(RoleProfile.name) == new_name.lower(), RoleProfile.id != role.id).first()
+            if conflict:
+                return jsonify({'error': f'Role profile name "{new_name}" already exists'}), 400
+            role.name = new_name
+        if 'description' in data:
+            role.description = data.get('description')
+        if 'department' in data:
+            role.department = data.get('department')
+        if 'is_active' in data:
+            role.is_active = bool(data.get('is_active'))
+        db.session.commit()
+        return jsonify({'role': role.to_dict(include_ksaos=True, include_targets=True)}), 200
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': 'Failed to update role', 'details': str(e)}), 500
+
+
+@api.route('/roles/<int:role_id>', methods=['DELETE'])
+@admin_required
+def delete_role(role_id: int):
+    try:
+        role = RoleProfile.query.get(role_id)
+        if not role:
+            return jsonify({'error': f'Role with id {role_id} not found'}), 404
+        db.session.delete(role)
+        db.session.commit()
+        return jsonify({'success': True}), 200
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': 'Failed to delete role', 'details': str(e)}), 500
+
+
+@api.route('/roles/<int:role_id>/ksaos', methods=['POST'])
+@admin_required
+def upsert_role_ksaos(role_id: int):
+    """Bulk replace K,S,A,Others for a role for wizard saves.
+
+    Expected JSON:
+    {
+      "knowledge": [{"name": "Knowledge of SQL", "description": "..."}],
+      "skills": [{"name": "Project Management"}],
+      "abilities": [{"name": "Analytical Thinking"}],
+      "others": [{"name": "Certification XYZ"}]
+    }
+    """
+    try:
+        role = RoleProfile.query.get(role_id)
+        if not role:
+            return jsonify({'error': f'Role with id {role_id} not found'}), 404
+        data = request.get_json(silent=True) or {}
+
+        # Clear existing
+        for coll in (role.knowledge_items, role.skill_items, role.ability_items, role.other_requirements):
+            for item in list(coll):
+                db.session.delete(item)
+
+        # Insert new
+        for k in _parse_list(data.get('knowledge')):
+            if (k.get('name') or '').strip():
+                db.session.add(RoleKnowledge(role_profile_id=role.id, name=k['name'].strip(), description=k.get('description')))
+        for s in _parse_list(data.get('skills')):
+            if (s.get('name') or '').strip():
+                db.session.add(RoleSkill(role_profile_id=role.id, name=s['name'].strip(), description=s.get('description')))
+        for a in _parse_list(data.get('abilities')):
+            if (a.get('name') or '').strip():
+                db.session.add(RoleAbility(role_profile_id=role.id, name=a['name'].strip(), description=a.get('description')))
+        for o in _parse_list(data.get('others')):
+            if (o.get('name') or '').strip():
+                db.session.add(RoleOtherRequirement(role_profile_id=role.id, name=o['name'].strip(), description=o.get('description')))
+
+        db.session.commit()
+        return jsonify({'role': role.to_dict(include_ksaos=True, include_targets=False)}), 200
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': 'Failed to upsert KSAOs', 'details': str(e)}), 500
+
+
+@api.route('/roles/<int:role_id>/targets', methods=['GET'])
+def list_role_targets(role_id: int):
+    try:
+        role = RoleProfile.query.get(role_id)
+        if not role:
+            return jsonify({'error': f'Role with id {role_id} not found'}), 404
+        return jsonify({'targets': [t.to_dict() for t in role.competency_targets], 'count': len(role.competency_targets)}), 200
+    except Exception as e:
+        return jsonify({'error': 'Failed to list targets', 'details': str(e)}), 500
+
+
+@api.route('/roles/<int:role_id>/targets', methods=['POST'])
+@admin_required
+def upsert_role_targets(role_id: int):
+    """Bulk replace competency targets.
+
+    Expected JSON: { "targets": [{"competency_id": 1, "target_level": 3, "weight": 1.0}, ...] }
+    """
+    try:
+        role = RoleProfile.query.get(role_id)
+        if not role:
+            return jsonify({'error': f'Role with id {role_id} not found'}), 404
+        payload = request.get_json(silent=True) or {}
+        targets = _parse_list(payload.get('targets'))
+
+        # Clear existing
+        for t in list(role.competency_targets):
+            db.session.delete(t)
+
+        # Insert new
+        for t in targets:
+            cid = t.get('competency_id')
+            if not cid:
+                continue
+            try:
+                level = int(t.get('target_level') or 3)
+            except Exception:
+                level = 3
+            try:
+                weight = float(t.get('weight') or 1.0)
+            except Exception:
+                weight = 1.0
+            db.session.add(RoleCompetencyTarget(
+                role_profile_id=role.id,
+                competency_id=cid,
+                target_level=level,
+                weight=weight,
+            ))
+        db.session.commit()
+        return jsonify({'targets': [t.to_dict() for t in role.competency_targets]}), 200
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': 'Failed to upsert targets', 'details': str(e)}), 500
+
+
+@api.route('/roles/assignments', methods=['GET'])
+def list_role_assignments():
+    try:
+        person = (request.args.get('person') or '').strip()
+        q = RoleAssignment.query
+        if person:
+            q = q.filter(func.lower(RoleAssignment.person_identifier) == person.lower())
+        items = q.order_by(RoleAssignment.assigned_date.desc()).all()
+        return jsonify({'assignments': [a.to_dict() for a in items], 'count': len(items)}), 200
+    except Exception as e:
+        return jsonify({'error': 'Failed to list assignments', 'details': str(e)}), 500
+
+
+@api.route('/roles/assignments', methods=['POST'])
+@admin_required
+def create_role_assignment():
+    try:
+        data = request.get_json(silent=True) or {}
+        role_id = data.get('role_profile_id') or data.get('role_id')
+        person = (data.get('person_identifier') or data.get('person') or '').strip()
+        if not role_id or not person:
+            return jsonify({'error': 'role_profile_id and person_identifier are required'}), 400
+        role = RoleProfile.query.get(role_id)
+        if not role:
+            return jsonify({'error': f'Role with id {role_id} not found'}), 404
+        # Deactivate previous active assignments for this person if requested
+        if str(data.get('replace_existing', 'true')).lower() in ('true', '1', 'yes'):
+            for a in RoleAssignment.query.filter_by(person_identifier=person, is_active=True).all():
+                a.is_active = False
+        assignment = RoleAssignment(role_profile_id=role.id, person_identifier=person, is_active=True)
+        db.session.add(assignment)
+        db.session.commit()
+        return jsonify({'assignment': assignment.to_dict()}), 201
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': 'Failed to create assignment', 'details': str(e)}), 500
+
+# -------------------------------
+# Role selection (session-scoped)
+# -------------------------------
+
+@api.route('/roles/select', methods=['GET'])
+def get_selected_role():
+    try:
+        rid = session.get('selected_role_profile_id')
+        if not rid:
+            return jsonify({'selected_role_profile_id': None}), 200
+        role = RoleProfile.query.get(rid)
+        return jsonify({'selected_role_profile_id': rid, 'role': role.to_dict(include_ksaos=False, include_targets=False) if role else None}), 200
+    except Exception as e:
+        return jsonify({'error': 'Failed to get selected role', 'details': str(e)}), 500
+
+
+@api.route('/roles/select', methods=['POST'])
+def set_selected_role():
+    try:
+        data = request.get_json(silent=True) or {}
+        role_id = data.get('role_profile_id') or data.get('role_id')
+        if role_id is None:
+            session.pop('selected_role_profile_id', None)
+            return jsonify({'ok': True, 'selected_role_profile_id': None}), 200
+        role = RoleProfile.query.get(role_id)
+        if not role:
+            return jsonify({'error': f'Role with id {role_id} not found'}), 404
+        session['selected_role_profile_id'] = int(role_id)
+        return jsonify({'ok': True, 'selected_role_profile_id': int(role_id)}), 200
+    except Exception as e:
+        return jsonify({'error': 'Failed to set selected role', 'details': str(e)}), 500
+
+@api.route('/roles/<int:role_id>/gaps', methods=['GET'])
+def get_role_gaps(role_id: int):
+    """Compute simple gaps vs role targets using session-scoped current proficiency.
+
+    Current proficiency is read from session key 'competency_proficiency' as a mapping:
+      { "<competency_id>": <level:int 0-5>, ... }
+    Missing values default to 0. Returns list of {competency_id, competency_name, target_level, current_level, gap}.
+    """
+    try:
+        role = RoleProfile.query.get(role_id)
+        if not role:
+            return jsonify({'error': f'Role with id {role_id} not found'}), 404
+        prof_map = session.get('competency_proficiency') or {}
+        items = []
+        for t in role.competency_targets:
+            cid = t.competency_id
+            current = 0
+            try:
+                # keys may be str in session
+                current = int(prof_map.get(str(cid)) or prof_map.get(cid) or 0)
+            except Exception:
+                current = 0
+            gap = max(0, int(t.target_level or 0) - max(0, min(5, current)))
+            items.append({
+                'competency_id': cid,
+                'competency_name': t.competency.name if t.competency else None,
+                'target_level': int(t.target_level or 0),
+                'current_level': max(0, min(5, current)),
+                'gap': gap,
+                'weight': float(t.weight or 1.0),
+            })
+        # simple aggregate
+        total_weight = sum(x['weight'] for x in items) or 1.0
+        weighted_gap = sum(x['gap'] * x['weight'] for x in items) / total_weight
+        return jsonify({'gaps': items, 'weighted_gap': weighted_gap}), 200
+    except Exception as e:
+        return jsonify({'error': 'Failed to compute gaps', 'details': str(e)}), 500
+
+# -------------------------------
+# Current proficiency (session)
+# -------------------------------
+
+@api.route('/proficiency', methods=['GET'])
+def get_proficiency():
+    """Return session-scoped competency proficiency mapping."""
+    try:
+        data = session.get('competency_proficiency') or {}
+        return jsonify({'competency_proficiency': data}), 200
+    except Exception as e:
+        return jsonify({'error': 'Failed to get proficiency', 'details': str(e)}), 500
+
+
+@api.route('/proficiency', methods=['POST'])
+def set_proficiency():
+    """Set session-scoped competency proficiency mapping.
+
+    Expected JSON: { "competency_proficiency": { "<competency_id>": <level:int 0-5>, ... } }
+    """
+    try:
+        payload = request.get_json(silent=True) or {}
+        mapping = payload.get('competency_proficiency') or {}
+        # Basic sanitize: coerce to simple dict of str->int bounded 0..5
+        clean = {}
+        if isinstance(mapping, dict):
+            for k, v in mapping.items():
+                try:
+                    key = str(int(k)) if str(k).isdigit() else str(k)
+                    val = int(v)
+                except Exception:
+                    continue
+                clean[key] = max(0, min(5, val))
+        session['competency_proficiency'] = clean
+        return jsonify({'ok': True, 'competency_proficiency': clean}), 200
+    except Exception as e:
+        return jsonify({'error': 'Failed to set proficiency', 'details': str(e)}), 500
+
+# -------------------------------
+# Reports list and detail
+# -------------------------------
+
+@api.route('/reports', methods=['GET'])
+def list_reports():
+    """List recent reports. Optionally filter by session via ?session_id=..."""
+    try:
+        q = DynamicReport.query
+        session_id = request.args.get('session_id')
+        if session_id:
+            q = q.filter(DynamicReport.session_id == session_id)
+        q = q.order_by(DynamicReport.created_date.desc()).limit(50)
+        items = [r.to_dict(include_content=False) for r in q.all()]
+        return jsonify({'reports': items, 'count': len(items)}), 200
+    except Exception as e:
+        return jsonify({'error': 'Failed to list reports', 'details': str(e)}), 500
+
+
+@api.route('/reports/<int:report_id>', methods=['GET'])
+def get_report(report_id: int):
+    try:
+        include = (request.args.get('include') or '').lower()
+        include_content = 'content' in include
+        r = DynamicReport.query.get(report_id)
+        if not r:
+            return jsonify({'error': f'Report with id {report_id} not found'}), 404
+        return jsonify({'report': r.to_dict(include_content=include_content)}), 200
+    except Exception as e:
+        return jsonify({'error': 'Failed to get report', 'details': str(e)}), 500
 
 # -------------------------------
 # Competency <-> Metric association management
@@ -3275,50 +3697,7 @@ def get_recent_sessions():
         }), 500
 
 
-# Framework-centric endpoints
-@api.route('/frameworks', methods=['GET'])
-def get_frameworks():
-    """
-    GET /api/frameworks
-    Query params:
-    - include_competencies: bool (default false)
-    - include_metrics: bool (default false) — only applies if include_competencies=true
-    - active_only: bool (default true)
-    """
-    try:
-        include_competencies = str(request.args.get('include_competencies', 'false')).lower() == 'true'
-        include_metrics = str(request.args.get('include_metrics', 'false')).lower() == 'true'
-        active_only = str(request.args.get('active_only', 'true')).lower() != 'false'
-
-        query = Framework.query
-        if active_only:
-            query = query.filter(Framework.is_active.is_(True))
-        query = query.order_by(Framework.sort_order, Framework.name)
-
-        frameworks = query.all()
-        return jsonify({
-            'frameworks': [fw.to_dict(include_competencies=include_competencies, include_metrics=include_metrics) for fw in frameworks],
-            'total': len(frameworks)
-        }), 200
-    except Exception as e:
-        return jsonify({'error': 'Failed to fetch frameworks', 'details': str(e)}), 500
-
-
-@api.route('/frameworks/<string:slug>', methods=['GET'])
-def get_framework_by_slug(slug: str):
-    """
-    GET /api/frameworks/<slug>
-    Query params:
-    - include_metrics: bool (default true)
-    """
-    try:
-        include_metrics = str(request.args.get('include_metrics', 'true')).lower() == 'true'
-        fw = Framework.query.filter(func.lower(Framework.slug) == slug.lower()).first()
-        if not fw:
-            return jsonify({'error': f'Framework with slug "{slug}" not found'}), 404
-        return jsonify({'framework': fw.to_dict(include_competencies=True, include_metrics=include_metrics)}), 200
-    except Exception as e:
-        return jsonify({'error': 'Failed to fetch framework', 'details': str(e)}), 500
+ 
 
 
 @api.route('/__debug__/routes', methods=['GET'])

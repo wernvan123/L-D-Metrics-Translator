@@ -21,6 +21,34 @@
           p.classList.remove('active');
           p.setAttribute('hidden', '');
         }
+
+  // ----------------------------
+  // Role Profile targets framing (callouts on diagnostics)
+  // ----------------------------
+  async function fetchJSON(url){ const r = await fetch(url, { headers: { 'Accept':'application/json' } }); if(!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); }
+  function esc(s){ return (s||'').toString().replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+  async function refreshRoleTargets(){
+    try{
+      const box = document.getElementById('diag-role-targets');
+      if(!box) return;
+      const sel = await fetchJSON('/api/roles/select');
+      const rid = sel.selected_role_profile_id;
+      if(!rid){ box.style.display='none'; box.innerHTML=''; return; }
+      const data = await fetchJSON(`/api/roles/${rid}/targets`);
+      const tgts = Array.isArray(data.targets) ? data.targets : [];
+      if(!tgts.length){ box.style.display='none'; box.innerHTML=''; return; }
+      const lines = tgts.slice(0,6).map(t => `• ${esc(t.competency?.name || t.competency_name || ('#'+t.competency_id))}: target ${t.target_level}`);
+      const more = tgts.length>6 ? ` +${tgts.length-6} more` : '';
+      box.innerHTML = `<strong>Role Targets</strong><br>${lines.join('<br>')}${more}`;
+      box.style.display='block';
+    }catch(e){ /* hide on failure */ const box = document.getElementById('diag-role-targets'); if(box){ box.style.display='none'; } }
+  }
+  function initRoleTargetsFraming(){
+    const sel = document.getElementById('diag-role-select');
+    if(sel){ sel.addEventListener('change', () => setTimeout(refreshRoleTargets, 50)); }
+    // initial load
+    refreshRoleTargets();
+  }
       });
       // persist selection in URL hash and sessionStorage
       if(pushState){
@@ -257,6 +285,7 @@
     initTabs();
     initBSD();
     initDriverCardDemo();
+    initRoleTargetsFraming();
   }
 
   if(document.readyState === 'loading'){
