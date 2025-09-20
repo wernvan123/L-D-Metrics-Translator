@@ -1,9 +1,11 @@
+ 
 from flask import Flask, render_template, request, jsonify, send_from_directory, session
 from flask import request, redirect, url_for
 from flask import make_response
 from datetime import datetime
 import os
 import sys
+import sqlite3
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SUB_APP_DIR = os.path.join(BASE_DIR, 'ld-metrics-translator')
@@ -15,6 +17,11 @@ app = Flask(__name__, static_folder=str(STATIC_DIR), template_folder=str(TEMPLAT
 app.secret_key = os.environ.get("FLASK_SECRET", "dev-secret-key")
 app.config['TEMPLATES_AUTO_RELOAD'] = True
 app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0  # disable static caching in dev
+# Allow both '/path' and '/path/' variants everywhere in this dev server
+try:
+    app.url_map.strict_slashes = False
+except Exception:
+    pass
 try:
     app.jinja_env.auto_reload = True
 except Exception:
@@ -251,6 +258,15 @@ def dev_admin_roles_list():
 def dev_admin_roles_new():
     return render_template('role_wizard.html', is_admin=True)
 
+# Trailing-slash variants to avoid 404 when a slash is present
+@app.route('/admin/roles/', methods=['GET'])
+def dev_admin_roles_list_slash():
+    return dev_admin_roles_list()
+
+@app.route('/admin/roles/new/', methods=['GET'])
+def dev_admin_roles_new_slash():
+    return dev_admin_roles_new()
+
 
 # ---------------- Public Role Architect (dev) with admin auto-redirect ----------------
 @app.route('/roles')
@@ -328,18 +344,71 @@ def _db_conn():
     except Exception:
         return None
 
+def _ensure_role_tables(conn):
+    try:
+        cur = conn.cursor()
+        # Minimal role_profiles table for dev/demo use
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS role_profiles (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                department TEXT,
+                description TEXT,
+                is_active INTEGER DEFAULT 1,
+                created_date TEXT
+            )
+            """
+        )
+        # Minimal role_competency_targets table
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS role_competency_targets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                role_profile_id INTEGER NOT NULL,
+                competency_id INTEGER NOT NULL,
+                target_level INTEGER NOT NULL,
+                weight REAL DEFAULT 1.0
+            )
+            """
+        )
+        conn.commit()
+    except Exception:
+        pass
+
 def _rows_to_dicts(cur):
     cols = [c[0] for c in cur.description] if cur.description else []
     return [dict(zip(cols, r)) for r in cur.fetchall()]
 
-@app.route('/api/roles', methods=['GET'])
+@app.route('/api/roles', methods=['GET','POST'])
 def dev_list_roles():
-    """List Role Profiles from local SQLite for dev/demo. Gracefully fallback to empty list."""
+    """List or create Role Profiles (dev/demo).
+    GET: returns list. POST: creates a role.
+    """
     try:
-        q = (request.args.get('q') or '').strip().lower()
         con = _db_conn()
         if not con:
+            if request.method == 'POST':
+                return jsonify({'error': 'storage unavailable'}), 500
             return jsonify({'roles': [], 'count': 0})
+        _ensure_role_tables(con)
+        if request.method == 'POST':
+            data = request.get_json(force=True) or {}
+            name = (data.get('name') or '').strip()
+            department = (data.get('department') or '').strip()
+            description = (data.get('description') or '').strip()
+            if not name:
+                return jsonify({'error': 'name is required'}), 400
+            cur = con.cursor()
+            cur.execute(
+                "INSERT INTO role_profiles (name, department, description, is_active, created_date) VALUES (?,?,?,?,?)",
+                (name, department or None, description or None, 1, datetime.utcnow().isoformat(' '))
+            )
+            rid = cur.lastrowid
+            con.commit()
+            return jsonify({'role': {'id': int(rid), 'name': name, 'department': department, 'description': description}})
+        # GET branch
+        q = (request.args.get('q') or '').strip().lower()
         cur = con.cursor()
         sql = "SELECT id, name, department, is_active, created_date FROM role_profiles ORDER BY name"
         cur.execute(sql)
@@ -347,14 +416,125 @@ def dev_list_roles():
         if q:
             rows = [r for r in rows if q in (r.get('name') or '').lower()]
         return jsonify({'roles': rows, 'count': len(rows)})
-    except Exception:
+    except Exception as e:
+        if request.method == 'POST':
+            try:
+                con.rollback()
+            except Exception:
+                pass
+            return jsonify({'error': 'failed_to_create', 'detail': str(e)}), 500
         return jsonify({'roles': [], 'count': 0})
 
 
-@app.route('/api/roles/<int:role_id>/targets', methods=['GET'])
-def dev_role_targets(role_id: int):
+
+# Get a role with optional includes (ksaos,targets)
+@app.route('/api/roles/<int:role_id>', methods=['GET','PATCH'])
+def dev_get_role(role_id: int):
+    try:
+        # PATCH: update
+        if request.method == 'PATCH':
+            data = request.get_json(force=True) or {}
+            name = data.get('name')
+            department = data.get('department')
+            description = data.get('description')
+            con = _db_conn()
+            if not con:
+                return jsonify({'error': 'storage unavailable'}), 500
+            _ensure_role_tables(con)
+            cur = con.cursor()
+            fields = []
+            vals = []
+            if name is not None:
+                fields.append('name = ?'); vals.append(name)
+            if department is not None:
+                fields.append('department = ?'); vals.append(department)
+            if description is not None:
+                fields.append('description = ?'); vals.append(description)
+            if fields:
+                vals.append(role_id)
+                cur.execute(f"UPDATE role_profiles SET {', '.join(fields)} WHERE id = ?", vals)
+                con.commit()
+            return jsonify({'ok': True})
+        # GET: fetch
+        include = (request.args.get('include') or '').lower()
+        con = _db_conn()
+        if not con:
+            return jsonify({'error': 'not found'}), 404
+        _ensure_role_tables(con)
+        cur = con.cursor()
+        cur.execute("SELECT id, name, department, description, is_active, created_date FROM role_profiles WHERE id = ?", (role_id,))
+        row = cur.fetchone()
+        if not row:
+            return jsonify({'error': 'not found'}), 404
+        cols = [c[0] for c in cur.description]
+        rec = dict(zip(cols, row))
+        # include KSAOs from session
+        if 'ksaos' in include:
+            allk = session.get('role_ksaos') or {}
+            rec.update(allk.get(str(role_id)) or {})
+        # include targets from DB
+        if 'targets' in include:
+            try:
+                cur.execute("SELECT id, role_profile_id, competency_id, target_level, weight FROM role_competency_targets WHERE role_profile_id = ? ORDER BY id", (role_id,))
+                tcols = [c[0] for c in cur.description]
+                rec['competency_targets'] = [dict(zip(tcols, r)) for r in cur.fetchall()]
+            except Exception:
+                rec['competency_targets'] = []
+        return jsonify({'role': rec})
+    except Exception:
+        return jsonify({'error': 'not found'}), 404
+
+
+# Upsert KSAOs for a role (session-backed in dev)
+@app.route('/api/roles/<int:role_id>/ksaos', methods=['POST'])
+def dev_set_role_ksaos(role_id: int):
+    try:
+        data = request.get_json(force=True) or {}
+        allowed = ['knowledge','skills','abilities','others']
+        store = session.setdefault('role_ksaos', {})
+        curv = store.get(str(role_id)) or {}
+        for k in allowed:
+            v = data.get(k)
+            if isinstance(v, list):
+                # normalize items as {name: str}
+                curv[k] = [ {'name': (x.get('name') or '').strip()} for x in v if isinstance(x, dict) and (x.get('name') or '').strip() ]
+        store[str(role_id)] = curv
+        session['role_ksaos'] = store
+        session.modified = True
+        return jsonify({'ok': True})
+    except Exception as e:
+        return jsonify({'error': 'failed_to_set_ksaos', 'detail': str(e)}), 500
+
+
+
+@app.route('/api/roles/<int:role_id>/targets', methods=['GET','POST'])
+def dev_get_role_targets(role_id: int):
     """Return role competency targets, including competency name when present."""
     try:
+        # POST: replace targets
+        if request.method == 'POST':
+            data = request.get_json(force=True) or {}
+            targets = data.get('targets') or []
+            con = _db_conn()
+            if not con:
+                return jsonify({'error': 'storage unavailable'}), 500
+            _ensure_role_tables(con)
+            cur = con.cursor()
+            cur.execute("DELETE FROM role_competency_targets WHERE role_profile_id = ?", (role_id,))
+            for t in targets:
+                try:
+                    cid = int(t.get('competency_id'))
+                    lvl = int(t.get('target_level'))
+                    wt = float(t.get('weight') or 1.0)
+                except Exception:
+                    continue
+                cur.execute(
+                    "INSERT INTO role_competency_targets (role_profile_id, competency_id, target_level, weight) VALUES (?,?,?,?)",
+                    (role_id, cid, lvl, wt)
+                )
+            con.commit()
+            return jsonify({'ok': True})
+        # GET branch
         con = _db_conn()
         if not con:
             return jsonify({'targets': [], 'count': 0})
@@ -660,27 +840,73 @@ def api_set_kv():
     return jsonify({"ok": True})
 
 
-@app.route("/api/analyze-event", methods=["POST"])
+@app.route("/api/analyze-event", methods=["POST", "OPTIONS"])
 def api_analyze_event():
+    # Preflight support (some browsers/frameworks issue OPTIONS before POST)
+    if request.method == 'OPTIONS':
+        try:
+            from flask import make_response
+            resp = make_response(('', 204))
+            resp.headers['Access-Control-Allow-Methods'] = 'POST, OPTIONS'
+            resp.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+            return resp
+        except Exception:
+            return ('', 204)
     maybe = _require_mocks()
     if maybe: return maybe
+    # The front-end in ld-metrics-translator/static/js/event-analysis.js expects:
+    # { success: bool, analysis: { learning_needs, recommended_metrics, interventions, success_measures }, generated_by }
     payload = request.get_json(force=True) or {}
-    desc = (payload.get("description") or "").strip()
-    summary = (
-        "Analysis summary: " + (desc[:140] + ("..." if len(desc) > 140 else "") if desc else "No description provided.")
-    )
-    drivers = ["Engagement", "Relevance", "Practice"]
-    competencies = ["Communication", "Coaching"]
+    # Accept either 'event_description' (sub-app) or 'description' (legacy)
+    desc = (payload.get("event_description") or payload.get("description") or "").strip()
+    # Simple heuristic mapping based on keywords to vary content slightly
+    dn = desc.lower()
+    learning_needs = []
+    if any(k in dn for k in ("conflict", "dispute", "feedback")):
+        learning_needs = [
+            "Giving constructive feedback",
+            "Conflict resolution techniques",
+            "Clarify scope and roles",
+        ]
+    elif any(k in dn for k in ("decision", "pressure", "deadline")):
+        learning_needs = [
+            "Decision hygiene under pressure",
+            "Clarify decision rights",
+            "Stakeholder alignment",
+        ]
+    else:
+        learning_needs = [
+            "Clarify scope and roles",
+            "Improve cross-team communication",
+            "Establish feedback loops",
+        ]
+
     recommended_metrics = [
-        {"id": "m-comm-01", "name": "Communication Clarity Score", "tag": "Behavioral"},
-        {"id": "m-coach-02", "name": "Coaching Session Adoption", "tag": "Operational"},
-        {"id": "m-eng-03", "name": "Learner Engagement Index", "tag": "Behavioral"},
+        "Cycle time",
+        "Rework rate",
+        "Decision quality reviews",
     ]
-    return jsonify({
-        "summary": summary,
-        "drivers": drivers,
-        "competencies": competencies,
+    interventions = [
+        "Pre-mortem session",
+        "Decision checklist",
+        "Short feedback loops",
+    ]
+    success_measures = [
+        "Fewer last-minute changes",
+        "Higher team confidence",
+        "On-time delivery",
+    ]
+
+    analysis = {
+        "learning_needs": learning_needs,
         "recommended_metrics": recommended_metrics,
+        "interventions": interventions,
+        "success_measures": success_measures,
+    }
+    return jsonify({
+        "success": True,
+        "analysis": analysis,
+        "generated_by": "AI-assisted analysis",
     })
 
 
@@ -1483,6 +1709,29 @@ def api_context_initialize():
     })
 
 
+# Frontend calls for session history; provide a no-op stub to avoid 404 spam
+@app.route("/api/context/recent-sessions", methods=["GET"])
+def api_context_recent_sessions():
+    try:
+        # Return a minimal, empty list. Extend later if you want persistence.
+        return jsonify({"sessions": [], "count": 0})
+    except Exception as e:
+        return jsonify({"error": "failed", "detail": str(e)}), 500
+
+
+# Frontend calls to persist lightweight context; store in Flask session (dev/demo only)
+@app.route("/api/context/store", methods=["POST"])
+def api_context_store():
+    try:
+        data = request.get_json(silent=True) or {}
+        bucket = session.setdefault("_context_events", [])
+        bucket.append({"ts": datetime.utcnow().isoformat() + "Z", **data})
+        session.modified = True
+        return jsonify({"success": True})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
 @app.route('/api/types', methods=['GET'])
 def api_metric_types_list():
     items = [
@@ -1603,4 +1852,6 @@ def api_metrics_list():
 
 if __name__ == "__main__":
     debug = os.environ.get("FLASK_DEBUG", "1") == "1"
-    app.run(debug=debug, port=8080)
+    # Disable the reloader to avoid duplicate processes on Windows (watchdog/windowsapi)
+    # which can make the server hard to stop with Ctrl+C.
+    app.run(debug=debug, port=8080, use_reloader=False)

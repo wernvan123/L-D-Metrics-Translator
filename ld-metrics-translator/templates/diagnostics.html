@@ -26,6 +26,10 @@
         <label for="diag-role-select" class="control-label">Role Profile</label>
         <select id="diag-role-select" class="library-filter-select" style="max-width:360px;"><option value="">— Select Role —</option></select>
       </div>
+
+      <!-- Two-column layout wrapper (main + aside) -->
+      <div class="diag-grid">
+        <div id="diag-main-col">
       <div id="diag-role-targets" class="notice" style="display:none"></div>
       <!-- Inline Login Prompt within Enter Scenario card (Option A) -->
       <div id="login-prompt" class="login-prompt inline" style="display: none;">
@@ -67,6 +71,148 @@
         <div id="analysis-content" class="analysis-content"></div>
         <div class="analysis-footer"><span class="analysis-source"></span></div>
       </div>
+
+      <!-- Gap Analysis Report (Role-Contextualized) -->
+      <style>
+        /* Scoped styles for the Gap Analysis Report */
+        #gap-report-card { margin-top: 16px; }
+        #gap-report-card .card-header { padding: 12px 16px 8px; }
+        #gap-report-card .card-header h3 { margin: 0; font-size: 1.05rem; }
+
+        #gap-report { padding-top: 8px; }
+        #gap-report .mb { margin-bottom: 16px; }
+        #gap-report .mt { margin-top: 12px; }
+        #gap-report h3 { margin: 0 0 8px; font-size: 1.05rem; }
+        #gap-report h4 { margin: 16px 0 10px; font-size: 1.15rem; }
+        #gap-report h5 { margin: 10px 0 8px; font-size: 1.0rem; }
+        #gap-report .meta { color: var(--text-muted, #6b7280); font-size: .85rem; }
+
+        /* Section dividers */
+        #gap-report .section { padding: 10px 0 6px; }
+        #gap-report .section + .section { border-top: 1px solid #eef2f7; padding-top: 14px; margin-top: 12px; }
+
+        #gap-report .context-card { background: #f8fafc; border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px 14px; margin-top: 8px; }
+        #gap-report .user-input { margin-top: 8px; color: #374151; }
+
+        #gap-report .issue-list { display: grid; grid-template-columns: 1fr; gap: 12px; }
+        #gap-report .issue-card { border: 1px solid #e5e7eb; border-radius: 10px; padding: 12px; background: #fff; }
+        #gap-report .issue-card .issue-body { line-height: 1.5; color: #374151; }
+        #gap-report .issue-card .issue-actions { display: flex; gap: 8px; margin-top: 8px; }
+
+        #gap-report .bias-card { border: 1px dashed #e5e7eb; border-radius: 10px; padding: 12px; background: #fff; margin-bottom: 8px; }
+        #gap-report .bias-card h4 { margin: 0 0 4px; }
+
+        #gap-report .kpi-list, #gap-report .nudge-list { display: grid; grid-template-columns: 1fr; gap: 8px; }
+        #gap-report .kpi-item, #gap-report .nudge-item { background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px 12px; }
+
+        /* Buttons alignment inside the card */
+        #gap-report .btn { padding: 6px 10px; font-size: .85rem; display: inline-flex; width: auto; align-items: center; justify-content: center; }
+        #gap-report .issue-actions { gap: 10px; flex-wrap: wrap; }
+        #gap-report .kpi-item .btn + .btn,
+        #gap-report .nudge-item .btn + .btn { margin-left: 8px; }
+        #gap-report .analysis-toolbar { margin-bottom: 8px; }
+        /* Force solid success styling in this scope */
+        #gap-report .btn-success, #plan-mini-sidebar .btn-success {
+          background-color: #16a34a; /* emerald-600 */
+          border-color: #16a34a;
+          color: #fff;
+        }
+        #gap-report .btn-success:hover, #plan-mini-sidebar .btn-success:hover {
+          background-color: #15803d; /* emerald-700 */
+          border-color: #15803d;
+          color: #fff;
+        }
+
+        /* Visual Gap Scale (1–5) */
+        .gap-scale { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; margin-top: 6px; }
+        .gap-scale .tick { position: relative; height: 8px; background: #e5e7eb; border-radius: 4px; }
+        .gap-scale .tick::after { content: attr(data-label); position: absolute; top: 10px; left: 50%; transform: translateX(-50%); font-size: 10px; color: #6b7280; }
+        .gap-scale .marker { position: absolute; top: -4px; width: 0; height: 0; border-left: 5px solid transparent; border-right: 5px solid transparent; }
+        .gap-scale .marker.target { border-bottom: 8px solid #2563eb; left: 50%; transform: translateX(-50%); }
+        .gap-scale .marker.current { border-bottom: 8px solid #ef4444; left: 50%; transform: translateX(-50%); }
+        .gap-legend { display:flex; gap:12px; align-items:center; margin-top:12px; font-size:.85rem; color:#374151; }
+        .gap-legend .dot { width:8px; height:8px; border-radius:50%; display:inline-block; }
+        .gap-legend .dot.target { background:#2563eb; }
+        .gap-legend .dot.current { background:#ef4444; }
+
+        /* Responsive: two columns for KPIs/Nudges on large screens */
+        @media (min-width: 992px) {
+          #gap-report .kpi-list, #gap-report .nudge-list { grid-template-columns: 1fr 1fr; gap: 12px; }
+        }
+
+        /* When gap report is active, ensure default analysis stays hidden */
+        [data-gap-active="1"] #analysis-results { display: none !important; }
+
+        /* Mini Plan Selections sidebar */
+        #plan-mini-sidebar.card { display:none; margin-top:16px; }
+        #plan-mini-sidebar .card-header { padding: 10px 14px; }
+        #plan-mini-sidebar .card-header h4 { margin:0; font-size:1rem; }
+        #plan-mini-sidebar .card-body { padding: 10px 14px; }
+        #plan-mini-sidebar .mini-list { display:flex; flex-direction:column; gap:6px; }
+        #plan-mini-sidebar .mini-item { display:flex; align-items:center; justify-content:space-between; gap:8px; border:1px solid #e5e7eb; border-radius:8px; padding:6px 8px; background:#fff; }
+        #plan-mini-sidebar .mini-kind { font-size:.75rem; color:#6b7280; }
+        #plan-mini-sidebar .mini-label { font-size:.9rem; color:#111827; }
+        #plan-mini-sidebar .mini-actions .btn { padding:4px 8px; font-size:.8rem; }
+        @media (min-width: 992px){
+          #plan-mini-sidebar.card { position: sticky; top: 80px; }
+        }
+
+        /* Two-column layout */
+        .diag-grid { display: grid; grid-template-columns: 1fr; gap: 16px; }
+        #diag-main-col { min-width: 0; }
+        #plan-mini-aside { min-width: 260px; }
+        @media (min-width: 992px) {
+          .diag-grid { grid-template-columns: minmax(0,1fr) 320px; align-items: start; gap: 24px; }
+          #plan-mini-aside { position: sticky; top: 80px; height: fit-content; }
+        }
+
+        /* Widen diagnostics container for improved readability */
+        #diag-ai .container { max-width: 1200px; }
+        #diag-bsd .container { max-width: 1200px; }
+        #diag-driver-card .container { max-width: 1200px; }
+        /* Ensure cards expand within main column */
+        #diag-main-col > .card { width: 100%; }
+        /* Make login prompt and event input span the main column nicely */
+        #diag-main-col #login-prompt,
+        #diag-main-col .event-input-container {
+          width: 100%;
+          max-width: 900px; /* comfortable reading width */
+          margin-left: auto;
+          margin-right: auto;
+        }
+        /* Prevent clipping inside the login prompt */
+        #diag-main-col #login-prompt { overflow: visible; box-sizing: border-box; }
+        #diag-main-col #login-prompt .login-prompt-content { width: 100%; max-width: none; }
+        #diag-main-col #login-prompt .login-prompt-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+        #diag-main-col .event-input-container .event-input { width: 100%; box-sizing: border-box; }
+      </style>
+      <div class="card" id="gap-report-card" style="margin-top:16px;">
+        <div class="card-header">
+          <h3>Gap Analysis Report</h3>
+        </div>
+        <div class="card-body" id="gap-report">
+          <div id="gap-report-header" class="mb"></div>
+          <div id="gap-report-diagnosis" class="mb"></div>
+          <div id="gap-report-root-causes" class="mb"></div>
+          <div id="gap-report-recommendations" class="mb"></div>
+          <div id="gap-report-footer" class="mt"></div>
+        </div>
+      </div>
+      <!-- close main column and render sticky aside -->
+      </div> <!-- /#diag-main-col -->
+      <aside id="plan-mini-aside">
+        <div class="card" id="plan-mini-sidebar">
+          <div class="card-header"><h4>Current Selections</h4></div>
+          <div class="card-body">
+            <div class="mini-list" id="plan-mini-list"></div>
+            <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:8px;">
+              <a class="btn btn-sm btn-secondary" href="/plan-builder">Open Plan Builder</a>
+              <button class="btn btn-sm btn-outline-danger" id="plan-mini-clear">Clear</button>
+            </div>
+          </div>
+        </div>
+      </aside>
+      </div> <!-- /.diag-grid -->
     </div>
   </div>
 </section>
@@ -111,8 +257,8 @@
   <script src="{{ url_for('static', filename='js/driver-card-demo.js') }}?v=20250913-3"></script>
 </section>
 
-<script src="{{ url_for('static', filename='js/diagnostics.js') }}?v=20250912-2"></script>
-<script src="{{ url_for('static', filename='js/role-selection.js') }}?v=20250915"></script>
+<script src="{{ url_for('static', filename='js/diagnostics.js') }}?v=20250920-1"></script>
+<script src="{{ url_for('static', filename='js/role-selection.js') }}?v=20250920-1"></script>
 <script>
   document.addEventListener('DOMContentLoaded', function(){
     if (window.RoleSelection) RoleSelection.init('diag-role-select');

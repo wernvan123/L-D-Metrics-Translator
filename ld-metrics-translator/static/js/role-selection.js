@@ -2,15 +2,25 @@
 
 const RoleSelection = (() => {
   async function fetchJSON(url, opts = {}) {
-    const res = await fetch(url, Object.assign({ headers: { 'Accept': 'application/json' } }, opts));
+    // Ensure JSON content-type on POST/PATCH with a body so Flask parses correctly
+    const base = { headers: { 'Accept': 'application/json' } };
+    const hasBody = opts && opts.body != null;
+    const isWrite = opts && (opts.method === 'POST' || opts.method === 'PATCH' || opts.method === 'PUT' || opts.method === 'DELETE');
+    if (isWrite && hasBody) {
+      base.headers['Content-Type'] = 'application/json';
+    }
+    const res = await fetch(url, Object.assign(base, opts));
     if (!res.ok) throw new Error(`Request failed: ${res.status}`);
     return await res.json();
   }
+
+  let _rolesCache = [];
 
   async function loadRoles() {
     console.debug('[RoleSelection] fetching roles ...');
     const data = await fetchJSON('/api/roles');
     const roles = data.roles || [];
+    _rolesCache = roles;
     console.debug('[RoleSelection] roles received:', roles.length);
     return roles;
   }
@@ -24,6 +34,23 @@ const RoleSelection = (() => {
 
   async function setSelected(roleId) {
     await fetchJSON('/api/roles/select', { method: 'POST', body: JSON.stringify({ role_profile_id: roleId })});
+    // Best-effort: also persist a minimal record in session context for cross-page access
+    try {
+      const rec = (() => {
+        if (!roleId) return null;
+        const r = (_rolesCache || []).find(x => String(x.id) === String(roleId));
+        return r ? { id: r.id, name: r.name, department: r.department } : { id: roleId };
+      })();
+      await fetch('/api/context/system', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: 'selected_role_profile', value: rec })
+      });
+      // Notify listeners that role context changed
+      window.dispatchEvent(new CustomEvent('role:selected', { detail: rec }));
+    } catch (e) {
+      console.warn('[RoleSelection] failed to persist selected_role_profile', e);
+    }
   }
 
   function populateOptions(select, roles, selectedId) {
@@ -31,11 +58,9 @@ const RoleSelection = (() => {
       select.innerHTML = '<option value="">— No roles found —</option>';
       return;
     }
-    select.innerHTML = '<option value="">— Select Role —</option>' + roles.map(r => `<option value="${r.id}">${escapeHtml(r.name)}</option>`).join('');
-    if (selectedId) {
-      const opt = select.querySelector(`option[value="${selectedId}"]`);
-      if (opt) select.value = String(selectedId);
-    }
+    // Always render with an explicit unselected placeholder as default
+    select.innerHTML = '<option value="">---- Select Role ----</option>' + roles.map(r => `<option value="${r.id}">${escapeHtml(r.name)}</option>`).join('');
+    // Do not auto-select a stored id here; we require explicit user choice on this page
   }
 
   function escapeHtml(s) {
@@ -48,7 +73,12 @@ const RoleSelection = (() => {
     try {
       console.debug('[RoleSelection] init on', selectId);
       const [roles, selectedId] = await Promise.all([loadRoles(), getSelected()]);
-      populateOptions(select, roles, selectedId);
+      // Always render with placeholder selected by default
+      populateOptions(select, roles, null);
+      // If there is a previously selected role in session, clear it on Diagnostics to force explicit selection
+      if (selectId === 'diag-role-select' && selectedId) {
+        try { await setSelected(null); } catch (e) { console.warn('[RoleSelection] unable to clear previous selection', e); }
+      }
     } catch (e) {
       console.error('RoleSelection init failed', e);
     }

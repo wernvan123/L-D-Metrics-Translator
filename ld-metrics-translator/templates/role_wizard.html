@@ -6,11 +6,12 @@
     <div class="card-header">
       <h2>Role Profile Wizard</h2>
       <div class="actions">
-        <a class="btn" href="/roles">Back to Roles</a>
+        <a class="btn" href="{{ '/admin/roles' if is_admin else '/roles' }}">Back to Roles</a>
       </div>
     </div>
     <div class="card-body">
-      {% if not is_admin %}
+      {% set is_admin_ctx = is_admin or session.get('is_admin') or session.get('admin_user_id') %}
+      {% if not is_admin_ctx %}
       <div class="notice" role="alert" style="margin-bottom:12px;">
         You need admin access to create or edit Role Profiles. You can view this page, but actions will be disabled.
       </div>
@@ -25,7 +26,7 @@
         <li>Review & Save</li>
       </ol>
 
-      <div id="role-wizard" class="wizard" {% if not is_admin %}aria-disabled="true"{% endif %}>
+      <div id="role-wizard" class="wizard" {% if not is_admin_ctx %}aria-disabled="true"{% endif %}>
         <!-- Dynamic step content will be rendered here by JS -->
       </div>
 
@@ -40,10 +41,120 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="{{ url_for('static', filename='js/role-architect.js') }}"></script>
+<script src="{{ url_for('static', filename='js/role-architect.js') }}?v=20250918"></script>
 <script>
   window.addEventListener('DOMContentLoaded', () => {
     RoleArchitect.initWizard();
   });
 </script>
+{% endblock %}
+
+{% block page_styles %}
+<style>
+  /* Page-scoped fallback styles to ensure the new UX appears even if global CSS is cached */
+  .wizard-steps { list-style: none; display: grid; grid-template-columns: repeat(7, minmax(0,1fr)); gap: 10px; padding: 0; margin: 6px 0 18px; }
+  .wizard-steps li { position: relative; padding: 10px 12px 10px 36px; border: 1px solid #e6e6ef; border-radius: 999px; color: #6b7280; background: #fff; line-height: 1.2; }
+  .wizard-steps li .step-mark { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); width: 22px; height: 22px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; background: #f3f4ff; color: #4350d8; border: 1px solid #e1e6ff; }
+  .wizard-steps li.active { color: #2f57b2; border-color: #dbe5ff; background: #eef3ff; font-weight: 700; }
+  .wizard-steps li.completed { color: #1b7f4b; border-color: #c9f3df; background: #e8fbef; }
+  .wizard-steps li.upcoming { opacity: .85; }
+
+  .comp-results { position: absolute; z-index: 20; background: #fff; border: 1px solid #e6e6ef; border-radius: 10px; margin-top: 6px; width: 100%; box-shadow: 0 14px 40px rgba(38,16,105,0.14); display: none; max-height: 260px; overflow: auto; }
+  .comp-item { padding: 10px 12px; cursor: pointer; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .comp-item:hover { background: #f8f9ff; }
+  .comp-fw { color: #6b7280; font-size: 12px; }
+  .targets-summary { display: grid; gap: 14px; }
+  .target-row { border: 1px solid #e6e6ef; border-radius: 12px; padding: 14px; background: #fff; box-shadow: 0 6px 20px rgba(0,0,0,0.06); }
+  .t-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+  .t-sliders { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  .slider-block { background: #fbfbfd; border: 1px dashed #e6e6ef; border-radius: 10px; padding: 12px; display: grid; gap: 8px; }
+  .wizard-actions { display: flex; gap: 12px; margin-top: 18px; }
+
+  /* Softer inputs & buttons and more spacing for this page */
+  .page.role-wizard .card-header h2 { color: #ffffff !important; margin: 10px 0 18px !important; }
+  .page.role-wizard .card-body { padding-top: 8px; }
+  .page.role-wizard .field { display: grid; gap: 10px; margin-bottom: 18px; }
+  .page.role-wizard .field input,
+  .page.role-wizard .field textarea,
+  .page.role-wizard .field select { padding: 12px 14px !important; border: 1px solid #e6e6ef !important; border-radius: 12px !important; background: #fff !important; font: inherit; box-shadow: 0 1px 0 rgba(0,0,0,0.02) inset; width: 100% !important; }
+  .page.role-wizard .field input:focus,
+  .page.role-wizard .field textarea:focus,
+  .page.role-wizard .field select:focus { outline: none; border-color: #d4d9ff; box-shadow: 0 0 0 3px rgba(107,78,255,0.12); }
+  .page.role-wizard .btn { padding: 12px 16px !important; border-radius: 12px !important; }
+  .page.role-wizard .grid { gap: 20px; margin-top: 20px; }
+  .page.role-wizard .row.gap { gap: 16px; }
+  .page.role-wizard .wizard-steps { margin-top: 14px !important; margin-bottom: 22px !important; }
+
+  /* Layout: constrain width for comfortable reading */
+  .page.role-wizard .wizard { max-width: 920px; margin: 0 auto; }
+  .page.role-wizard .wizard .field > input,
+  .page.role-wizard .wizard .field > textarea,
+  .page.role-wizard .wizard .field > select { max-width: 840px; }
+  /* Make description box taller */
+  .page.role-wizard #role-desc { min-height: 200px; }
+
+  /* Steps 2+ (Knowledge/Skills/Abilities/Others) input styling */
+  .page.role-wizard .list-editor { max-width: 920px; }
+  .page.role-wizard .list-editor .row.gap { gap: 14px; }
+  .page.role-wizard .list-editor #item-input { flex: 1; min-width: 380px; padding: 12px 14px; border: 1px solid #e6e6ef; border-radius: 12px; }
+  .page.role-wizard .list-editor input { padding: 12px 14px; border: 1px solid #e6e6ef; border-radius: 12px; background: #fff; }
+  .page.role-wizard .list-editor #item-add.btn { padding: 12px 16px; border-radius: 12px; }
+  .page.role-wizard .list-editor .list li { padding: 10px 0; }
+  .page.role-wizard .list-editor .list .btn { padding: 8px 12px; border-radius: 10px; }
+  /* Chips styling */
+  .page.role-wizard .chips { list-style: none; display: flex; flex-wrap: wrap; gap: 10px; padding: 0; margin: 8px 0 0 0; }
+  .page.role-wizard .chip { display: inline-flex; align-items: center; gap: 8px; padding: 8px 12px; background: #ffffff; border: 1px solid #e6e6ef; border-radius: 999px; box-shadow: 0 1px 0 rgba(0,0,0,.02); }
+  .page.role-wizard .chip-label { font-size: 14px; }
+  .page.role-wizard .chip-x { border: 1px solid #e6e6ef; background: #f6f7ff; color: #3f4be0; width: 24px; height: 24px; border-radius: 999px; line-height: 1; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
+  .page.role-wizard .chip-x:hover { background: #eef1ff; }
+
+  /* On-gradient typography: headings, paragraphs, labels, and hints */
+  .page.role-wizard h2,
+  .page.role-wizard h3,
+  .page.role-wizard .notice { color: #ffffff !important; }
+  .page.role-wizard p,
+  .page.role-wizard .hint { color: rgba(255,255,255,0.92) !important; }
+  .page.role-wizard .hint { font-size: 12px; color: rgba(255,255,255,0.85) !important; }
+  /* Labels directly on gradient */
+  .page.role-wizard .field > span { color: #ffffff !important; }
+  /* Preserve dark text inside white components */
+  .page.role-wizard .field input,
+  .page.role-wizard .field textarea,
+  .page.role-wizard .field select,
+  .page.role-wizard .chip,
+  .page.role-wizard .btn,
+  .page.role-wizard .target-row,
+  .page.role-wizard .comp-results { color: var(--text) !important; }
+
+  /* KSAO suggestions dropdown */
+  .page.role-wizard .ksao-results { position: relative; margin-top: 6px; }
+  .page.role-wizard .ksao-results { position: relative; }
+  .page.role-wizard .ksao-results .ksao-item { padding: 10px 12px; cursor: pointer; }
+  .page.role-wizard .ksao-results .ksao-item:hover { background: #f8f9ff; }
+
+  /* Targets summary spacing */
+  .page.role-wizard #targets-summary { margin-top: 16px; }
+
+  /* Review table styles */
+  .page.role-wizard .review-block h3 { margin-top: 18px; }
+  .page.role-wizard .review-table { width: 100%; border-collapse: separate; border-spacing: 0; }
+  .page.role-wizard .review-table th, .page.role-wizard .review-table td { padding: 8px 10px; border-bottom: 1px dashed #e6e6ef; text-align: left; }
+
+  /* Review cards */
+  .page.role-wizard .review-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .page.role-wizard .review-card { background: #ffffff; border: 1px solid #e6e6ef; border-radius: 12px; box-shadow: 0 6px 20px rgba(0,0,0,0.06); }
+  .page.role-wizard .review-card.wide { grid-column: 1 / -1; }
+  .page.role-wizard .review-head { display: flex; align-items: center; justify-content: space-between; padding: 12px 14px; border-bottom: 1px solid #e6e6ef; }
+  .page.role-wizard .review-head h3 { margin: 0; color: var(--text) !important; }
+  .page.role-wizard .edit-link { font-size: 13px; color: #3f4be0; text-decoration: none; }
+  .page.role-wizard .edit-link:hover { text-decoration: underline; }
+  .page.role-wizard .review-body { padding: 12px 14px; color: var(--text); }
+  .page.role-wizard .review-card p { color: var(--text) !important; }
+  .page.role-wizard .review-card .field { margin-bottom: 8px; }
+  .page.role-wizard .review-card .field > span { color: var(--text) !important; font-weight: 600; }
+  .page.role-wizard .review-card .field .field-value { display: block; color: var(--text); }
+
+  /* Align wizard actions on Review: Back left, Save right */
+  .page.role-wizard .wizard-actions.split { justify-content: space-between; }
+</style>
 {% endblock %}

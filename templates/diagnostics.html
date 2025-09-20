@@ -36,6 +36,12 @@
               <span>Timeframe</span>
               <input id="timeframe" placeholder="Q4, 6 weeks, rolling, ..."/>
             </label>
+            <label class="field">
+              <span>Role Profile</span>
+              <select id="role-profile">
+                <option value="">— Select a role profile —</option>
+              </select>
+            </label>
           </div>
           <div class="actions">
             <button id="analyze-btn" class="btn primary">Analyze with AI</button>
@@ -69,6 +75,30 @@
         </div>
       </div>
 
+      <!-- Gap Analysis Report (Role-Contextualized) -->
+      <div class="card">
+        <div class="card-header">
+          <h3>Gap Analysis Report</h3>
+        </div>
+        <div class="card-body" id="gap-report">
+          <div id="gap-report-header" class="mb">
+            <!-- Filled by JS: Title, subtitle, context card, user input snippet -->
+          </div>
+          <div id="gap-report-diagnosis" class="mb">
+            <!-- Section 2: Diagnosis summary and core issues -->
+          </div>
+          <div id="gap-report-root-causes" class="mb">
+            <!-- Section 2.2: Potential root causes (biases) -->
+          </div>
+          <div id="gap-report-recommendations" class="mb">
+            <!-- Section 3: KPIs and Nudges -->
+          </div>
+          <div id="gap-report-footer" class="mt">
+            <!-- Footer status and actions -->
+          </div>
+        </div>
+      </div>
+
       <div class="card">
         <div class="card-header">
           <h3>Recommended Metrics</h3>
@@ -94,3 +124,4 @@
 {% block scripts %}
   <script src="{{ url_for('static', filename='js/diagnostics.js') }}"></script>
 {% endblock %}
+

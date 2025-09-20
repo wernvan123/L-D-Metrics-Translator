@@ -1,13 +1,13 @@
 {% extends "base.html" %}
 
 {% block content %}
-<section class="page roles">
+<section class="page roles" data-is-admin="{{ 1 if is_admin else 0 }}">
   <div class="card">
     <div class="card-header">
       <h2>Role Architect</h2>
       {% if is_admin %}
       <div class="actions">
-        <a class="btn primary" href="/roles/new">Create Role Profile</a>
+        <a class="btn primary" href="/admin/roles/new">Create Role Profile</a>
       </div>
       {% endif %}
     </div>
@@ -24,7 +24,7 @@
         </label>
         <button id="roles-refresh" class="btn">Refresh</button>
       </div>
-      <div id="roles-table-wrap" class="mt">
+      <div id="roles-table-wrap" class="mt" data-is-admin="{{ 1 if is_admin else 0 }}">
         <table class="table">
           <thead>
             <tr>
@@ -50,7 +50,7 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="{{ url_for('static', filename='js/role-architect.js') }}?v=20250915"></script>
+<script src="{{ url_for('static', filename='js/role-architect.js') }}?v=20250918"></script>
 <script>
   window.addEventListener('DOMContentLoaded', () => {
     RoleArchitect.initList();
