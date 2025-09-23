@@ -20,8 +20,13 @@
     competencyList: null,
     searchRow: null,
     btnStartNew: null,
-    roleSelect: null,
-    roleGap: null,
+    // Outcome-start panels
+    outcomePanels: null,
+    outcomeOverview: null,
+    outcomeDrivers: null,
+    outcomeNudges: null,
+    outcomeMetrics: null,
+    outcomeReview: null,
   };
 
   const state = {
@@ -40,6 +45,136 @@
     els.status.className = 'notice ' + (type ? `notice-${type}` : '');
     els.status.textContent = message;
     els.status.style.display = 'block';
+  }
+
+  async function loadOutcomePanels(){
+    try{
+      // Ensure visibility state matches
+      if(els.outcomePanels) els.outcomePanels.style.display = (state.startMode==='outcome' && state.outcomeId)?'block':'none';
+      if(!state.outcomeId) return;
+      await Promise.all([
+        renderOutcomeOverview(state.outcomeId),
+        renderSuggestedDrivers(state.outcomeId),
+        renderSuggestedNudges(state.outcomeId),
+        renderOutcomeMetrics(state.outcomeId),
+        renderOutcomeReview()
+      ]);
+    }catch(e){ console.warn('loadOutcomePanels failed', e); }
+  }
+
+  async function renderOutcomeOverview(outcomeId){
+    if(!els.outcomeOverview) return;
+    try{
+      let name = `Outcome #${outcomeId}`; let desc = '';
+      // Try to fetch from outcomes list
+      const r = await fetch('/api/outcomes', { headers:{'Accept':'application/json'} });
+      if(r.ok){ const j = await r.json(); const items = j.items||j.outcomes||[]; const found = items.find(o=>String(o.id)===String(outcomeId)); if(found){ name = found.name||name; desc = found.description||''; } }
+      els.outcomeOverview.innerHTML = `<div><strong>${escapeHtml(name)}</strong></div>${desc?`<p class="meta">${escapeHtml(desc)}</p>`:''}`;
+    }catch{ els.outcomeOverview.textContent = 'Selected outcome overview unavailable.'; }
+  }
+
+  async function renderSuggestedDrivers(outcomeId){
+    if(!els.outcomeDrivers) return;
+    els.outcomeDrivers.innerHTML = 'Loading…';
+    try{
+      const url = `/api/driver-cards?outcome_id=${encodeURIComponent(outcomeId)}&kind=driver&page_size=8&sort=name`;
+      const r = await fetch(url, { headers:{'Accept':'application/json'} });
+      if(!r.ok) throw new Error('Failed');
+      const j = await r.json();
+      const items = j.items||[];
+      if(!items.length){ els.outcomeDrivers.innerHTML = '<div class="pb-empty">No suggested drivers for this outcome.</div>'; return; }
+      els.outcomeDrivers.innerHTML = items.map(c=>suggestionRow(c,'driver')).join('');
+      bindSuggestionActions(els.outcomeDrivers);
+    }catch(e){ els.outcomeDrivers.innerHTML = '<div class="pb-empty">Unable to load suggested drivers.</div>'; }
+  }
+
+  async function renderSuggestedNudges(outcomeId){
+    if(!els.outcomeNudges) return;
+    els.outcomeNudges.innerHTML = 'Loading…';
+    try{
+      const url = `/api/driver-cards?outcome_id=${encodeURIComponent(outcomeId)}&kind=bias&page_size=8&sort=name`;
+      const r = await fetch(url, { headers:{'Accept':'application/json'} });
+      if(!r.ok) throw new Error('Failed');
+      const j = await r.json();
+      const items = j.items||[];
+      if(!items.length){ els.outcomeNudges.innerHTML = '<div class="pb-empty">No suggested nudges for this outcome.</div>'; return; }
+      els.outcomeNudges.innerHTML = items.map(c=>suggestionRow(c,'bias')).join('');
+      bindSuggestionActions(els.outcomeNudges);
+    }catch(e){ els.outcomeNudges.innerHTML = '<div class="pb-empty">Unable to load suggested nudges.</div>'; }
+  }
+
+  async function renderOutcomeMetrics(outcomeId){
+    if(!els.outcomeMetrics) return;
+    els.outcomeMetrics.innerHTML = 'Loading…';
+    try{
+      const url = `/api/metrics?outcome_id=${encodeURIComponent(outcomeId)}&per_page=10`;
+      const r = await fetch(url, { headers:{'Accept':'application/json'} });
+      if(!r.ok) throw new Error('Failed');
+      const j = await r.json();
+      const items = (j.metrics)||[];
+      if(!items.length){ els.outcomeMetrics.innerHTML = '<div class="pb-empty">No metrics found for this outcome.</div>'; return; }
+      els.outcomeMetrics.innerHTML = `<ul class="list">${items.map(m=>`<li>${escapeHtml(m.name)} <span class="meta">${escapeHtml(m.metric_type?.name||'')}</span> <button class="btn btn-sm" data-add-metric="${m.id}">Add</button></li>`).join('')}</ul>`;
+      els.outcomeMetrics.addEventListener('click', onOutcomeMetricsClick);
+    }catch(e){ els.outcomeMetrics.innerHTML = '<div class="pb-empty">Unable to load metrics.</div>'; }
+  }
+
+  async function renderOutcomeReview(){
+    if(!els.outcomeReview) return;
+    try{
+      const r = await fetch('/api/context/plan/items', { headers:{'Accept':'application/json'} });
+      const j = await r.json();
+      const items = Array.isArray(j.items)?j.items:[];
+      if(!items.length){ els.outcomeReview.textContent = 'No items in your plan yet.'; return; }
+      const groups = items.reduce((acc,it)=>{ (acc[it.kind]=acc[it.kind]||[]).push(it); return acc; },{});
+      const html = Object.keys(groups).map(k=>{
+        return `<div class="pb-group"><div style="font-weight:700">${k.charAt(0).toUpperCase()+k.slice(1)}</div><ul class="list">${groups[k].map(it=>`<li>${escapeHtml(it.label)}</li>`).join('')}</ul></div>`;
+      }).join('');
+      els.outcomeReview.innerHTML = html;
+    }catch{ els.outcomeReview.textContent = 'Unable to load selections.'; }
+  }
+
+  function suggestionRow(card, kind){
+    const title = `${iconForKind(kind||card.kind)} ${escapeHtml(card.name)}`;
+    const desc = escapeHtml(card.description||'');
+    const id = card.id;
+    return `<div class="pb-item"><div><div style="font-weight:600">${title}</div><div class="meta">${desc}</div></div><div><button class="btn btn-sm btn-outline" data-suggest-add data-kind="${kind||'driver'}" data-id="${id}" data-label="${escapeAttr(card.name)}">Add</button></div></div>`;
+  }
+
+  function bindSuggestionActions(container){
+    container.addEventListener('click', async (e)=>{
+      const btn = e.target.closest('[data-suggest-add]');
+      if(!btn) return;
+      const kind = (btn.getAttribute('data-kind')||'driver').toLowerCase();
+      const id = parseInt(btn.getAttribute('data-id'), 10);
+      const label = btn.getAttribute('data-label')||'Item';
+      btn.disabled = true; btn.textContent = 'Adding…';
+      await addToPlan(kind, label, id, {}, btn);
+      // Update review panel
+      renderOutcomeReview();
+    }, { once: false });
+  }
+
+  async function onOutcomeMetricsClick(e){
+    const btn = e.target.closest('[data-add-metric]');
+    if(!btn) return;
+    const id = btn.getAttribute('data-add-metric');
+    try{
+      await fetch('/api/context/metrics/select', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ metric_id: id, source: 'plan_builder_outcome' }) });
+      // Also add a visible plan item so the sidebar/review reflect the action
+      try {
+        const li = btn.closest('li');
+        let label = `Metric #${id}`;
+        if (li) {
+          // The first text node of the <li> contains the metric name before the meta span
+          const firstText = Array.from(li.childNodes).find(n => n.nodeType === Node.TEXT_NODE && n.textContent.trim());
+          if (firstText) label = firstText.textContent.trim();
+        }
+        await addToPlan('metric', label, parseInt(id, 10), { source: 'outcome_metrics' });
+      } catch(err) { /* non-fatal; still selected in context */ }
+      if(window.notify) window.notify('success','Metric added');
+      renderOutcomeReview();
+      refreshSidebar();
+    }catch{}
   }
 
   function skeleton(count=8){
@@ -101,32 +236,22 @@
     return await res.json();
   }
 
-  async function refreshRoleGap(){
-    try{
-      if(!els.roleGap) return;
-      const sel = await fetchJSON('/api/roles/select');
-      const rid = sel.selected_role_profile_id;
-      if(!rid){ els.roleGap.style.display='none'; els.roleGap.textContent=''; return; }
-      const data = await fetchJSON(`/api/roles/${rid}/gaps`);
-      const items = data.gaps || [];
-      if(!items.length){ els.roleGap.style.display='none'; els.roleGap.textContent=''; return; }
-      const lines = items.slice(0,6).map(x=>`• ${escapeHtml(x.competency_name || `#${x.competency_id}`)}: current ${x.current_level}/ target ${x.target_level} (gap ${x.gap})`);
-      const more = items.length>6 ? ` +${items.length-6} more` : '';
-      const score = typeof data.weighted_gap === 'number' ? `Weighted gap: ${data.weighted_gap.toFixed(2)}` : '';
-      els.roleGap.innerHTML = `<strong>Gaps vs Role Target</strong><br>${lines.join('<br>')}<br>${escapeHtml(score)}${escapeHtml(more)}`;
-      els.roleGap.style.display='block';
-    }catch(e){
-      if(els.roleGap){ els.roleGap.style.display='none'; }
-    }
-  }
-
   function updateInitialChoiceUI(){
     if(!els.initialChoice) return;
     // Always show the initial choice selectors at the top
     els.initialChoice.style.display = 'block';
-    // Defaults
-    if(els.choiceFramework){ els.choiceFramework.disabled = false; els.choiceFramework.parentElement.style.opacity = '1'; }
-    if(els.choiceOutcome){ els.choiceOutcome.disabled = false; els.choiceOutcome.parentElement.style.opacity = '1'; }
+    // Defaults; then lock the other path after a selection is made
+    const hasMode = !!state.startMode;
+    const lockFramework = hasMode && state.startMode === 'outcome';
+    const lockOutcome = hasMode && state.startMode === 'framework';
+    if(els.choiceFramework){
+      els.choiceFramework.disabled = lockFramework ? true : false;
+      if(els.choiceFramework.parentElement){ els.choiceFramework.parentElement.style.opacity = lockFramework ? '0.5' : '1'; }
+    }
+    if(els.choiceOutcome){
+      els.choiceOutcome.disabled = lockOutcome ? true : false;
+      if(els.choiceOutcome.parentElement){ els.choiceOutcome.parentElement.style.opacity = lockOutcome ? '0.5' : '1'; }
+    }
     // Show competencies only when a framework is selected
     const hasFramework = !!state.frameworkId;
     if(els.stepCompetencies) els.stepCompetencies.style.display = hasFramework ? 'block' : 'none';
@@ -141,6 +266,8 @@
         els.searchRow.style.display = 'none';
       }
     }
+    // Toggle outcome panels visibility
+    if(els.outcomePanels){ els.outcomePanels.style.display = (state.startMode === 'outcome' && state.outcomeId) ? 'block' : 'none'; }
   }
 
   async function loadGrid(){
@@ -240,7 +367,6 @@
       });
       if(!res.ok){ throw new Error('Failed to add to plan'); }
       await refreshSidebar();
-    await refreshRoleGap();
       if(window.notify){ window.notify('success', `Added to plan: ${label}`); }
       if(buttonEl){
         buttonEl.disabled = true;
@@ -311,7 +437,7 @@
       // grid will wait until competency selected
       loadGrid();
     }); }
-    if(els.choiceOutcome){ els.choiceOutcome.addEventListener('change', ()=>{
+    if(els.choiceOutcome){ els.choiceOutcome.addEventListener('change', async ()=>{
       const val = els.choiceOutcome.value;
       if(!val) return;
       state.startMode = 'outcome';
@@ -323,6 +449,12 @@
       $all('.pb-competency').forEach(el => el.classList.remove('is-active'));
       if(els.competencyList) els.competencyList.innerHTML = '';
       if(els.searchRow) els.searchRow.style.display = 'block';
+      // Persist outcome context (fire-and-forget)
+      try{ await fetch('/api/context/framework/state', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ outcome_id: state.outcomeId }) }); }catch{}
+      // Show outcome panels and load their content
+      if(els.outcomePanels){ els.outcomePanels.style.display = 'block'; }
+      loadOutcomePanels();
+      // Also load grid filtered by outcome for discovery
       loadGrid();
     }); }
     if(els.grid){ els.grid.addEventListener('click', (e)=>{
@@ -354,25 +486,13 @@
       if(els.search) els.search.value='';
       if(els.stepCompetencies){ els.stepCompetencies.style.display='none'; if(els.competencyList) els.competencyList.innerHTML=''; }
       if(els.initialChoice) els.initialChoice.style.display='block';
+      // Re-enable both starting path selectors
+      updateInitialChoiceUI();
       await refreshSidebar();
       els.grid.innerHTML = '';
+      if(els.outcomePanels) els.outcomePanels.style.display='none';
     }); }
-    // Role selection changes should refresh gap view
-    els.roleSelect = document.getElementById('pb-role-select');
-    els.roleGap = document.getElementById('pb-role-gap');
-    if(els.roleSelect){ els.roleSelect.addEventListener('change', ()=>{ setTimeout(refreshRoleGap, 50); }); }
-    const profSave = document.getElementById('pb-prof-save');
-    const profJson = document.getElementById('pb-prof-json');
-    if(profSave && profJson){
-      profSave.addEventListener('click', async ()=>{
-        try{
-          const mapping = JSON.parse(profJson.value||'{}');
-          await fetch('/api/proficiency', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ competency_proficiency: mapping }) });
-          await refreshRoleGap();
-          if(window.notify) window.notify('success','Saved current proficiency');
-        }catch(e){ (window.notify? window.notify('error','Invalid JSON'): alert('Invalid JSON')); }
-      });
-    }
+    // Role Profile controls removed; no role gap or proficiency handlers
   }
 
   async function init(){
@@ -391,8 +511,13 @@
     els.competencyList = $('#pb-competency-list');
     els.searchRow = $('#pb-search-row');
     els.btnStartNew = $('#pb-start-new');
-    els.roleSelect = document.getElementById('pb-role-select');
-    els.roleGap = document.getElementById('pb-role-gap');
+    // Outcome panels
+    els.outcomePanels = $('#pb-outcome-panels');
+    els.outcomeOverview = $('#pb-outcome-overview');
+    els.outcomeDrivers = $('#pb-outcome-drivers');
+    els.outcomeNudges = $('#pb-outcome-nudges');
+    els.outcomeMetrics = $('#pb-outcome-metrics');
+    els.outcomeReview = $('#pb-outcome-review');
 
     await initSelectors();
     initEvents();
@@ -417,6 +542,11 @@
       if(els.competencyList) els.competencyList.innerHTML = '';
     }
     await refreshSidebar();
+
+    // If outcome was preselected via session or deep link, refresh panels
+    if(state.startMode === 'outcome' && state.outcomeId){
+      loadOutcomePanels();
+    }
 
     // Summary modal (Option B)
     const modal = document.getElementById('pb-summary-modal');

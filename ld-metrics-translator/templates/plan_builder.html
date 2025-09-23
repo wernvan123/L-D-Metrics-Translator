@@ -92,26 +92,34 @@
             </div>
           </div>
         </div>
+        <!-- Outcome-start panels -->
+        <div id="pb-outcome-panels" style="display:none" aria-live="polite">
+          <div class="card">
+            <div class="card-header"><h3>Outcome Overview</h3></div>
+            <div class="card-body" id="pb-outcome-overview">Select an outcome to review a brief overview and focus areas.</div>
+          </div>
+          <div class="card" style="margin-top:12px;">
+            <div class="card-header"><h3>Suggested Drivers</h3></div>
+            <div class="card-body" id="pb-outcome-drivers">—</div>
+          </div>
+          <div class="card" style="margin-top:12px;">
+            <div class="card-header"><h3>Suggested Nudges</h3></div>
+            <div class="card-body" id="pb-outcome-nudges">—</div>
+          </div>
+          <div class="card" style="margin-top:12px;">
+            <div class="card-header"><h3>Metrics & KPIs</h3></div>
+            <div class="card-body" id="pb-outcome-metrics">—</div>
+          </div>
+          <div class="card" style="margin-top:12px;">
+            <div class="card-header"><h3>Selections Review</h3></div>
+            <div class="card-body" id="pb-outcome-review">No items in your plan yet.</div>
+          </div>
+        </div>
         <div id="pb-grid" class="library-metrics-grid pb-grid" aria-live="polite"></div>
         <div id="pb-pagination" class="pagination" style="display:none"></div>
       </div>
 
       <aside class="pb-sidebar" aria-label="Current Selections">
-        <div class="pb-step">Role Profile</div>
-        <div class="control-group" style="margin-bottom:12px;">
-          <select id="pb-role-select" class="library-filter-select" style="width:100%">
-            <option value="">— Select Role —</option>
-          </select>
-        </div>
-        <div id="pb-role-gap" class="notice" style="display:none"></div>
-        <details class="mt" style="margin:8px 0;">
-          <summary>Current Proficiency (demo)</summary>
-          <div class="mt">
-            <p class="pb-empty">Paste a JSON map of competency_id → level (0-5), then Save to update the gap view.</p>
-            <textarea id="pb-prof-json" rows="4" placeholder='{"1": 2, "2": 3}' style="width:100%"></textarea>
-            <div class="mt"><button id="pb-prof-save" class="btn">Save Proficiency</button></div>
-          </div>
-        </details>
         <h3>Current Selections</h3>
         <div class="meta" id="pb-selection-count">0 selected</div>
         <div id="pb-sidebar-content">
@@ -135,11 +143,6 @@
   <div class="modal-backdrop"></div>
 </div>
 
-<script src="{{ url_for('static', filename='js/plan-builder.js') }}?v=20250914-3"></script>
-<script src="{{ url_for('static', filename='js/role-selection.js') }}?v=20250915"></script>
-<script>
-  document.addEventListener('DOMContentLoaded', function(){
-    if (window.RoleSelection) RoleSelection.init('pb-role-select');
-  });
-</script>
+<script src="{{ url_for('static', filename='js/plan-builder.js') }}?v=20250921-1"></script>
 {% endblock %}
+

@@ -142,6 +142,8 @@
 
         /* When gap report is active, ensure default analysis stays hidden */
         [data-gap-active="1"] #analysis-results { display: none !important; }
+        /* When gap report is NOT active, hide the gap report to avoid double render or flicker */
+        [data-gap-active="0"] #gap-report-card { display: none !important; }
 
         /* Mini Plan Selections sidebar */
         #plan-mini-sidebar.card { display:none; margin-top:16px; }
@@ -164,6 +166,9 @@
         @media (min-width: 992px) {
           .diag-grid { grid-template-columns: minmax(0,1fr) 320px; align-items: start; gap: 24px; }
           #plan-mini-aside { position: sticky; top: 80px; height: fit-content; }
+          /* If mini sidebar is not active, collapse to single column and hide aside */
+          [data-plan-mini="0"] .diag-grid { grid-template-columns: 1fr !important; }
+          [data-plan-mini="0"] #plan-mini-aside { display: none !important; }
         }
 
         /* Widen diagnostics container for improved readability */
@@ -180,6 +185,9 @@
           margin-left: auto;
           margin-right: auto;
         }
+        /* Ensure the analysis container doesn't constrain inner width */
+        .event-analysis-container { width: 100%; max-width: none; overflow: visible; }
+        #analysis-actions { flex-wrap: wrap; }
         /* Prevent clipping inside the login prompt */
         #diag-main-col #login-prompt { overflow: visible; box-sizing: border-box; }
         #diag-main-col #login-prompt .login-prompt-content { width: 100%; max-width: none; }

@@ -17,7 +17,7 @@ from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
 from reportlab.lib.colors import HexColor
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak, Table, TableStyle
 from reportlab.lib.enums import TA_JUSTIFY
 import os
 
@@ -153,6 +153,15 @@ class DynamicReportGenerator:
                 {"type": "success_metrics", "title": "Success Metrics & Monitoring", "pages": 2, "order": 6},
                 {"type": "appendices", "title": "Appendices", "pages": 3, "order": 7}
             ]
+        elif template_type == 'final_plan':
+            # Five-section Final Developmental Plan outline
+            sections = [
+                {"type": "final_executive_context", "title": "Executive Summary & Context", "pages": 1, "order": 1},
+                {"type": "visual_synthesis", "title": "Visual Synthesis", "pages": 1, "order": 2},
+                {"type": "gap_analysis", "title": "Detailed Gap Analysis & Driver Breakdown", "pages": 2, "order": 3},
+                {"type": "interventions_nudges", "title": "Actionable Interventions & Nudges", "pages": 2, "order": 4},
+                {"type": "action_plan_next_steps", "title": "Action Plan & Next Steps", "pages": 2, "order": 5},
+            ]
         else:  # basic
             sections = [
                 {"type": "executive_summary", "title": "Executive Summary", "pages": 1, "order": 1},
@@ -241,18 +250,26 @@ class DynamicReportGenerator:
         """Generate dynamic content for each report section."""
         content = {}
         
-        content['executive_summary'] = self._generate_executive_summary(config, analysis)
-        
-        if config.template_type == 'comprehensive':
-            content['strategy_context'] = self._generate_strategy_context(config, analysis)
-        
-        content['metric_analysis'] = self._generate_metric_analysis(config, analysis)
-        content['ai_insights'] = self._generate_ai_insights(config, analysis)
-        content['implementation_roadmap'] = self._generate_implementation_roadmap(config, analysis)
-        content['success_metrics'] = self._generate_success_metrics(config, analysis)
-        
-        if config.template_type == 'comprehensive':
-            content['appendices'] = self._generate_appendices(config, analysis)
+        if config.template_type == 'final_plan':
+            # New five-section Final Developmental Plan
+            content['final_executive_context'] = self._generate_final_executive_context(config, analysis)
+            content['visual_synthesis'] = self._generate_visual_synthesis(config, analysis)
+            content['gap_analysis'] = self._generate_gap_analysis_driver_breakdown(config, analysis)
+            content['interventions_nudges'] = self._generate_interventions_nudges(config, analysis)
+            content['action_plan_next_steps'] = self._generate_action_plan_table(config, analysis)
+        else:
+            content['executive_summary'] = self._generate_executive_summary(config, analysis)
+            
+            if config.template_type == 'comprehensive':
+                content['strategy_context'] = self._generate_strategy_context(config, analysis)
+            
+            content['metric_analysis'] = self._generate_metric_analysis(config, analysis)
+            content['ai_insights'] = self._generate_ai_insights(config, analysis)
+            content['implementation_roadmap'] = self._generate_implementation_roadmap(config, analysis)
+            content['success_metrics'] = self._generate_success_metrics(config, analysis)
+            
+            if config.template_type == 'comprehensive':
+                content['appendices'] = self._generate_appendices(config, analysis)
         
         return content
 
@@ -375,18 +392,42 @@ Expected Outcomes: Implementation will provide actionable insights into {outcome
 
     def _update_report_content(self, report: DynamicReport, content: Dict):
         """Update report with generated content."""
-        report.executive_summary = content.get('executive_summary', '')
-        report.strategy_context = content.get('strategy_context', '')
-        report.metric_analysis = content.get('metric_analysis', '')
-        report.ai_insights = content.get('ai_insights', '')
-        report.implementation_roadmap = content.get('implementation_roadmap', '')
-        report.success_metrics = content.get('success_metrics', '')
-        report.appendices = content.get('appendices', '')
+        # For backward compatibility, map new final_plan sections into existing fields where possible
+        if 'final_executive_context' in content:
+            report.executive_summary = content.get('final_executive_context', '')
+            report.strategy_context = content.get('visual_synthesis', '')
+            report.metric_analysis = content.get('gap_analysis', '')
+            report.ai_insights = content.get('interventions_nudges', '')
+            # action_plan_next_steps may include table data; store a simple textual summary
+            plan = content.get('action_plan_next_steps', {}) or {}
+            if isinstance(plan, dict):
+                intro = plan.get('intro', '')
+                rows = plan.get('rows', [])
+                rows_count = len(rows) if isinstance(rows, list) else 0
+                report.implementation_roadmap = f"{intro}\n\nItems: {rows_count}"
+            else:
+                report.implementation_roadmap = str(plan)
+            report.success_metrics = ''
+            report.appendices = ''
+        else:
+            report.executive_summary = content.get('executive_summary', '')
+            report.strategy_context = content.get('strategy_context', '')
+            report.metric_analysis = content.get('metric_analysis', '')
+            report.ai_insights = content.get('ai_insights', '')
+            report.implementation_roadmap = content.get('implementation_roadmap', '')
+            report.success_metrics = content.get('success_metrics', '')
+            report.appendices = content.get('appendices', '')
         db.session.commit()
 
     def _generate_pdf(self, report: DynamicReport, content: Dict, config: ReportConfig) -> Tuple[str, int, int]:
         """Generate PDF file from content."""
-        reports_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'static', 'reports')
+        # Save under the app's static directory so Flask can serve /static/reports/*.pdf
+        # __file__ -> .../ld-metrics-translator/app/services/report_generator.py
+        # dirname(__file__) -> .../ld-metrics-translator/app/services
+        # dirname(dirname(__file__)) -> .../ld-metrics-translator/app
+        # dirname(dirname(dirname(__file__))) -> .../ld-metrics-translator
+        app_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+        reports_dir = os.path.join(app_root, 'static', 'reports')
         os.makedirs(reports_dir, exist_ok=True)
         
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -403,15 +444,24 @@ Expected Outcomes: Implementation will provide actionable insights into {outcome
         story.append(Spacer(1, 0.5*inch))
         
         # Add content sections
-        sections = [
-            ('Executive Summary', content.get('executive_summary', '')),
-            ('L&D Strategy Context', content.get('strategy_context', '')),
-            ('Metric Portfolio Analysis', content.get('metric_analysis', '')),
-            ('AI-Enhanced Recommendations', content.get('ai_insights', '')),
-            ('Implementation Roadmap', content.get('implementation_roadmap', '')),
-            ('Success Metrics & Monitoring', content.get('success_metrics', '')),
-            ('Appendices', content.get('appendices', ''))
-        ]
+        if config.template_type == 'final_plan':
+            sections = [
+                ('Executive Summary & Context', content.get('final_executive_context', '')),
+                ('Visual Synthesis', content.get('visual_synthesis', '')),
+                ('Detailed Gap Analysis & Driver Breakdown', content.get('gap_analysis', '')),
+                ('Actionable Interventions & Nudges', content.get('interventions_nudges', '')),
+                ('Action Plan & Next Steps', content.get('action_plan_next_steps', '')),
+            ]
+        else:
+            sections = [
+                ('Executive Summary', content.get('executive_summary', '')),
+                ('L&D Strategy Context', content.get('strategy_context', '')),
+                ('Metric Portfolio Analysis', content.get('metric_analysis', '')),
+                ('AI-Enhanced Recommendations', content.get('ai_insights', '')),
+                ('Implementation Roadmap', content.get('implementation_roadmap', '')),
+                ('Success Metrics & Monitoring', content.get('success_metrics', '')),
+                ('Appendices', content.get('appendices', ''))
+            ]
         
         for section_title, section_content in sections:
             if section_content:
@@ -419,12 +469,35 @@ Expected Outcomes: Implementation will provide actionable insights into {outcome
                 story.append(Paragraph(section_title, self.styles['SectionHeader']))
                 story.append(Spacer(1, 0.1*inch))
                 
-                # Add content paragraphs
-                paragraphs = section_content.split('\n\n')
-                for para in paragraphs:
-                    if para.strip():
-                        story.append(Paragraph(para.strip(), self.styles['BodyTextCustom']))
+                # Handle dict content (e.g., action plan table) or string paragraphs
+                if isinstance(section_content, dict) and section_title == 'Action Plan & Next Steps':
+                    intro = section_content.get('intro', '')
+                    if intro:
+                        story.append(Paragraph(intro.strip(), self.styles['BodyTextCustom']))
                         story.append(Spacer(1, 0.1*inch))
+                    headers = section_content.get('table_headers', ['Priority', 'Driver', 'Nudge/Intervention', 'Owner', 'Timeline'])
+                    rows = section_content.get('rows', [])
+                    data = [headers] + rows
+                    table = Table(data, hAlign='LEFT')
+                    table.setStyle(TableStyle([
+                        ('BACKGROUND', (0,0), (-1,0), HexColor('#ecf0f1')),
+                        ('TEXTCOLOR', (0,0), (-1,0), HexColor('#2C3E50')),
+                        ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+                        ('FONTSIZE', (0,0), (-1,-1), 9),
+                        ('BOTTOMPADDING', (0,0), (-1,0), 6),
+                        ('BACKGROUND', (0,1), (-1,-1), HexColor('#ffffff')),
+                        ('GRID', (0,0), (-1,-1), 0.25, HexColor('#bdc3c7')),
+                        ('ALIGN', (0,0), (-1,-1), 'LEFT'),
+                    ]))
+                    story.append(table)
+                    story.append(Spacer(1, 0.1*inch))
+                else:
+                    # Add content paragraphs
+                    paragraphs = str(section_content).split('\n\n')
+                    for para in paragraphs:
+                        if para.strip():
+                            story.append(Paragraph(para.strip(), self.styles['BodyTextCustom']))
+                            story.append(Spacer(1, 0.1*inch))
         
         # Build PDF
         doc.build(story)
@@ -434,6 +507,107 @@ Expected Outcomes: Implementation will provide actionable insights into {outcome
         page_count = len(story) // 10  # Rough estimate
         
         return pdf_path, file_size, page_count
+
+    # -------------------------------
+    # New Final Developmental Plan builders
+    # -------------------------------
+    def _get_context(self, config: ReportConfig) -> Dict:
+        """Helper to safely extract extended context from generation_context."""
+        ctx = config.generation_context or {}
+        return {
+            'role_profile': ctx.get('role_profile') or {},
+            'framework_focus': ctx.get('framework_focus') or {},
+            'target_outcome': ctx.get('target_outcome') or {},
+            'drivers': ctx.get('drivers') or [],
+            'nudges': ctx.get('nudges') or [],
+            'proficiency': ctx.get('proficiency') or {},
+        }
+
+    def _generate_final_executive_context(self, config: ReportConfig, analysis: Dict) -> str:
+        ctx = self._get_context(config)
+        role_name = ctx['role_profile'].get('name') or 'Target Role'
+        framework_name = ctx['framework_focus'].get('name') or ctx['framework_focus'].get('slug') or 'Selected Framework'
+        outcome_name = ctx['target_outcome'].get('name') or ", ".join(analysis['outcome_focus'].keys()) or 'Outcome Focus'
+        readiness_score = int((1 - analysis['implementation_complexity']) * 100)
+        return (
+            f"Role Profile: {role_name}\n\n"
+            f"Framework Focus: {framework_name}\n\n"
+            f"Target Outcome: {outcome_name}\n\n"
+            f"Summary: This plan prioritizes measurable progress across selected drivers and nudges aligned to {framework_name}.\n\n"
+            f"Implementation Readiness: {readiness_score}%"
+        )
+
+    def _generate_visual_synthesis(self, config: ReportConfig, analysis: Dict) -> str:
+        ctx = self._get_context(config)
+        prof = ctx['proficiency'] or {}
+        if prof.get('radar') or prof.get('tree'):
+            return (
+                "Visual Synthesis Overview:\n\n"
+                "Provided proficiency data will be visualized as a radar/tree diagram highlighting current vs. target levels."
+            )
+        return (
+            "Visual Synthesis Placeholder:\n\n"
+            "Charts will be incorporated when proficiency data is provided (e.g., radar across competencies or driver tree)."
+        )
+
+    def _generate_gap_analysis_driver_breakdown(self, config: ReportConfig, analysis: Dict) -> str:
+        ctx = self._get_context(config)
+        prof = ctx['proficiency'] or {}
+        items = []
+        # Expecting prof like {'competencies': [{'name':..., 'current': x, 'target': y}, ...]}
+        comps = (prof.get('competencies') or []) if isinstance(prof, dict) else []
+        for c in comps[:10]:
+            name = c.get('name', 'Competency')
+            cur = c.get('current')
+            tgt = c.get('target')
+            if isinstance(cur, (int, float)) and isinstance(tgt, (int, float)):
+                gap = round(tgt - cur, 2)
+                items.append(f"• {name}: current {cur} → target {tgt} (gap {gap})")
+        if not items:
+            items.append("• Gaps will be calculated once proficiency benchmarks are provided.")
+        drivers = ctx['drivers'] or []
+        driver_summary = f"Drivers selected: {', '.join([d.get('name','Driver') for d in drivers[:6]])}" if drivers else "No explicit drivers provided yet."
+        return "Detailed Gaps:\n" + "\n".join(items) + "\n\n" + driver_summary
+
+    def _generate_interventions_nudges(self, config: ReportConfig, analysis: Dict) -> str:
+        ctx = self._get_context(config)
+        nudges = ctx['nudges'] or []
+        if not nudges:
+            return (
+                "Interventions & Nudges:\n\n"
+                "No nudges provided. We recommend starting with small, context-specific prompts aligned to drivers."
+            )
+        lines = [
+            "Interventions & Nudges:\n",
+        ]
+        for i, n in enumerate(nudges[:10], 1):
+            title = n.get('title') or n.get('name') or f'Nudge {i}'
+            desc = n.get('description') or n.get('details') or ''
+            lines.append(f"{i}. {title}: {desc}")
+        return "\n".join(lines)
+
+    def _generate_action_plan_table(self, config: ReportConfig, analysis: Dict) -> Dict:
+        ctx = self._get_context(config)
+        drivers = ctx['drivers'] or []
+        nudges = ctx['nudges'] or []
+        # Construct simple action rows pairing drivers with nudges when possible
+        rows = []
+        max_len = max(len(drivers), len(nudges), 0)
+        for i in range(max_len):
+            d = drivers[i] if i < len(drivers) else {}
+            n = nudges[i] if i < len(nudges) else {}
+            priority = n.get('priority') or d.get('priority') or ('High' if i < 3 else 'Medium' if i < 6 else 'Low')
+            driver_name = d.get('name') or d.get('title') or '—'
+            nudge_name = n.get('title') or n.get('name') or '—'
+            owner = n.get('owner') or d.get('owner') or 'L&D Lead'
+            timeline = n.get('timeline') or d.get('timeline') or '0-90 days'
+            rows.append([priority, driver_name, nudge_name, owner, timeline])
+        intro = (
+            "This action plan sequences near-term interventions mapped to selected drivers. "
+            "Owners and timelines are suggested and should be tailored to local context."
+        )
+        headers = ['Priority', 'Driver', 'Nudge/Intervention', 'Owner', 'Timeline']
+        return {'intro': intro, 'table_headers': headers, 'rows': rows}
 
     def _create_analytics(self, report: DynamicReport, analysis: Dict):
         """Create analytics entry for the report."""

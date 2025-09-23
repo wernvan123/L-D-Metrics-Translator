@@ -2,14 +2,33 @@
 
 {% block content %}
 <section class="page roles" data-is-admin="{{ 1 if is_admin else 0 }}">
+  <style>
+    /* Scoped to roles page to avoid side effects */
+    .page.roles .card-header { padding-bottom: 14px; }
+    .page.roles .card-header h2 { color: #fff; margin: 0 0 12px; }
+    .page.roles #roles-search {
+      width: 100%;
+      min-width: 360px;
+      max-width: 640px;
+      padding: 10px 12px;
+      border-radius: 999px; /* fully rounded to match other inputs */
+      border: 1px solid #e5e7eb;
+      background: #fff;
+    }
+    .page.roles .row.gap { align-items: center; gap: 16px; margin: 8px 0 14px; }
+    .page.roles #roles-table-wrap { margin-top: 16px; }
+    .page.roles .card-body .mt { margin-top: 18px; }
+    .page.roles .field > span { display: block; margin-bottom: 6px; }
+    .page.roles .actions { display: flex; gap: 8px; align-items: center; }
+  </style>
   <div class="card">
     <div class="card-header">
       <h2>Role Architect</h2>
-      {% if is_admin %}
       <div class="actions">
+        {% if is_admin %}
         <a class="btn primary" href="/admin/roles/new">Create Role Profile</a>
+        {% endif %}
       </div>
-      {% endif %}
     </div>
     <div class="card-body">
       {% if not is_admin %}
@@ -18,7 +37,7 @@
       </div>
       {% endif %}
       <div class="row gap">
-        <label class="field" style="flex:2 1 360px;">
+        <label class="field" style="flex:2 1 640px;">
           <span>Search</span>
           <input id="roles-search" placeholder="Search role profiles" />
         </label>
@@ -41,8 +60,9 @@
           </tbody>
         </table>
       </div>
-      <div class="mt">
+      <div class="mt" style="display:flex; align-items:center; gap:12px;">
         <button id="compare-reports" class="btn" disabled>Compare Reports</button>
+        <a class="btn primary" href="/roles/new">New Role</a>
       </div>
     </div>
   </div>

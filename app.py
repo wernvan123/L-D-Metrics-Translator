@@ -709,6 +709,88 @@ app.add_url_rule('/status', endpoint='main.detailed_status', view_func=detailed_
 app.add_url_rule('/health', endpoint='main.health_check', view_func=health_check)
 
 
+# ---------------- Reports utilities (cleanup and debug) ----------------
+def _cleanup_stale_report_jobs(max_age_seconds: int = 3600):
+    """Remove jobs older than max_age_seconds or with broken download_url from session.
+
+    Keeps this lightweight and best-effort; it only mutates the session dict.
+    """
+    try:
+        jobs = session.get('report_jobs') or {}
+        if not isinstance(jobs, dict):
+            session['report_jobs'] = {}
+            session.modified = True
+            return
+        now_ts = datetime.utcnow().timestamp()
+        reports_dir = os.path.join(STATIC_DIR, 'reports')
+        changed = False
+        to_del = []
+        for jid, job in jobs.items():
+            try:
+                created_iso = job.get('created')
+                created_ts = 0
+                if created_iso:
+                    try:
+                        # Accept both with/without 'Z'
+                        created_ts = datetime.fromisoformat(created_iso.replace('Z','')).timestamp()
+                    except Exception:
+                        created_ts = 0
+                is_old = (now_ts - created_ts) > max_age_seconds if created_ts else False
+                # If completed with download_url, verify existence
+                has_url = bool(job.get('download_url'))
+                missing_file = False
+                if has_url:
+                    try:
+                        # Expect /static/reports/<name>.pdf
+                        url = str(job.get('download_url')).replace('\\','/')
+                        if '/static/reports/' in url:
+                            fname = url.split('/static/reports/', 1)[1]
+                            fpath = os.path.join(reports_dir, fname)
+                            if not os.path.isfile(fpath):
+                                missing_file = True
+                    except Exception:
+                        missing_file = True
+                if is_old or (has_url and missing_file):
+                    to_del.append(jid)
+            except Exception:
+                to_del.append(jid)
+        for jid in to_del:
+            jobs.pop(jid, None)
+            changed = True
+        if changed:
+            session['report_jobs'] = jobs
+            session.modified = True
+    except Exception:
+        # Never raise cleanup errors to caller
+        pass
+
+
+@app.route('/api/debug/static-reports', methods=['GET'])
+def api_debug_static_reports():
+    """List files under the served static reports directory for quick verification."""
+    try:
+        reports_dir = os.path.join(STATIC_DIR, 'reports')
+        os.makedirs(reports_dir, exist_ok=True)
+        items = []
+        for name in sorted(os.listdir(reports_dir)):
+            path = os.path.join(reports_dir, name)
+            if not os.path.isfile(path):
+                continue
+            try:
+                st = os.stat(path)
+                items.append({
+                    'name': name,
+                    'size': st.st_size,
+                    'mtime': datetime.utcfromtimestamp(st.st_mtime).isoformat() + 'Z',
+                    'url': f"/static/reports/{name}",
+                })
+            except Exception:
+                items.append({'name': name, 'url': f"/static/reports/{name}"})
+        return jsonify({'count': len(items), 'items': items})
+    except Exception as e:
+        return jsonify({'error': 'failed_to_list', 'detail': str(e)}), 500
+
+
 # --------- Minimal API stubs to support Resume Card and context badge ---------
 # In your full app, these should be served by your existing context manager APIs.
 @app.route("/api/context/framework/state", methods=["GET"])
@@ -1509,8 +1591,10 @@ def api_recommend_interact():
     return jsonify({"ok": True})
 
 
-@app.route("/api/dynamic-reports", methods=["POST"])
+@app.route("/api/dynamic-reports", methods=["POST"]) 
 def api_dynamic_report_start():
+    # Clean up stale jobs before starting a new one
+    _cleanup_stale_report_jobs(max_age_seconds=3600)
     # Live path: proxy
     if not MOCKS_ENABLED and DYNAMIC_REPORTS_START_UPSTREAM:
         try:
@@ -1525,20 +1609,141 @@ def api_dynamic_report_start():
                 return jsonify(_json.loads(resp.read().decode('utf-8')))
         except Exception as e:
             return jsonify({"error": "upstream_unavailable", "detail": str(e)}), 502
-    # Mock job
+    # If backend is available, generate a real PDF synchronously using the new final_plan template
+    try:
+        title = (request.get_json(silent=True) or {}).get('title') or 'Final Developmental Plan'
+    except Exception:
+        title = 'Final Developmental Plan'
+
     jobs = session.setdefault("report_jobs", {})
     job_id = f"job-{len(jobs)+1}"
+    # Default mock entry
     jobs[job_id] = {
         "status": "running",
+        "progress": 0,
+        "created": datetime.utcnow().isoformat() + "Z",
         "started": datetime.utcnow().timestamp(),
-        "title": (request.json or {}).get("title") or "Development Plan",
     }
+
+    # Attempt real generation if backend is available
+    if BACKEND_AVAILABLE and backend_app is not None and backend_models is not None:
+        try:
+            with backend_app.app_context():
+                # Lazy import to avoid circulars
+                from app.services.report_generator import DynamicReportGenerator, ReportConfig  # type: ignore
+                LDOutcome = getattr(backend_models, 'LDOutcome')
+                Metric = getattr(backend_models, 'Metric')
+                Framework = getattr(backend_models, 'Framework')
+
+                # Collect plan items from session
+                plan_items = session.get('context_plan_items', {}).get('data', [])
+                driver_items = [it for it in plan_items if it.get('kind') == 'driver']
+                bias_items = [it for it in plan_items if it.get('kind') == 'bias']
+                metric_items = [it for it in plan_items if it.get('kind') == 'metric']
+
+                # Selected metric IDs (from drivers/biases/metrics source_id)
+                selected_metric_ids = []
+                for it in (driver_items + bias_items + metric_items):
+                    try:
+                        mid = int(it.get('source_id'))
+                        if mid not in selected_metric_ids:
+                            selected_metric_ids.append(mid)
+                    except Exception:
+                        continue
+
+                # Outcome and framework context from session framework_state
+                fw_state = session.get('framework_state') or {}
+                outcome_id = fw_state.get('outcome_id') or None
+                framework_id = fw_state.get('framework_id') or None
+
+                # Resolve names (best-effort)
+                outcome_obj = LDOutcome.query.get(int(outcome_id)) if outcome_id else None
+                framework_obj = Framework.query.get(int(framework_id)) if framework_id else None
+
+                # Build extended generation_context
+                drivers_ctx = []
+                for it in driver_items:
+                    try:
+                        mid = int(it.get('source_id')) if it.get('source_id') is not None else None
+                    except Exception:
+                        mid = None
+                    name = it.get('label') or (Metric.query.get(mid).name if (mid and Metric.query.get(mid)) else 'Driver')
+                    drivers_ctx.append({
+                        'name': name,
+                        'metric_id': mid,
+                        'priority': it.get('meta', {}).get('priority') if isinstance(it.get('meta'), dict) else None,
+                    })
+                nudges_ctx = []
+                for it in bias_items:
+                    try:
+                        mid = int(it.get('source_id')) if it.get('source_id') is not None else None
+                    except Exception:
+                        mid = None
+                    nudges_ctx.append({
+                        'title': it.get('label') or 'Nudge',
+                        'metric_id': mid,
+                        'description': (it.get('meta') or {}).get('description') if isinstance(it.get('meta'), dict) else None,
+                    })
+
+                gen_ctx = {
+                    'role_profile': {},  # Optional in dev
+                    'framework_focus': ({'id': framework_obj.id, 'name': framework_obj.name, 'slug': framework_obj.slug} if framework_obj else {}),
+                    'target_outcome': ({'id': outcome_obj.id, 'name': outcome_obj.name} if outcome_obj else {}),
+                    'drivers': drivers_ctx,
+                    'nudges': nudges_ctx,
+                    'proficiency': {},  # Optional; could be wired from /api/proficiency later
+                }
+
+                # Build ReportConfig and generate
+                config = ReportConfig(
+                    title=title,
+                    template_type='final_plan',
+                    selected_outcomes=([int(outcome_obj.id)] if outcome_obj else []),
+                    selected_metrics=selected_metric_ids,
+                    ai_recommendations=[],
+                    session_id=session.get('admin_username') or session.get('session_id') or 'dev',
+                    generation_context=gen_ctx,
+                )
+                generator = DynamicReportGenerator()
+                report = generator.generate_report(config)
+
+                # Compute a download URL from the PDF path
+                pdf_path = getattr(report, 'pdf_path', None) or ''
+                download_url = None
+                try:
+                    # Expecting path like .../ld-metrics-translator/app/static/reports/filename.pdf
+                    if pdf_path and 'static' in pdf_path.replace('\\','/'):
+                        idx = pdf_path.replace('\\','/').split('/static/', 1)
+                        if len(idx) == 2:
+                            download_url = '/static/' + idx[1]
+                except Exception:
+                    download_url = None
+
+                jobs[job_id] = {
+                    'status': 'completed',
+                    'progress': 100,
+                    'created': datetime.utcnow().isoformat() + 'Z',
+                    'download_url': download_url or '/sample.pdf',
+                    'report_id': getattr(report, 'id', None),
+                }
+        except Exception as e:
+            # Fall back to mock progression if backend generation fails
+            jobs[job_id] = {
+                'status': 'running',
+                'progress': 0,
+                'created': datetime.utcnow().isoformat() + 'Z',
+                'error': str(e),
+            }
+    # Save job state
+    session["report_jobs"] = jobs
     session.modified = True
     return jsonify({"job_id": job_id})
 
 
-@app.route("/api/dynamic-reports/<job_id>/status", methods=["GET"])
+@app.route("/api/dynamic-reports/<job_id>/status", methods=["GET"]) 
 def api_dynamic_report_status(job_id):
+    # Clean up stale jobs before reporting status
+    _cleanup_stale_report_jobs(max_age_seconds=3600)
     # Live path: proxy (supports {job_id} replacement)
     if not MOCKS_ENABLED and DYNAMIC_REPORTS_STATUS_UPSTREAM:
         try:
@@ -1548,21 +1753,27 @@ def api_dynamic_report_status(job_id):
                 return jsonify(__import__('json').loads(resp.read().decode('utf-8')))
         except Exception as e:
             return jsonify({"error": "upstream_unavailable", "detail": str(e)}), 502
+    # Clean up stale jobs before reporting status
+    _cleanup_stale_report_jobs(max_age_seconds=3600)
     # Mock status
     jobs = session.get("report_jobs", {})
     job = jobs.get(job_id)
     if not job:
         return jsonify({"error": "not found"}), 404
-    # Simulate progress over ~6 seconds
-    elapsed = max(0, datetime.utcnow().timestamp() - job.get("started", 0))
-    progress = min(100, int((elapsed / 6.0) * 100))
-    if progress >= 100:
-        job["status"] = "completed"
-    status = job.get("status")
+    # If real job info present, return it; otherwise simulate progress
+    status = (job.get("status") or "running").lower()
+    progress = int(job.get("progress") or 0)
+    download_url = job.get("download_url")
+    if status != 'completed' and progress < 100:
+        # Simulate progress over ~6 seconds when running
+        elapsed = max(0, datetime.utcnow().timestamp() - job.get("started", 0))
+        progress = min(100, int((elapsed / 6.0) * 100))
+        if progress >= 100:
+            status = 'completed'
     resp = {
         "status": status,
         "progress": 100 if status == "completed" else progress,
-        "download_url": "/sample.pdf",
+        "download_url": download_url or "/sample.pdf",
         "title": job.get("title"),
     }
     # save back

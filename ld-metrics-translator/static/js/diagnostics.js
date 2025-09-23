@@ -21,6 +21,53 @@
           p.classList.remove('active');
           p.setAttribute('hidden', '');
         }
+
+  // Intercept analyze-event responses to keep GAP_lastAnalysis in sync
+  let fetchPatched = false;
+  function setupAnalyzeInterceptor(){
+    if(fetchPatched || typeof window === 'undefined' || !window.fetch) return;
+    const origFetch = window.fetch.bind(window);
+    window.fetch = async function(input, init){
+      const url = typeof input === 'string' ? input : (input && input.url);
+      const isAnalyze = url && url.includes('/analyze-event') && (init?.method === 'POST' || (input && input.method === 'POST'));
+      const res = await origFetch(input, init);
+      try{
+        if(isAnalyze){
+          const clone = res.clone();
+          const data = await clone.json().catch(()=>null);
+          if(data && data.analysis){
+            GAP_lastAnalysis = data.analysis;
+            const ta = document.getElementById('event-description');
+            GAP_lastInput = ta ? ta.value : (GAP_lastInput || '');
+            // Render and toggle visibility based on role
+            renderGapReport();
+            let hasRole = !!(GAP_selectedRole && GAP_selectedRole.id);
+            if(!hasRole){
+              const selEl = document.getElementById('diag-role-select');
+              const val = selEl && selEl.value ? String(selEl.value).trim() : '';
+              hasRole = !!val;
+            }
+            const results = document.getElementById('analysis-results');
+            const gapCard = document.getElementById('gap-report-card');
+            if(hasRole){
+              try{ document.body.setAttribute('data-gap-active','1'); }catch{}
+              if(gapCard) gapCard.style.display='';
+              if(results) results.style.display='none';
+            } else {
+              try{ document.body.setAttribute('data-gap-active','0'); }catch{}
+              if(gapCard) gapCard.style.display='none';
+              if(results) results.style.display='block';
+            }
+            // sync states
+            try { syncPlanButtonsState(); } catch {}
+            try { renderPlanMiniSidebar(); } catch {}
+          }
+        }
+      }catch(_){ /* ignore */ }
+      return res;
+    };
+    fetchPatched = true;
+  }
   function syncPlanButtonsState(root){
     const scope = root || document;
     const btns = scope.querySelectorAll('button[data-action="add-plan"]');
@@ -190,6 +237,15 @@
     if(!card || !headerEl || !diagEl || !causesEl || !recsEl || !footerEl) return;
 
     // Only show this report when a role is selected AND we have an analysis based on user input
+    if(!GAP_selectedRole || !GAP_selectedRole.id){
+      // Fallback: use the current selection from the dropdown if present
+      const selEl = document.getElementById('diag-role-select');
+      const val = selEl && selEl.value ? String(selEl.value).trim() : '';
+      if(val){
+        const num = parseInt(val, 10);
+        GAP_selectedRole = { id: isNaN(num) ? val : num };
+      }
+    }
     if(!GAP_selectedRole || !GAP_selectedRole.id){
       card.style.display = 'none';
       try{ document.body.setAttribute('data-gap-active','0'); }catch{}
@@ -591,10 +647,17 @@
             }
             // Update GAP report footer/source and sections
             renderGapReport();
-            // Only show the default analysis block if no role is selected
-            if (results) {
-              const hasRole = !!(GAP_selectedRole && GAP_selectedRole.id);
-              results.style.display = hasRole ? 'none' : 'block';
+            // Decide which report to show based on role presence
+            const hasRole = !!(GAP_selectedRole && GAP_selectedRole.id);
+            const gapCard = document.getElementById('gap-report-card');
+            if (hasRole) {
+              try { document.body.setAttribute('data-gap-active','1'); } catch {}
+              if (gapCard) gapCard.style.display = '';
+              if (results) results.style.display = 'none';
+            } else {
+              try { document.body.setAttribute('data-gap-active','0'); } catch {}
+              if (gapCard) gapCard.style.display = 'none';
+              if (results) results.style.display = 'block';
             }
             // Also ensure plan button states reflect saved selections
             try { syncPlanButtonsState(); } catch {}
@@ -650,6 +713,10 @@
 
   // Initial hydrate of sidebar on load
   try { renderPlanMiniSidebar(); } catch {}
+
+  // Ensure default state for gap-active on load and set up fetch interceptor
+  try { document.body.setAttribute('data-gap-active','0'); } catch {}
+  try { setupAnalyzeInterceptor(); } catch {}
 
   if(document.readyState === 'loading'){
     document.addEventListener('DOMContentLoaded', init);
