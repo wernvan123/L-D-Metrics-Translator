@@ -10,7 +10,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=20250918-2">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=20250924-1">
     {% block page_styles %}{% endblock %}
 </head>
 <body>
@@ -33,6 +33,17 @@
                         <a href="{{ url_for('main.playbook') }}" class="nav-link{% if request.path.startswith(url_for('main.playbook')) %} active{% endif %}">Playbook</a>
                         <a href="{{ url_for('main.plan_builder') }}" class="nav-link{% if request.path.startswith(url_for('main.plan_builder')) %} active{% endif %}">Plan Builder</a>
                     </div>
+                    {% else %}
+                    <ul class="nav-links">
+                        <li><a href="{{ url_for('main.dashboard') }}" class="nav-link{% if request.path == url_for('main.dashboard') %} active{% endif %}">Dashboard</a></li>
+                        <li><a href="{{ url_for('main.diagnostics') }}" class="nav-link{% if request.path.startswith(url_for('main.diagnostics')) %} active{% endif %}">Diagnostics</a></li>
+                        {% if is_admin %}
+                        <li><a href="{{ url_for('main.roles') }}" class="nav-link{% if request.path.startswith('/roles') %} active{% endif %}">Role Architect</a></li>
+                        {% endif %}
+                        <li><a href="{{ url_for('main.reports') }}" class="nav-link{% if request.path.startswith('/reports') %} active{% endif %}">Reports</a></li>
+                        <li><a href="{{ url_for('main.playbook') }}" class="nav-link{% if request.path.startswith(url_for('main.playbook')) %} active{% endif %}">Playbook</a></li>
+                        <li><a href="{{ url_for('main.plan_builder') }}" class="nav-link{% if request.path.startswith(url_for('main.plan_builder')) %} active{% endif %}">Plan Builder</a></li>
+                    </ul>
                     {% endif %}
                 </div>
                 <div class="nav-utility">

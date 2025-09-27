@@ -227,6 +227,18 @@ def dev_login_alias():
     return redirect('/admin/login')
 
 
+@app.route('/admin/')
+def dev_admin_root():
+    """Provide a landing route for /admin/ in the dev server.
+
+    Redirect signed-in admins to the admin roles list; otherwise send users to the
+    lightweight dev login form. This avoids a 404 when hitting /admin/ directly.
+    """
+    if session.get('admin_user_id') or session.get('is_admin'):
+        return redirect('/admin/roles')
+    return redirect('/admin/login')
+
+
 @app.route('/admin/logout')
 def dev_admin_logout():
     session.pop('admin_user_id', None)

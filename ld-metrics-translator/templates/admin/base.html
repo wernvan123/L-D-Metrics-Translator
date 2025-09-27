@@ -151,6 +151,14 @@
                                 <i class="bi bi-diagram-3"></i>Frameworks
                             </a>
                         </li>
+                        {% if DRIVER_CARDS_V1 %}
+                        <li class="nav-item">
+                            <a class="nav-link {% if 'driver_cards' in request.endpoint %}active{% endif %}"
+                               href="{{ url_for('admin.driver_cards') }}">
+                                <i class="bi bi-collection"></i>Driver Cards
+                            </a>
+                        </li>
+                        {% endif %}
                         <li class="nav-item">
                             <a class="nav-link {% if 'outcomes' in request.endpoint %}active{% endif %}" 
                                href="{{ url_for('admin.outcomes') }}">
@@ -260,26 +268,6 @@
             const itemName = $(this).data('item-name') || 'this item';
             showConfirmation(`Are you sure you want to delete "${itemName}"? This action cannot be undone.`, function() {
                 form.submit();
-            });
-        });
-
-        // Initialize DataTables
-        $(document).ready(function() {
-            $('.data-table').DataTable({
-                responsive: true,
-                pageLength: 25,
-                order: [[0, 'asc']],
-                language: {
-                    search: "Search:",
-                    lengthMenu: "Show _MENU_ entries",
-                    info: "Showing _START_ to _END_ of _TOTAL_ entries",
-                    paginate: {
-                        first: "First",
-                        last: "Last",
-                        next: "Next",
-                        previous: "Previous"
-                    }
-                }
             });
         });
 

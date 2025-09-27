@@ -20,6 +20,10 @@
 .header .nav-left { display: flex; align-items: center; gap: 16px; }
 .header .nav-brand { font-weight: 700; text-decoration: none; color: #2d3748; }
 .header .nav-tabs-inline { display: inline-flex; gap: 14px; }
+.header .nav-links { list-style: none; display: inline-flex; gap: 14px; margin: 0; padding: 0; }
+.header .nav-links .nav-link { text-decoration: none; color: inherit; padding: 6px 10px; border-radius: 6px; transition: background 0.2s ease; }
+.header .nav-links .nav-link:hover,
+.header .nav-links .nav-link.active { background: rgba(76, 110, 245, 0.1); color: #4c6ef5; }
 .header .nav-tabs-inline .nav-link { text-decoration: none; color: #2d3748; padding: 6px 10px; border-radius: 999px; transition: background .15s ease, color .15s ease; }
 .header .nav-tabs-inline .nav-link:hover { background: #eef3ff; color: #2f57b2; }
 /* Active page pill */
@@ -1698,7 +1702,11 @@ border-bottom: 1px solid rgba(255, 255, 255, 0.2);
 .context-breadcrumb .step-arrow { display: none !important; }
 
 /* If any arrow separators are wrapped in .sep elements, hide them */
-.breadcrumbs .sep, .workflow .sep { display: none !important; }
+.breadcrumbs .sep, .workflow .sep {
+  display: inline-block;
+  margin: 0 8px;
+  color: #7c8a99;
+}
 
 /* --- Driver Cards: Tag Chips & Active Tags Bar --- */
 .tag-chips {
@@ -14019,6 +14027,19 @@ html {
     max-width: 900px;
 }
 
+.driver-card--grid {
+    max-width: none;
+    box-shadow: 0 4px 16px rgba(15, 23, 42, 0.08);
+}
+.driver-card--grid .dc-actions {
+    justify-content: space-between;
+}
+.driver-card--grid .dc-actions .btn-link {
+    color: #1d4ed8;
+    background: transparent;
+    padding: 8px 10px;
+}
+
 /* colorful tabs on the right edge */
 .driver-card::after,
 .driver-card::before {
@@ -14092,6 +14113,44 @@ html {
 .dc-stage .dc-stage-icon { font-size: 18px; display: inline-flex; align-items: center; margin-right: 6px; }
 .dc-stage-list { margin: 0; padding-left: 14px; color: #475569; font-size: 13px; }
 .dc-arrow { color: #94a3b8; font-weight: 700; }
+.dc-chain.dc-vertical {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+}
+.dc-chain.dc-vertical .dc-arrow {
+    display: none;
+}
+.dc-chain.dc-vertical .dc-stage {
+    width: 100%;
+}
+.dc-chain.dc-vertical .dc-stage-list {
+    list-style: none;
+    margin: 0;
+    padding-left: 0;
+}
+.dc-chain.dc-vertical .dc-stage-list li {
+    background: #f1f5f9;
+    border-radius: 8px;
+    padding: 6px 10px;
+    margin-top: 6px;
+    color: #1f2937;
+    display: flex;
+    flex-wrap: wrap;
+}
+.dc-chain.dc-vertical .dc-stage-list li:first-child {
+    margin-top: 0;
+}
+.dc-chain .dc-stage-list .dc-more {
+    background: #e2e8f0;
+    color: #475569;
+    font-weight: 600;
+}
+.dc-chain .dc-stage-list .dc-empty {
+    background: #f8fafc;
+    color: #94a3b8;
+    font-style: italic;
+}
 
 /* Classification */
 .dc-class { margin-top: 6px; }
@@ -14139,6 +14198,29 @@ html {
 .dc-neuro { background: #f8fafc; border: 1px dashed #dbe4f0; border-radius: 10px; padding: 10px 12px; margin: 8px 0; }
 .dc-neuro .dc-label { font-weight: 700; font-size: 13px; color: #1f2937; margin-bottom: 4px; }
 .dc-neuro-text { color: #475569; font-size: 13px; }
+
+.dc-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 6px 0 8px;
+}
+.dc-tags .tag-chip {
+    border: 1px solid #cbd5f5;
+    background: #eef2ff;
+    color: #1d4ed8;
+    font-weight: 600;
+    padding: 6px 12px;
+    border-radius: 999px;
+    cursor: pointer;
+    font-size: 12px;
+}
+.dc-tags .tag-chip:hover {
+    background: #e0e7ff;
+}
+.dc-tags .tag-chip--static {
+    cursor: default;
+}
 
 /* Compact variant for grid cards */
 .metric-card .dc-chain.dc-compact {

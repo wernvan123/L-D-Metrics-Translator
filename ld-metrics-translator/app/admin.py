@@ -1,3 +1,30 @@
+REQUIRED_DRIVER_CARD_METRIC_TYPES = {
+    'Behavioral Observation': 'Direct observation of behaviors linked to the driver.',
+    'Self-Assessment/Survey': 'Self-reported ratings or survey responses.',
+    'Peer/360 Feedback': 'Feedback collected from peers or 360 assessments.',
+    'Objective KPI': 'Objective key performance indicators collected from systems.',
+    'Output/Deliverable Quality': 'Quality checks on deliverables or outputs.',
+    'Formal Assessment/Test': 'Standardized or formal assessments and tests.'
+}
+
+
+def ensure_required_metric_types():
+    existing = {mt.name: mt for mt in MetricType.query.filter(MetricType.name.in_(REQUIRED_DRIVER_CARD_METRIC_TYPES.keys())).all()}
+    created = []
+    for name, description in REQUIRED_DRIVER_CARD_METRIC_TYPES.items():
+        if name in existing:
+            continue
+        metric_type = MetricType(name=name, description=description)
+        db.session.add(metric_type)
+        created.append(metric_type)
+    if created:
+        db.session.commit()
+        names = ', '.join(mt.name for mt in created)
+        try:
+            log_admin_action('AUTO_CREATE_METRIC_TYPES', f'Created missing driver card metric types: {names}')
+        except Exception:
+            pass
+
 from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify, session, current_app
 from flask_wtf import FlaskForm, CSRFProtect
 from flask_wtf.file import FileField, FileAllowed
@@ -418,6 +445,27 @@ def delete_framework(id):
     log_admin_action('DELETE_FRAMEWORK', f'Deleted framework: {name}')
     flash('Framework deleted successfully!', 'success')
     return redirect(url_for('admin.frameworks'))
+
+# Driver Cards management
+@admin.route('/driver-cards')
+@admin_required
+def driver_cards():
+    if not current_app.config.get('DRIVER_CARDS_V1'):
+        flash('Driver Cards feature flag is disabled. Enable DRIVER_CARDS_V1 to manage Driver Cards.', 'warning')
+        return redirect(url_for('admin.dashboard'))
+
+    # Ensure the required metric types exist before rendering the form
+    ensure_required_metric_types()
+
+    outcomes = LDOutcome.query.order_by(LDOutcome.name).all()
+    metric_types = MetricType.query.order_by(MetricType.name).all()
+    frameworks = Framework.query.order_by(Framework.name).all()
+    return render_template(
+        'admin/driver_cards.html',
+        outcomes=outcomes,
+        metric_types=metric_types,
+        frameworks=frameworks,
+    )
 
 # Competencies management
 @admin.route('/frameworks/<int:framework_id>/competencies')

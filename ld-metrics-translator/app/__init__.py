@@ -1,4 +1,4 @@
-from flask import Flask, request, make_response
+from flask import Flask, request, make_response, session
 import os
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
@@ -106,6 +106,7 @@ def create_app(config_name='default'):
             'UI_TABS_V2': bool(cfg.get('UI_TABS_V2')),
             'HOME_HERO_V2': bool(cfg.get('HOME_HERO_V2')),
             'DRIVER_CARDS_V1': bool(cfg.get('DRIVER_CARDS_V1')),
+            'is_admin': bool(session.get('admin_user_id')),
         }
     
     # Ensure DB connections are cleaned up (important for Windows file locks)

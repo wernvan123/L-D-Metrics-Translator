@@ -1,0 +1,265 @@
+{% extends "admin/base.html" %}
+
+{% block title %}Driver Cards{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/choices.js/public/assets/styles/choices.min.css">
+<style>
+  .driver-cards-actions {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1.5rem;
+  }
+  .driver-cards-actions .btn {
+    min-width: 140px;
+  }
+  #driver-cards-table_wrapper .row {
+    width: 100%;
+  }
+  .modal.show {
+    display: block;
+  }
+  .modal .form-label {
+    font-weight: 600;
+  }
+  .modal .modal-body {
+    max-height: 70vh;
+    overflow-y: auto;
+  }
+  .badge-kind {
+    text-transform: capitalize;
+  }
+  .required-label::after {
+    content: ' *';
+    color: #e74c3c;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <div>
+    <h1 class="h3 mb-0">Driver Cards</h1>
+    <p class="text-muted mb-0">Create, edit, and retire driver cards that power the Playbook and diagnostics experiences.</p>
+  </div>
+  <div>
+    <button id="dc-refresh" class="btn btn-outline-secondary me-2">
+      <i class="bi bi-arrow-clockwise me-1"></i>Refresh
+    </button>
+    <button id="dc-add" class="btn btn-primary">
+      <i class="bi bi-plus-lg me-1"></i>Add Driver Card
+    </button>
+  </div>
+</div>
+
+<div id="dc-alert" class="alert alert-dismissible fade show" role="alert" style="display:none;">
+  <span id="dc-alert-message"></span>
+  <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+</div>
+<div class="card">
+  <div class="card-body">
+    <div class="table-responsive">
+      <table id="driver-cards-table" class="table table-striped" style="width:100%">
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Type</th>
+            <th>L&D Outcome</th>
+            <th>Metric Types</th>
+            <th>Data Collection</th>
+            <th>Frequency</th>
+            <th>Identifier</th>
+            <th>Tags</th>
+            <th>Status</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- Create / Edit Modal -->
+<div class="modal fade" id="driverCardModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="driverCardModalLabel">Add Driver Card</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <form id="driver-card-form">
+          <input type="hidden" id="dc-id" name="id" />
+          <div class="mb-3">
+            <label for="dc-name" class="form-label required-label">Name</label>
+            <input type="text" class="form-control" id="dc-name" name="name" required maxlength="200" />
+          </div>
+          <div class="mb-3">
+            <label for="dc-description" class="form-label required-label">Description</label>
+            <textarea class="form-control" id="dc-description" name="description" rows="3" required></textarea>
+          </div>
+          <div class="row g-3">
+            <div class="col-md-4">
+              <label for="dc-outcome" class="form-label required-label">L&D Outcome <small class="text-muted">(What strategic business goal does this driver belong to?)</small></label>
+              <select id="dc-outcome" class="form-select" name="outcome_id" required>
+                <option value="">Select an outcome</option>
+                {% for outcome in outcomes %}
+                  <option value="{{ outcome.id }}">{{ outcome.name }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="col-md-4">
+              <label for="dc-metric-type" class="form-label required-label">Metric Type(s)</label>
+              {% set allowed_metric_types = [
+                'Behavioral Observation',
+                'Self-Assessment/Survey',
+                'Peer/360 Feedback',
+                'Objective KPI',
+                'Output/Deliverable Quality',
+                'Formal Assessment/Test'
+              ] %}
+              <select id="dc-metric-type" class="form-select" name="metric_type_ids" multiple required>
+                {% for metric_type in metric_types if metric_type.name in allowed_metric_types %}
+                  <option value="{{ metric_type.id }}">{{ metric_type.name }}</option>
+                {% endfor %}
+              </select>
+              <div class="form-text">Select one or more measurement approaches. The first selected type will be stored as the primary metric type.</div>
+              {% if metric_types | selectattr('name', 'in', allowed_metric_types) | list | length == 0 %}
+                <div class="form-text text-warning">No allowed metric types found. Update the Metric Types list to include the approved options.</div>
+              {% endif %}
+            </div>
+            <div class="col-md-4">
+              <label for="dc-frameworks" class="form-label">Framework(s)</label>
+              <div class="framework-picker">
+                <div class="input-group mb-2">
+                  <span class="input-group-text"><i class="bi bi-search"></i></span>
+                  <input type="text" id="dc-framework-search" class="form-control" placeholder="Search frameworks…" autocomplete="off">
+                </div>
+                <div id="dc-framework-suggestions" class="list-group small shadow-sm d-none"></div>
+                <div id="dc-framework-chips" class="d-flex flex-wrap gap-2 mt-2"></div>
+                <select id="dc-frameworks" class="form-select d-none" name="framework_ids" multiple>
+                  {% for framework in frameworks %}
+                    <option value="{{ framework.id }}">{{ framework.name }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+              <div class="form-text">Tag the driver card to one or more frameworks for quick filtering in diagnostics.</div>
+            </div>
+          </div>
+          <div class="row g-3 mt-1">
+            <div class="col-md-6">
+              <label for="dc-data-collection" class="form-label">How is the data collected?</label>
+              <textarea class="form-control" id="dc-data-collection" rows="2" placeholder="e.g., Manager observation checklist or LMS analytics"></textarea>
+            </div>
+            <div class="col-md-6">
+              <label for="dc-frequency" class="form-label">Frequency</label>
+              <select id="dc-frequency" class="form-select">
+                <option value="">Select frequency</option>
+                <option value="Daily">Daily</option>
+                <option value="Weekly">Weekly</option>
+                <option value="Monthly">Monthly</option>
+                <option value="Quarterly">Quarterly</option>
+                <option value="Annually">Annually</option>
+                <option value="Ad hoc">Ad hoc</option>
+              </select>
+            </div>
+          </div>
+          <div class="row g-3 mt-1">
+            <div class="col-md-6">
+              <label for="dc-kind" class="form-label">Kind</label>
+              <select id="dc-kind" class="form-select" name="kind">
+                <option value="driver">Driver</option>
+                <option value="bias">Bias</option>
+                <option value="heuristic">Heuristic</option>
+              </select>
+            </div>
+            <div class="col-md-6">
+              <label for="dc-identifier" class="form-label">Identifier Type</label>
+              <select id="dc-identifier" class="form-select" name="identifier_type">
+                <option value="concept">Concept</option>
+                <option value="behavior">Behavior</option>
+                <option value="kpi">KPI</option>
+                <option value="outcome">Outcome</option>
+              </select>
+            </div>
+          </div>
+          <div class="row g-3 mt-1">
+            <div class="col-md-6">
+              <label for="dc-tags" class="form-label">Tags (comma separated)</label>
+              <input type="text" class="form-control" id="dc-tags" name="tags" placeholder="growth mindset, leadership" />
+            </div>
+            <div class="col-md-6">
+              <label for="dc-biases" class="form-label">Related Biases (comma separated)</label>
+              <input type="text" class="form-control" id="dc-biases" name="related_biases" placeholder="Confirmation Bias" />
+            </div>
+          </div>
+          <div class="row g-3 mt-1">
+            <div class="col-md-6">
+              <label for="dc-nudges" class="form-label">Related Nudges (comma separated)</label>
+              <input type="text" class="form-control" id="dc-nudges" name="related_nudges" placeholder="Feedback Loop Nudge" />
+            </div>
+            <div class="col-md-6">
+              <label for="dc-status" class="form-label">Status</label>
+              <select id="dc-status" class="form-select" name="is_active">
+                <option value="true">Active</option>
+                <option value="false">Inactive</option>
+              </select>
+            </div>
+          </div>
+          <div class="mt-3">
+            <label class="form-label">Driver Chain</label>
+            <div class="row g-3">
+              <div class="col-md-6">
+                <label for="dc-chain-drives" class="form-label">Drivers / Behaviors</label>
+                <textarea class="form-control" id="dc-chain-drives" rows="3" placeholder="Add comma separated drivers"></textarea>
+              </div>
+              <div class="col-md-6">
+                <label for="dc-chain-kpis" class="form-label">KPIs / Measurements</label>
+                <textarea class="form-control" id="dc-chain-kpis" rows="3" placeholder="Add comma separated KPIs"></textarea>
+              </div>
+            </div>
+            <div class="row g-3 mt-2">
+              <div class="col-md-12">
+                <label for="dc-chain-outcomes" class="form-label">Outcomes</label>
+                <textarea class="form-control" id="dc-chain-outcomes" rows="3" placeholder="Add comma separated outcomes"></textarea>
+              </div>
+            </div>
+            <input type="hidden" id="dc-chain" name="driver_chain">
+            <div class="form-text">We’ll convert your entries into the driver chain JSON automatically.</div>
+          </div>
+        </form>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-primary" id="dc-save">Save Driver Card</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Delete confirmation modal -->
+<div class="modal fade" id="driverCardDeleteModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Delete Driver Card</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <p class="mb-0">Are you sure you want to delete <strong id="dc-delete-name"></strong>? You can reactivate it later from the edit dialog.</p>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-danger" id="dc-confirm-delete">Delete</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/choices.js/public/assets/scripts/choices.min.js"></script>
+<script src="{{ url_for('static', filename='js/admin-driver-cards.js') }}?v=20250924"></script>
+{% endblock %}

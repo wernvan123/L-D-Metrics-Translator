@@ -100,23 +100,45 @@
       }catch{ return null; }
     }
 
+    function resolveArray(data, preferredKey){
+      if(Array.isArray(data)) return data;
+      if(data && Array.isArray(data.items)) return data.items;
+      if(preferredKey && data && Array.isArray(data[preferredKey])) return data[preferredKey];
+      const fallbackKeys = ['results', 'data', 'records', 'entries'];
+      if(data && typeof data === 'object'){
+        for(const key of fallbackKeys){
+          if(Array.isArray(data[key])) return data[key];
+        }
+      }
+      return [];
+    }
+
+    function resolveCount(data, preferredKey){
+      if(Array.isArray(data)) return data.length;
+      if(data && typeof data.count === 'number') return data.count;
+      const arr = resolveArray(data, preferredKey);
+      if(arr.length) return arr.length;
+      if(preferredKey && data && typeof data[preferredKey] === 'number') return data[preferredKey];
+      return 0;
+    }
+
     async function updateFrameworks(){
       const data = await fetchJson('/api/frameworks');
-      const items = data && Array.isArray(data.items) ? data.items : (Array.isArray(data) ? data : []);
+      const count = resolveCount(data, 'frameworks');
       const el = document.getElementById('key-frameworks-count');
-      if(el) el.textContent = String(items.length || 0);
+      if(el) el.textContent = String(count);
     }
 
     async function updateMetrics(){
       const data = await fetchJson('/api/metrics');
-      const items = data && Array.isArray(data.items) ? data.items : (Array.isArray(data) ? data : []);
+      const items = resolveArray(data, 'metrics');
       const el = document.getElementById('key-metrics-count');
       if(el) el.textContent = String(items.length || 0);
     }
 
     async function updateOutcomes(){
       const data = await fetchJson('/api/outcomes');
-      const items = data && Array.isArray(data.items) ? data.items : (Array.isArray(data) ? data : []);
+      const items = resolveArray(data, 'outcomes');
       const el = document.getElementById('key-outcomes-count');
       if(el) el.textContent = String(items.length || 0);
     }

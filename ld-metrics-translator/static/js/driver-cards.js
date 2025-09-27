@@ -1,3 +1,8 @@
+  const renderer = window.DriverCardRenderer;
+  if(!renderer){
+    console.error('DriverCardRenderer is required for driver-cards.js');
+  }
+
   // --- Mini Modal for quick nudge/concept preview ---
   function ensureMiniModal(){
     let modal = document.getElementById('dc-mini-modal');
@@ -20,7 +25,7 @@
       const d = await res.json();
       const list = d.metrics || d.items || [];
       const m = list.find(x => (x.name||'').toLowerCase() === String(name).toLowerCase()) || list[0];
-      return m || null;
+      return m ? renderer.normalize(m) : null;
     }catch{ return null; }
   }
 
@@ -29,23 +34,29 @@
     const body = mm.querySelector('.mini-body');
     body.innerHTML = '<div class="loading-spinner"></div><p>Loading…</p>';
     mm.classList.add('open');
-    const m = await fetchByNameForPreview(name);
+    const card = await fetchByNameForPreview(name);
+    if(!card){
+      body.innerHTML = `<div class="no-data-message"><div class="no-data-icon">⚠️</div><p>Could not find a card named "${name}"</p></div>`;
+      return;
+    }
     body.innerHTML = '';
-    const title = document.createElement('div'); title.className = 'mini-title'; title.textContent = name;
-    const desc = document.createElement('div'); desc.className = 'mini-desc'; desc.textContent = (m && m.description) ? m.description : '';
-    const actions = document.createElement('div'); actions.className = 'mini-actions';
-    const link = document.createElement('a'); link.className = 'btn btn-outline'; link.textContent = 'Open in Nudge Library'; link.href = `/playbook?kind=nudge&q=${encodeURIComponent(name)}`;
-    const add = document.createElement('button'); add.className = 'btn btn-primary'; add.textContent = 'Add to Plan';
-    add.addEventListener('click', async ()=>{
-      add.disabled = true; const prev = add.textContent; add.textContent = 'Adding…';
-      try{
-        const res = await fetch('/api/context/plan/items',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ kind: (kindHint||'driver'), label: name, source_id: m?.id || null, source_page: 'playbook-mini' })});
-        if(!res.ok) throw new Error('HTTP '+res.status);
-        add.textContent = 'Added!'; setTimeout(()=>{ add.textContent = 'In Plan'; add.classList.add('btn-secondary'); }, 600);
-      }catch{ add.textContent = prev; add.disabled = false; }
+    renderer.render(body, card, {
+      renderActions: (container, normalized) => {
+        const view = document.createElement('a');
+        view.className = 'btn btn-outline';
+        view.textContent = 'View in Playbook';
+        view.href = `/playbook?q=${encodeURIComponent(normalized.name || '')}`;
+        container.appendChild(view);
+        const add = document.createElement('button');
+        add.className = 'btn btn-primary';
+        add.textContent = 'Add to Plan';
+        add.addEventListener('click', () => addToPlan(normalized.kind || kindHint || 'driver', normalized.name, normalized.id, {}));
+        container.appendChild(add);
+      },
+      onItemClick: (label) => openMiniPreviewByName(label),
+      onBiasClick: (label) => openMiniPreviewByName(label, 'bias'),
+      onNudgeClick: (label) => openMiniPreviewByName(label, 'nudge')
     });
-    actions.appendChild(link); actions.appendChild(add);
-    body.appendChild(title); body.appendChild(desc); body.appendChild(actions);
   }
 (function(){
   const api = {
@@ -142,16 +153,22 @@
     bar.appendChild(clearBtn);
   }
 
-  function skeleton(count=8){
+  function skeleton(count=6){
     const frag = document.createDocumentFragment();
     for(let i=0;i<count;i++){
-      const div = document.createElement('div');
-      div.className = 'metric-card skeleton';
-      div.innerHTML = `
-        <div class="metric-header"><div class="metric-title sk-line"></div></div>
-        <div class="metric-content"><div class="sk-line"></div><div class="sk-line short"></div></div>
+      const wrapper = document.createElement('div');
+      wrapper.className = 'metric-card playbook-card skeleton';
+      wrapper.innerHTML = `
+        <div class="driver-card">
+          <div class="dc-header">
+            <div class="sk-line sk-title"></div>
+            <div class="sk-pill"></div>
+          </div>
+          <div class="sk-line sk-text"></div>
+          <div class="sk-block"></div>
+        </div>
       `;
-      frag.appendChild(div);
+      frag.appendChild(wrapper);
     }
     return frag;
   }

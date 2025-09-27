@@ -1,6 +1,6 @@
 from functools import wraps
 from flask import Blueprint, jsonify, request, session, current_app, abort
-from app.models import AdminUser, Metric, LDOutcome, MetricType, ReportTemplate, DynamicReport, ReportAnalytics, Framework, Competency, UserSession
+from app.models import AdminUser, Metric, LDOutcome, MetricType, ReportTemplate, DynamicReport, ReportAnalytics, Framework, Competency, UserSession, competency_metrics
 from app.models import RoleProfile, RoleKnowledge, RoleSkill, RoleAbility, RoleOtherRequirement, RoleCompetencyTarget, RoleAssignment
 from app import db
 from app.ollama_integration import recommendation_engine, report_generator, event_analyzer
@@ -429,31 +429,57 @@ def _load_driver_mapping():
 
 def _metric_to_driver_card(metric, mapping):
     mid = str(metric.id)
-    kind = (mapping.get('kinds', {}).get(mid) or 'driver').lower()
-    tags = mapping.get('tags', {}).get(mid) or []
-    biases = mapping.get('biases', {}).get(mid) or []
-    nudges = mapping.get('nudges', {}).get(mid) or []
+    raw_chain = _parse_driver_chain(getattr(metric, 'driver_chain', None)) or {}
+    if not isinstance(raw_chain, dict):
+        raw_chain = {}
+
+    # Extract optional metadata stored within driver_chain._meta
+    meta = raw_chain.get('_meta') if isinstance(raw_chain.get('_meta'), dict) else {}
+    stage_data = {k: v for k, v in raw_chain.items() if k != '_meta'}
+
+    kind = (mapping.get('kinds', {}).get(mid) or meta.get('kind') or 'driver').lower()
+    tags = mapping.get('tags', {}).get(mid) or meta.get('tags') or []
+    biases = mapping.get('biases', {}).get(mid) or meta.get('related_biases') or []
+    nudges = mapping.get('nudges', {}).get(mid) or meta.get('related_nudges') or []
+    additional_metric_types = meta.get('additional_metric_types') or []
+    additional_metric_type_ids = meta.get('additional_metric_type_ids') or []
+    data_collection = meta.get('data_collection') or getattr(metric, 'data_collection', None)
+    frequency = meta.get('frequency') or getattr(metric, 'frequency', None)
+
+    frameworks = []
+    try:
+        seen_fw = set()
+        for comp in getattr(metric, 'competencies', []) or []:
+            fw = getattr(comp, 'framework', None)
+            if fw and fw.id not in seen_fw:
+                frameworks.append({'id': fw.id, 'name': fw.name})
+                seen_fw.add(fw.id)
+    except Exception:
+        pass
+
     # Built-in fallbacks by name (no external files required)
     try:
         name_lower = (metric.name or '').strip().lower()
-        if not nudges:
-            if name_lower == 'growth mindset':
-                nudges = [
-                    'Feedback Loop Nudge',
-                    'Challenge Assignment Nudge',
-                ]
-        if not biases:
-            if name_lower == 'growth mindset':
-                biases = [
-                    'Fixed Mindset Bias'
-                ]
+        if not nudges and name_lower == 'growth mindset':
+            nudges = [
+                'Feedback Loop Nudge',
+                'Challenge Assignment Nudge',
+            ]
+        if not biases and name_lower == 'growth mindset':
+            biases = [
+                'Fixed Mindset Bias'
+            ]
     except Exception:
         pass
+
+    driver_chain = _build_driver_chain_stages(stage_data, metric.identifier_type)
+
     return {
         'id': metric.id,
         'name': metric.name,
         'description': metric.description,
         'example': getattr(metric, 'example', None),
+        'identifier_type': metric.identifier_type,
         'outcome': {
             'id': metric.outcome.id if metric.outcome else None,
             'name': metric.outcome.name if metric.outcome else None,
@@ -466,7 +492,148 @@ def _metric_to_driver_card(metric, mapping):
         'tags': tags,
         'related_biases': biases,
         'related_nudges': nudges,
+        'driver_chain': driver_chain,
+        'frameworks': frameworks,
+        'classification': {
+            'ld_outcome': metric.outcome.name if metric.outcome else None,
+            'metric_type': metric.metric_type.name if metric.metric_type else None,
+            'data_collection': data_collection,
+            'frequency': frequency,
+        },
+        'metric_type_meta': {
+            'additional_types': additional_metric_types,
+            'additional_type_ids': additional_metric_type_ids,
+        }
     }
+
+
+def _sanitize_driver_kind(value):
+    if value is None:
+        return None
+    try:
+        v = str(value).strip().lower()
+    except Exception:
+        return None
+    return v if v in {'driver', 'bias', 'heuristic'} else None
+
+
+def _sanitize_string_list(value):
+    if value is None:
+        return []
+    if isinstance(value, str):
+        items = [value]
+    elif isinstance(value, (list, tuple, set)):
+        items = list(value)
+    else:
+        return []
+    cleaned = []
+    for item in items:
+        if item is None:
+            continue
+        text = str(item).strip()
+        if not text:
+            continue
+        cleaned.append(text)
+    # Deduplicate while preserving order
+    seen = set()
+    unique = []
+    for item in cleaned:
+        key = item.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(item)
+    return unique
+
+
+def _merge_driver_meta(chain_dict, overrides):
+    chain_dict = dict(chain_dict or {})
+    existing_meta = chain_dict.get('_meta') if isinstance(chain_dict.get('_meta'), dict) else {}
+    meta = dict(existing_meta)
+    for key, value in overrides.items():
+        if value is None:
+            continue
+        meta[key] = value
+    meta = {k: v for k, v in meta.items() if v is not None}
+    if meta:
+        chain_dict['_meta'] = meta
+    elif '_meta' in chain_dict:
+        chain_dict.pop('_meta', None)
+    return chain_dict
+
+
+def _build_driver_chain_stages(chain_dict, identifier_type):
+    if not isinstance(chain_dict, dict):
+        chain_dict = {}
+    id_type = (identifier_type or '').lower()
+    get_list = lambda key, fallback=None: list(chain_dict.get(key) or (fallback or []))
+    if id_type == 'concept':
+        return [
+            {'key': 'drives_behaviors', 'title': 'Drives Behavior', 'items': get_list('drives_behaviors')},
+            {'key': 'measured_by_kpis', 'title': 'Measured by KPI', 'items': get_list('measured_by_kpis')},
+            {'key': 'leads_to_outcomes', 'title': 'Leads to Outcome', 'items': get_list('leads_to_outcomes')},
+        ]
+    if id_type == 'behavior':
+        return [
+            {'key': 'driven_by_concepts', 'title': 'Driven by Concept', 'items': get_list('driven_by_concepts')},
+            {'key': 'measured_by_kpis', 'title': 'Measured by KPI', 'items': get_list('measured_by_kpis')},
+            {'key': 'leads_to_outcomes', 'title': 'Leads to Outcome', 'items': get_list('leads_to_outcomes')},
+        ]
+    if id_type == 'kpi':
+        return [
+            {'key': 'measures_behaviors', 'title': 'Measures Behavior', 'items': get_list('measures_behaviors', chain_dict.get('drives_behaviors'))},
+            {'key': 'indicates_concepts', 'title': 'Indicates Concept', 'items': get_list('indicates_concepts', chain_dict.get('driven_by_concepts'))},
+            {'key': 'leads_to_outcomes', 'title': 'Leads to Outcome', 'items': get_list('leads_to_outcomes')},
+        ]
+    if id_type == 'outcome':
+        return [
+            {'key': 'driven_by_behaviors', 'title': 'Driven by Behavior', 'items': get_list('driven_by_behaviors', chain_dict.get('drives_behaviors'))},
+            {'key': 'driven_by_concepts', 'title': 'Driven by Concept', 'items': get_list('driven_by_concepts')},
+            {'key': 'measured_by_kpis', 'title': 'Measured by KPI', 'items': get_list('measured_by_kpis')},
+        ]
+    # Default ordering
+    return [
+        {'key': 'drives_behaviors', 'title': 'Drives Behavior', 'items': get_list('drives_behaviors')},
+        {'key': 'measured_by_kpis', 'title': 'Measured by KPI', 'items': get_list('measured_by_kpis')},
+        {'key': 'leads_to_outcomes', 'title': 'Leads to Outcome', 'items': get_list('leads_to_outcomes')},
+    ]
+
+
+def _coerce_int_list(value):
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple, set)):
+        items = value
+    else:
+        items = [value]
+    result = []
+    for item in items:
+        try:
+            val = int(item)
+            result.append(val)
+        except (TypeError, ValueError):
+            continue
+    # Deduplicate while preserving order
+    seen = set()
+    unique = []
+    for val in result:
+        if val in seen:
+            continue
+        seen.add(val)
+        unique.append(val)
+    return unique
+
+
+def _set_metric_frameworks(metric: Metric, framework_ids):
+    framework_ids = _coerce_int_list(framework_ids)
+    if not framework_ids:
+        metric.competencies = []
+        return
+
+    # Load competencies via frameworks
+    competencies = Competency.query.filter(Competency.framework_id.in_(framework_ids)).all()
+    # Ensure distinct metrics via join table
+    metric.competencies = competencies
 
 
 @api.route('/driver-cards', methods=['GET'])
@@ -489,7 +656,7 @@ def list_driver_cards():
         outcome_id = request.args.get('outcome_id', type=int)
 
         # Base query with joins
-        query = Metric.query.join(LDOutcome).join(MetricType)
+        query = Metric.query.filter(Metric.is_active.is_(True)).join(LDOutcome).join(MetricType)
 
         # Optional filter by Outcome
         if outcome_id:
@@ -572,14 +739,25 @@ def get_driver_card(metric_id: int):
     if not _driver_cards_enabled():
         abort(404)
     try:
-        metric = Metric.query.join(LDOutcome).join(MetricType).filter(Metric.id == metric_id).first()
+        metric = (
+            Metric.query.join(LDOutcome)
+            .join(MetricType)
+            .filter(Metric.id == metric_id, Metric.is_active.is_(True))
+            .first()
+        )
         if not metric:
             return jsonify({'error': f'Driver card with id {metric_id} not found'}), 404
         mapping = _load_driver_mapping()
         card = _metric_to_driver_card(metric, mapping)
 
         # Related items: same outcome or type (limited)
-        related_q = Metric.query.join(LDOutcome).join(MetricType).filter(Metric.id != metric.id).limit(6)
+        related_q = (
+            Metric.query.filter(Metric.is_active.is_(True))
+            .join(LDOutcome)
+            .join(MetricType)
+            .filter(Metric.id != metric.id)
+            .limit(6)
+        )
         related = []
         for m in related_q.all():
             related.append({
@@ -592,6 +770,247 @@ def get_driver_card(metric_id: int):
     except Exception as e:
         logger.exception("get_driver_card failed")
         return jsonify({'error': 'Failed to get driver card', 'details': str(e)}), 500
+
+
+@api.route('/driver-cards', methods=['POST'])
+@admin_required
+def create_driver_card():
+    if not _driver_cards_enabled():
+        abort(404)
+    try:
+        data = request.get_json(silent=True) or {}
+
+        name = (data.get('name') or '').strip()
+        outcome_id = data.get('outcome_id')
+        metric_type_id = data.get('metric_type_id')
+        additional_metric_type_ids = _coerce_int_list(data.get('additional_metric_type_ids'))
+        framework_ids = _coerce_int_list(data.get('framework_ids'))
+
+        if not name or not outcome_id or not metric_type_id:
+            return jsonify({'error': 'name, outcome_id, and metric_type_id are required'}), 400
+
+        outcome = LDOutcome.query.get(outcome_id)
+        if not outcome:
+            return jsonify({'error': f'Invalid outcome_id: {outcome_id}'}), 400
+
+        metric_type = MetricType.query.get(metric_type_id)
+        if not metric_type:
+            return jsonify({'error': f'Invalid metric_type_id: {metric_type_id}'}), 400
+
+        identifier_type = _normalize_identifier_type(data.get('identifier_type')) or 'concept'
+        chain = _parse_driver_chain(data.get('driver_chain')) or {}
+        if not isinstance(chain, dict):
+            chain = {}
+
+        kind = _sanitize_driver_kind(data.get('kind')) or 'driver'
+        tags = None
+        if 'tags' in data or 'tag_list' in data:
+            tags = _sanitize_string_list(data.get('tags') or data.get('tag_list'))
+        biases = None
+        if 'related_biases' in data or 'biases' in data:
+            biases = _sanitize_string_list(data.get('related_biases') or data.get('biases'))
+        nudges = None
+        if 'related_nudges' in data or 'nudges' in data:
+            nudges = _sanitize_string_list(data.get('related_nudges') or data.get('nudges'))
+
+        meta_overrides = {
+            'kind': kind,
+            'tags': tags if tags is not None else None,
+            'related_biases': biases if biases is not None else None,
+            'related_nudges': nudges if nudges is not None else None,
+        }
+        chain = _merge_driver_meta(chain, meta_overrides)
+
+        metric = Metric(
+            name=name,
+            description=data.get('description'),
+            outcome_id=outcome.id,
+            metric_type_id=metric_type.id,
+            identifier_type=identifier_type,
+            driver_chain=json.dumps(chain) if chain else None,
+            measurement_method=data.get('measurement_method'),
+            data_collection=data.get('data_collection'),
+            success_criteria=data.get('success_criteria'),
+            frequency=data.get('frequency'),
+            unit_of_measure=data.get('unit_of_measure'),
+            example=data.get('example'),
+            data_source=data.get('data_source'),
+            is_active=bool(data.get('is_active', True)),
+        )
+
+        db.session.add(metric)
+        db.session.flush()
+
+        # Link to additional metric types via metadata
+        if additional_metric_type_ids:
+            valid_ids = [mt.id for mt in MetricType.query.filter(MetricType.id.in_(additional_metric_type_ids)).all()]
+            chain_dict = _parse_driver_chain(metric.driver_chain) or {}
+            if not isinstance(chain_dict, dict):
+                chain_dict = {}
+            meta = chain_dict.get('_meta') if isinstance(chain_dict.get('_meta'), dict) else {}
+            meta['additional_metric_type_ids'] = valid_ids
+            meta['additional_metric_types'] = [MetricType.query.get(i).name for i in valid_ids if MetricType.query.get(i)]
+            chain_dict['_meta'] = meta
+            metric.driver_chain = json.dumps(chain_dict)
+
+        if framework_ids:
+            _set_metric_frameworks(metric, framework_ids)
+
+        db.session.commit()
+
+        mapping = _load_driver_mapping()
+        return jsonify({'driver_card': _metric_to_driver_card(metric, mapping)}), 201
+    except Exception as e:
+        logger.exception('create_driver_card failed')
+        db.session.rollback()
+        return jsonify({'error': 'Failed to create driver card', 'details': str(e)}), 500
+
+
+@api.route('/driver-cards/<int:metric_id>', methods=['PUT', 'PATCH'])
+@admin_required
+def update_driver_card(metric_id: int):
+    if not _driver_cards_enabled():
+        abort(404)
+    try:
+        metric = Metric.query.get(metric_id)
+        if not metric or not metric.is_active:
+            return jsonify({'error': f'Driver card with id {metric_id} not found'}), 404
+
+        data = request.get_json(silent=True) or {}
+
+        if 'name' in data and (data['name'] or '').strip():
+            metric.name = data['name'].strip()
+        if 'description' in data:
+            metric.description = data.get('description')
+        if 'measurement_method' in data:
+            metric.measurement_method = data.get('measurement_method')
+        if 'data_collection' in data:
+            metric.data_collection = data.get('data_collection')
+        if 'success_criteria' in data:
+            metric.success_criteria = data.get('success_criteria')
+        if 'frequency' in data:
+            metric.frequency = data.get('frequency')
+        if 'unit_of_measure' in data:
+            metric.unit_of_measure = data.get('unit_of_measure')
+        if 'example' in data:
+            metric.example = data.get('example')
+        if 'data_source' in data:
+            metric.data_source = data.get('data_source')
+        if 'is_active' in data:
+            metric.is_active = bool(data.get('is_active'))
+        if 'identifier_type' in data:
+            metric.identifier_type = _normalize_identifier_type(data.get('identifier_type')) or metric.identifier_type
+
+        # Manage outcome/type reassignment
+        if 'outcome_id' in data and data.get('outcome_id') is not None:
+            outcome = LDOutcome.query.get(data.get('outcome_id'))
+            if not outcome:
+                return jsonify({'error': f"Invalid outcome_id: {data.get('outcome_id')}"}), 400
+            metric.outcome_id = outcome.id
+        if 'metric_type_id' in data and data.get('metric_type_id') is not None:
+            metric_type = MetricType.query.get(data.get('metric_type_id'))
+            if not metric_type:
+                return jsonify({'error': f"Invalid metric_type_id: {data.get('metric_type_id')}"}), 400
+            metric.metric_type_id = metric_type.id
+        additional_metric_type_ids = None
+        if 'additional_metric_type_ids' in data:
+            additional_metric_type_ids = _coerce_int_list(data.get('additional_metric_type_ids'))
+        if additional_metric_type_ids is not None:
+            chain_meta = _parse_driver_chain(metric.driver_chain) or {}
+            if not isinstance(chain_meta, dict):
+                chain_meta = {}
+            meta = chain_meta.get('_meta') if isinstance(chain_meta.get('_meta'), dict) else {}
+            if additional_metric_type_ids:
+                valid_ids = [mt.id for mt in MetricType.query.filter(MetricType.id.in_(additional_metric_type_ids)).all()]
+                meta['additional_metric_type_ids'] = valid_ids
+                meta['additional_metric_types'] = [MetricType.query.get(i).name for i in valid_ids if MetricType.query.get(i)]
+            else:
+                meta.pop('additional_metric_type_ids', None)
+                meta.pop('additional_metric_types', None)
+            if meta:
+                chain_meta['_meta'] = meta
+            elif '_meta' in chain_meta:
+                chain_meta.pop('_meta', None)
+            metric.driver_chain = json.dumps(chain_meta)
+
+        if 'framework_ids' in data:
+            framework_ids = _coerce_int_list(data.get('framework_ids'))
+            _set_metric_frameworks(metric, framework_ids or [])
+
+        existing_chain = _parse_driver_chain(metric.driver_chain) or {}
+        if not isinstance(existing_chain, dict):
+            existing_chain = {}
+
+        if 'driver_chain' in data:
+            new_chain = _parse_driver_chain(data.get('driver_chain')) or {}
+            chain = new_chain if isinstance(new_chain, dict) else {}
+        else:
+            chain = {k: v for k, v in existing_chain.items() if k != '_meta'}
+
+        # Start meta from payload chain (if provided) otherwise existing
+        meta_source = {}
+        if 'driver_chain' in data and isinstance(data.get('driver_chain'), (dict, str)):
+            parsed = _parse_driver_chain(data.get('driver_chain'))
+            if isinstance(parsed, dict) and isinstance(parsed.get('_meta'), dict):
+                meta_source = dict(parsed.get('_meta'))
+        if not meta_source and isinstance(existing_chain.get('_meta'), dict):
+            meta_source = dict(existing_chain.get('_meta'))
+
+        overrides = {}
+        if 'kind' in data:
+            overrides['kind'] = _sanitize_driver_kind(data.get('kind')) or 'driver'
+        if 'tags' in data:
+            overrides['tags'] = _sanitize_string_list(data.get('tags'))
+        if 'related_biases' in data:
+            overrides['related_biases'] = _sanitize_string_list(data.get('related_biases'))
+        if 'biases' in data and 'related_biases' not in data:
+            overrides['related_biases'] = _sanitize_string_list(data.get('biases'))
+        if 'related_nudges' in data:
+            overrides['related_nudges'] = _sanitize_string_list(data.get('related_nudges'))
+        if 'nudges' in data and 'related_nudges' not in data:
+            overrides['related_nudges'] = _sanitize_string_list(data.get('nudges'))
+
+        meta_source.update({k: v for k, v in overrides.items() if v is not None})
+
+        final_chain = dict(chain)
+        if meta_source:
+            final_chain['_meta'] = meta_source
+        elif '_meta' in final_chain:
+            final_chain.pop('_meta', None)
+
+        metric.driver_chain = json.dumps(final_chain) if final_chain else None
+
+        db.session.commit()
+
+        mapping = _load_driver_mapping()
+        return jsonify({'driver_card': _metric_to_driver_card(metric, mapping)}), 200
+    except Exception as e:
+        logger.exception('update_driver_card failed')
+        db.session.rollback()
+        return jsonify({'error': 'Failed to update driver card', 'details': str(e)}), 500
+
+
+@api.route('/driver-cards/<int:metric_id>', methods=['DELETE'])
+@admin_required
+def delete_driver_card(metric_id: int):
+    if not _driver_cards_enabled():
+        abort(404)
+    try:
+        metric = Metric.query.get(metric_id)
+        if not metric:
+            return jsonify({'error': f'Driver card with id {metric_id} not found'}), 404
+
+        hard = request.args.get('hard', 'false').lower() == 'true'
+        if hard:
+            db.session.delete(metric)
+        else:
+            metric.is_active = False
+        db.session.commit()
+        return jsonify({'success': True}), 200
+    except Exception as e:
+        logger.exception('delete_driver_card failed')
+        db.session.rollback()
+        return jsonify({'error': 'Failed to delete driver card', 'details': str(e)}), 500
 
 
 # -------------------------------------------------
@@ -2638,8 +3057,9 @@ def authenticate_user():
             return user
     
     # Check for session authentication
-    if 'user_id' in session:
-        user = AdminUser.query.get(session['user_id'])
+    admin_session_id = session.get('admin_user_id') or session.get('user_id')
+    if admin_session_id:
+        user = AdminUser.query.get(admin_session_id)
         if user and user.is_active:
             return user
     
