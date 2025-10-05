@@ -158,7 +158,7 @@ def diagnostics():
 
 @app.route("/plan-builder")
 def plan_builder():
-    return render_template("plan_builder.html")
+    return render_template("plan_builder.html", template_folder="ld-metrics-translator/templates")
 
 
 @app.route("/playbook")

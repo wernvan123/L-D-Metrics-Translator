@@ -47,9 +47,10 @@
                             <td><span class="badge bg-info">{{ fw.competencies|length }}</span></td>
                             <td><small>{{ fw.created_date.strftime('%Y-%m-%d') if fw.created_date else '-' }}</small></td>
                             <td>
-                                <div class="btn-group btn-group-sm">
-                                    <a href="{{ url_for('admin.competencies', framework_id=fw.id) }}" class="btn btn-outline-secondary" title="Manage Competencies">
+                                <div class="btn-group btn-group-sm align-items-stretch">
+                                    <a href="{{ url_for('admin.competencies', framework_id=fw.id) }}" class="btn btn-outline-secondary d-flex align-items-center gap-1" title="Manage competencies for this framework">
                                         <i class="bi bi-list-stars"></i>
+                                        <span class="d-none d-lg-inline">Manage Competencies</span>
                                     </a>
                                     <a href="{{ url_for('admin.edit_framework', id=fw.id) }}" class="btn btn-outline-primary" title="Edit">
                                         <i class="bi bi-pencil"></i>

@@ -83,8 +83,14 @@
       const j = await r.json();
       const items = j.items||[];
       if(!items.length){ els.outcomeDrivers.innerHTML = '<div class="pb-empty">No suggested drivers for this outcome.</div>'; return; }
-      els.outcomeDrivers.innerHTML = items.map(c=>suggestionRow(c,'driver')).join('');
-      bindSuggestionActions(els.outcomeDrivers);
+      const headerMeta = items[0]?.outcome?.name ? `Curated for ${escapeHtml(items[0].outcome.name)}` : 'Curated from playbook insights';
+      renderSuggestionSection(els.outcomeDrivers, items, {
+        kind: 'driver',
+        title: 'Suggested Drivers',
+        meta: headerMeta,
+        renderItem: (card)=>suggestionRow(card,'driver'),
+        batchLabel: 'Add all drivers'
+      });
     }catch(e){ els.outcomeDrivers.innerHTML = '<div class="pb-empty">Unable to load suggested drivers.</div>'; }
   }
 
@@ -98,8 +104,14 @@
       const j = await r.json();
       const items = j.items||[];
       if(!items.length){ els.outcomeNudges.innerHTML = '<div class="pb-empty">No suggested nudges for this outcome.</div>'; return; }
-      els.outcomeNudges.innerHTML = items.map(c=>suggestionRow(c,'bias')).join('');
-      bindSuggestionActions(els.outcomeNudges);
+      const headerMeta = items[0]?.outcome?.name ? `Designed to reduce biases affecting ${escapeHtml(items[0].outcome.name)}` : 'Behavioral nudges for this focus area';
+      renderSuggestionSection(els.outcomeNudges, items, {
+        kind: 'bias',
+        title: 'Suggested Nudges',
+        meta: headerMeta,
+        renderItem: (card)=>suggestionRow(card,'bias'),
+        batchLabel: 'Add all nudges'
+      });
     }catch(e){ els.outcomeNudges.innerHTML = '<div class="pb-empty">Unable to load suggested nudges.</div>'; }
   }
 
@@ -113,8 +125,18 @@
       const j = await r.json();
       const items = (j.metrics)||[];
       if(!items.length){ els.outcomeMetrics.innerHTML = '<div class="pb-empty">No metrics found for this outcome.</div>'; return; }
-      els.outcomeMetrics.innerHTML = `<ul class="list">${items.map(m=>`<li>${escapeHtml(m.name)} <span class="meta">${escapeHtml(m.metric_type?.name||'')}</span> <button class="btn btn-sm" data-add-metric="${m.id}">Add</button></li>`).join('')}</ul>`;
-      els.outcomeMetrics.addEventListener('click', onOutcomeMetricsClick);
+      renderSuggestionSection(els.outcomeMetrics, items, {
+        kind: 'metric',
+        title: 'Metrics & KPIs',
+        meta: 'Evidence-based indicators to track this outcome',
+        renderItem: metricSuggestionCard,
+        batchLabel: 'Add top 3 metrics',
+        batchLimit: 3
+      });
+      if(!els.outcomeMetrics.dataset.clickBound){
+        els.outcomeMetrics.addEventListener('click', onOutcomeMetricsClick);
+        els.outcomeMetrics.dataset.clickBound = '1';
+      }
     }catch(e){ els.outcomeMetrics.innerHTML = '<div class="pb-empty">Unable to load metrics.</div>'; }
   }
 
@@ -134,10 +156,144 @@
   }
 
   function suggestionRow(card, kind){
-    const title = `${iconForKind(kind||card.kind)} ${escapeHtml(card.name)}`;
-    const desc = escapeHtml(card.description||'');
+    const resolvedKind = (kind || card.kind || 'driver').toLowerCase();
     const id = card.id;
-    return `<div class="pb-item"><div><div style="font-weight:600">${title}</div><div class="meta">${desc}</div></div><div><button class="btn btn-sm btn-outline" data-suggest-add data-kind="${kind||'driver'}" data-id="${id}" data-label="${escapeAttr(card.name)}">Add</button></div></div>`;
+    const title = escapeHtml(card.name || 'Item');
+    const desc = escapeHtml(card.description || card.summary || '');
+    const outcomeName = escapeHtml(card?.outcome?.name || '');
+    const metricTypeName = escapeHtml(card?.metric_type?.name || '');
+    const badges = [];
+    if(outcomeName){ badges.push(`<span class="badge badge-outcome">${outcomeName}</span>`); }
+    if(metricTypeName){ badges.push(`<span class="badge badge-type">${metricTypeName}</span>`); }
+    badges.push(`<span class="badge badge-kind">${badgeForKind(resolvedKind)}</span>`);
+    const playbookUrl = `/playbook?kind=${encodeURIComponent(resolvedKind)}&q=${encodeURIComponent(card.name || '')}`;
+
+    return `
+      <article class="suggestion-card suggestion-card--${resolvedKind}">
+        <header class="suggestion-card__header">
+          <div class="suggestion-card__title">
+            <span class="suggestion-card__icon" aria-hidden="true">${iconForKind(resolvedKind)}</span>
+            <span>${title}</span>
+          </div>
+          <div class="suggestion-card__badges">${badges.join('')}</div>
+        </header>
+        <p class="suggestion-card__description">${desc || '<span class="suggestion-card__empty">No description provided yet.</span>'}</p>
+        <footer class="suggestion-card__footer">
+          <button class="btn btn-sm btn-primary" data-suggest-add data-kind="${resolvedKind}" data-id="${id}" data-label="${escapeAttr(card.name)}">Add to Plan</button>
+          <a class="suggestion-card__link" href="${playbookUrl}" target="_blank" rel="noopener">Open in Playbook</a>
+        </footer>
+      </article>
+    `;
+  }
+
+  function metricSuggestionCard(metric){
+    const label = metric.name || `Metric #${metric.id}`;
+    const title = escapeHtml(label);
+    const description = escapeHtml(metric.description || metric.summary || metric.example || '');
+    const outcomeName = escapeHtml(metric?.outcome?.name || metric?.outcome_name || '');
+    const metricTypeName = escapeHtml(metric?.metric_type?.name || metric?.metric_type_name || '');
+    const badges = [];
+    if(outcomeName){ badges.push(`<span class="badge badge-outcome">${outcomeName}</span>`); }
+    if(metricTypeName){ badges.push(`<span class="badge badge-type">${metricTypeName}</span>`); }
+    badges.push('<span class="badge badge-kind">Metric</span>');
+    const playbookUrl = `/playbook?kind=metric&q=${encodeURIComponent(label)}`;
+
+    return `
+      <article class="suggestion-card suggestion-card--metric" data-label="${escapeAttr(label)}">
+        <header class="suggestion-card__header">
+          <div class="suggestion-card__title">
+            <span class="suggestion-card__icon" aria-hidden="true">📊</span>
+            <span>${title}</span>
+          </div>
+          <div class="suggestion-card__badges">${badges.join('')}</div>
+        </header>
+        <p class="suggestion-card__description">${description || '<span class="suggestion-card__empty">Description forthcoming.</span>'}</p>
+        <footer class="suggestion-card__footer">
+          <button class="btn btn-sm btn-outline" data-add-metric="${metric.id}" data-label="${escapeAttr(label)}">Add KPI</button>
+          <a class="suggestion-card__link" href="${playbookUrl}" target="_blank" rel="noopener">Explore in Playbook</a>
+        </footer>
+      </article>
+    `;
+  }
+
+  function renderSuggestionSection(targetEl, items, options){
+    if(!targetEl || !Array.isArray(items)) return;
+    const kind = options.kind;
+    const title = options.title || 'Suggestions';
+    const meta = options.meta || '';
+    const batchLabel = options.batchLabel || '';
+    const batchLimit = options.batchLimit;
+    const renderItem = options.renderItem || (()=>'');
+    const countText = `${items.length} ${items.length === 1 ? 'option' : 'options'}`;
+    targetEl.innerHTML = `
+      <section class="suggestion-section" data-kind="${kind}">
+        <div class="suggestion-section__header">
+          <div>
+            <h4>${title}</h4>
+            <div class="meta">${meta ? `${meta} • ` : ''}${countText}</div>
+          </div>
+          ${batchLabel ? `<div class="suggestion-section__controls"><button class="btn btn-sm btn-outline" data-add-batch data-kind="${kind}" ${batchLimit?`data-limit="${batchLimit}"`:''}>${batchLabel}</button></div>` : ''}
+        </div>
+        <div class="suggestion-grid">
+          ${items.map(renderItem).join('')}
+        </div>
+      </section>
+    `;
+    const grid = targetEl.querySelector('.suggestion-grid');
+    if(kind === 'metric'){
+      bindSuggestionBatchControls(targetEl, true);
+    } else {
+      bindSuggestionActions(grid);
+      bindSuggestionBatchControls(targetEl, false);
+    }
+  }
+
+  function bindSuggestionBatchControls(sectionEl, isMetric){
+    if(!sectionEl || sectionEl.dataset.batchBound === '1') return;
+    sectionEl.addEventListener('click', async (e)=>{
+      const btn = e.target.closest('[data-add-batch]');
+      if(!btn) return;
+      const kind = btn.getAttribute('data-kind') || (isMetric ? 'metric' : 'driver');
+      const limit = parseInt(btn.getAttribute('data-limit'), 10);
+      const grid = sectionEl.querySelector('.suggestion-grid');
+      if(!grid) return;
+      const original = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = 'Adding…';
+      try{
+        let buttons = [];
+        if(isMetric){
+          buttons = Array.from(grid.querySelectorAll('[data-add-metric]')).filter(b=>!b.disabled);
+        } else {
+          buttons = Array.from(grid.querySelectorAll(`[data-suggest-add][data-kind="${kind}"]`)).filter(b=>!b.disabled);
+        }
+        if(!buttons.length) return;
+        const subset = Number.isFinite(limit) && limit > 0 ? buttons.slice(0, limit) : buttons;
+        for(const b of subset){
+          if(isMetric){
+            await handleMetricAdd(b);
+          } else {
+            const label = b.getAttribute('data-label') || 'Item';
+            const id = parseInt(b.getAttribute('data-id'), 10);
+            b.disabled = true;
+            b.textContent = 'Adding…';
+            await addToPlan(kind, label, id, {}, b);
+          }
+        }
+        btn.textContent = 'Added to plan';
+        btn.classList.add('btn-success');
+        setTimeout(()=>{
+          btn.textContent = original;
+          btn.disabled = false;
+          btn.classList.remove('btn-success');
+        }, 2400);
+      }catch(err){
+        console.warn(err);
+        btn.textContent = original;
+        btn.disabled = false;
+      }
+    });
+    sectionEl.dataset.batchBound = '1';
   }
 
   function bindSuggestionActions(container){
@@ -157,24 +313,33 @@
   async function onOutcomeMetricsClick(e){
     const btn = e.target.closest('[data-add-metric]');
     if(!btn) return;
+    e.preventDefault();
+    await handleMetricAdd(btn);
+  }
+
+  async function handleMetricAdd(btn){
+    if(!btn || btn.dataset.adding === '1') return;
     const id = btn.getAttribute('data-add-metric');
+    if(!id) return;
+    const card = btn.closest('.suggestion-card');
+    const label = btn.getAttribute('data-label') || card?.dataset?.label || `Metric #${id}`;
+    const original = btn.textContent;
+    btn.dataset.adding = '1';
+    btn.disabled = true;
+    btn.textContent = 'Adding…';
     try{
       await fetch('/api/context/metrics/select', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ metric_id: id, source: 'plan_builder_outcome' }) });
-      // Also add a visible plan item so the sidebar/review reflect the action
-      try {
-        const li = btn.closest('li');
-        let label = `Metric #${id}`;
-        if (li) {
-          // The first text node of the <li> contains the metric name before the meta span
-          const firstText = Array.from(li.childNodes).find(n => n.nodeType === Node.TEXT_NODE && n.textContent.trim());
-          if (firstText) label = firstText.textContent.trim();
-        }
-        await addToPlan('metric', label, parseInt(id, 10), { source: 'outcome_metrics' });
-      } catch(err) { /* non-fatal; still selected in context */ }
+      await addToPlan('metric', label, parseInt(id, 10), { source: 'outcome_metrics' }, btn);
       if(window.notify) window.notify('success','Metric added');
       renderOutcomeReview();
       refreshSidebar();
-    }catch{}
+    }catch(err){
+      console.warn(err);
+      btn.disabled = false;
+      btn.textContent = original;
+    } finally {
+      delete btn.dataset.adding;
+    }
   }
 
   function skeleton(count=8){
@@ -268,6 +433,29 @@
     }
     // Toggle outcome panels visibility
     if(els.outcomePanels){ els.outcomePanels.style.display = (state.startMode === 'outcome' && state.outcomeId) ? 'block' : 'none'; }
+  }
+
+  function resetStartSelection(options={}){
+    state.startMode = null;
+    state.frameworkId = null;
+    state.outcomeId = null;
+    state.competencyId = null;
+    state.q = '';
+    state.page = 1;
+    if(els.choiceFramework && options.keepFramework !== true){
+      els.choiceFramework.value = '';
+    }
+    if(els.choiceOutcome && options.keepOutcome !== true){
+      els.choiceOutcome.value = '';
+    }
+    if(els.search){ els.search.value = ''; }
+    if(els.stepCompetencies){ els.stepCompetencies.style.display = 'none'; }
+    if(els.competencyList){ els.competencyList.innerHTML = ''; }
+    if(els.searchRow){ els.searchRow.style.display = 'none'; }
+    if(els.outcomePanels){ els.outcomePanels.style.display = 'none'; }
+    if(els.grid){ els.grid.innerHTML = ''; }
+    updateInitialChoiceUI();
+    refreshSidebar();
   }
 
   async function loadGrid(){
@@ -425,7 +613,10 @@
     // Initial choices
     if(els.choiceFramework){ els.choiceFramework.addEventListener('change', async ()=>{
       const val = els.choiceFramework.value;
-      if(!val) return;
+      if(!val){
+        resetStartSelection({ keepOutcome: true });
+        return;
+      }
       state.startMode = 'framework';
       state.frameworkId = parseInt(val,10);
       state.outcomeId = null; state.competencyId = null; state.q = ''; state.page=1;
@@ -439,7 +630,10 @@
     }); }
     if(els.choiceOutcome){ els.choiceOutcome.addEventListener('change', async ()=>{
       const val = els.choiceOutcome.value;
-      if(!val) return;
+      if(!val){
+        resetStartSelection({ keepFramework: true });
+        return;
+      }
       state.startMode = 'outcome';
       state.outcomeId = parseInt(val,10);
       state.frameworkId = null; state.competencyId = null; state.q = ''; state.page=1;

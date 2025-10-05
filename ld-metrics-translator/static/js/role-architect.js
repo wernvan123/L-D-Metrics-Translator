@@ -46,8 +46,9 @@ const RoleArchitect = (() => {
             <td>${escapeHtml(r.department || '')}</td>
             <td>${r.is_active ? 'Active' : 'Inactive'}</td>
             <td>${created}</td>
-            <td>
+            <td class="actions-cell">
               <a class="btn" href="${editHref}">Edit</a>
+              ${isAdmin ? `<button class="btn btn-danger" data-action="delete" data-role-id="${r.id}">Delete</button>` : ''}
             </td>
           </tr>
         `;
@@ -65,15 +66,41 @@ const RoleArchitect = (() => {
     if (searchEl) searchEl.addEventListener('input', debounce(loadList, 300));
     if (refreshBtn) refreshBtn.addEventListener('click', loadList);
     if (compareBtn) compareBtn.addEventListener('click', () => {
-      // Placeholder: later will navigate to /reports comparison with selected report IDs
-      alert('Comparison view will be available in Reports.');
+      const tbody = document.getElementById('roles-tbody');
+      if (!tbody) return;
+      const selected = Array.from(tbody.querySelectorAll('.row-check:checked'))
+        .map(cb => cb.closest('tr')?.dataset?.id)
+        .filter(Boolean);
+      if (selected.length !== 2) {
+        alert('Select exactly two roles to compare.');
+        return;
+      }
+      const params = new URLSearchParams();
+      params.set('roles', selected.join(','));
+      window.location.href = `/reports/compare?${params.toString()}`;
     });
     const tbody = document.getElementById('roles-tbody');
     if (tbody) {
       tbody.addEventListener('change', (e) => {
         if (e.target && e.target.classList.contains('row-check')) {
           const checked = tbody.querySelectorAll('.row-check:checked').length;
-          compareBtn.disabled = checked !== 2;
+          if (compareBtn) compareBtn.disabled = checked !== 2;
+        }
+      });
+      tbody.addEventListener('click', async (e) => {
+        const btn = e.target.closest('button[data-action="delete"]');
+        if (!btn) return;
+        const roleId = parseInt(btn.getAttribute('data-role-id'), 10);
+        if (!roleId || Number.isNaN(roleId)) return;
+        if (!confirm('Delete this role profile? This cannot be undone.')) return;
+        btn.disabled = true;
+        try {
+          await fetchJSON(`/api/roles/${roleId}`, { method: 'DELETE' });
+          loadList();
+        } catch (err) {
+          console.error(err);
+          alert('Failed to delete role profile.');
+          btn.disabled = false;
         }
       });
     }
@@ -85,7 +112,7 @@ const RoleArchitect = (() => {
   }
 
   // Wizard
-  const steps = ['basics','knowledge','skills','abilities','others','targets','review'];
+  const steps = ['basics','knowledge','skills','abilities','outcomes','others','targets','review'];
   let state = {
     roleId: null,
     name: '',
@@ -94,21 +121,212 @@ const RoleArchitect = (() => {
     knowledge: [],
     skills: [],
     abilities: [],
+    outcomes: [],
     others: [],
-    // targets: [{ competency_id, competency_name?, target_level, weight }]
-    targets: [],
     targetDefaults: { target: 3 },
-    pendingTarget: null, // { id, name, level }
   };
   let stepIndex = 0;
   // lightweight cache for competencies (flattened across frameworks)
   let _competencyCache = null; // [{id, name, framework_id, framework_name}]
+  let _driverCardCache = [];
+  let _driverCardMap = new Map();
+  let _driverCardLoadError = false;
+  let _driverCardPromise = null;
+
+  async function ensureDriverCards() {
+    if (_driverCardCache.length || _driverCardLoadError) return _driverCardCache;
+    if (_driverCardPromise) return _driverCardPromise;
+    _driverCardPromise = (async () => {
+      try {
+        const data = await fetchJSON('/api/driver-cards?kind=driver&per_page=250');
+        const items = Array.isArray(data.items) ? data.items : [];
+        _driverCardCache = items.map(card => ({ id: Number(card.id), name: card.name || `Card #${card.id}` }));
+        _driverCardMap = new Map(_driverCardCache.map(card => [card.id, card]));
+        return _driverCardCache;
+      } catch (err) {
+        console.warn('Failed to load driver cards:', err);
+        _driverCardLoadError = true;
+        return [];
+      } finally {
+        _driverCardPromise = null;
+      }
+    })();
+    return _driverCardPromise;
+  }
+
+  function driverCardSelectHtml(selected, opts = {}) {
+    if (_driverCardLoadError) {
+      const errId = opts.id ? ` id="${escapeAttr(opts.id)}"` : ' id="item-driver"';
+      return `<div${errId} class="driver-select driver-select--error">Driver cards unavailable</div>`;
+    }
+    const selectId = opts.id ? String(opts.id) : 'item-driver';
+    const selectName = opts.name ? ` name="${escapeAttr(opts.name)}"` : '';
+    const classes = ['driver-select'];
+    if (opts.className) classes.push(opts.className);
+    const classAttr = ` class="${classes.map(escapeAttr).join(' ')}"`;
+    const sel = selected && typeof selected === 'object' ? selected.id : selected;
+    const selId = sel === undefined || sel === null ? null : Number(sel);
+    const meta = driverCardMeta(selId);
+    const options = _driverCardCache.map(card => `<option value="${card.id}"${selId === card.id ? ' selected' : ''}>${escapeHtml(card.name)}</option>`).join('');
+    let fallbackOption = '';
+    if (selId !== null && !meta) {
+      const fallbackName = (selected && typeof selected === 'object' && selected.name) ? selected.name : `Card #${selId}`;
+      fallbackOption = `<option value="${selId}" selected>${escapeHtml(fallbackName)}</option>`;
+    }
+    return `<select id="${escapeAttr(selectId)}"${selectName}${classAttr}><option value="">Link driver card (optional)</option>${fallbackOption}${options}</select>`;
+  }
+
+  function driverCardMeta(id) {
+    if (id === undefined || id === null) return null;
+    const num = Number(id);
+    if (Number.isNaN(num)) return null;
+    return _driverCardMap.get(num) || null;
+  }
+
+  function renderKsaoChip(kind, item, idx) {
+    const parts = [escapeHtml(item.name || '')];
+    let cardName = item.driver_card_name;
+    const card = driverCardMeta(item.driver_card_id);
+    if (!cardName && card) {
+      cardName = card.name;
+      item.driver_card_name = cardName;
+    }
+    if (cardName) parts.push(`<span class="chip-driver">@ ${escapeHtml(cardName)}</span>`);
+    if (['knowledge','skills','abilities','outcomes'].includes(kind) && typeof item.target_level === 'number') {
+      parts.push(`<span class="chip-target">Target ${escapeHtml(String(item.target_level))} (${escapeHtml(levelLabel(item.target_level))})</span>`);
+    }
+    if (item.description) parts.push(`— ${escapeHtml(item.description)}`);
+    return `<li class="chip" data-idx="${idx}" draggable="true"><span class="chip-label">${parts.join(' ')}</span><span class="chip-actions"><button aria-label="Edit" data-action="edit" data-idx="${idx}" class="chip-btn">✎</button><button aria-label="Remove" data-action="del" data-idx="${idx}" class="chip-x">×</button></span></li>`;
+  }
+
+  function renderReviewList(kind, items) {
+    if (!Array.isArray(items) || items.length === 0) {
+      return '<div class="no-data-message">No items specified</div>';
+    }
+    const includeTarget = ['knowledge','skills','abilities','outcomes'].includes(kind);
+    return `<ul class="chips">${items.map((item) => {
+      const parts = [escapeHtml(item.name || '')];
+      const driverId = item.driver_card_id || (item.driver_card && item.driver_card.id);
+      const driverName = item.driver_card_name || (driverCardMeta(driverId)?.name) || '';
+      if (driverName) parts.push(`<span class="chip-driver">@ ${escapeHtml(driverName)}</span>`);
+      if (includeTarget && typeof item.target_level === 'number') {
+        parts.push(`<span class="chip-target">Target ${escapeHtml(String(item.target_level))} (${escapeHtml(levelLabel(item.target_level))})</span>`);
+      }
+      if (item.description) parts.push(`— ${escapeHtml(item.description)}`);
+      return `<li class="chip"><span class="chip-label">${parts.join(' ')}</span></li>`;
+    }).join('')}</ul>`;
+  }
+
+  function getDriverCardId(item) {
+    if (!item) return null;
+    if (item.driver_card_id) return Number(item.driver_card_id);
+    if (item.driver_card && item.driver_card.id) return Number(item.driver_card.id);
+    return null;
+  }
+
+  function driverLinkedEntries() {
+    const entries = [];
+    ['knowledge', 'skills', 'abilities', 'outcomes'].forEach((kind) => {
+      (state[kind] || []).forEach((item, index) => {
+        const driverCardId = getDriverCardId(item);
+        if (!driverCardId) return;
+        entries.push({ kind, index, item, driver_card_id: driverCardId });
+      });
+    });
+    return entries;
+  }
+
+  function normalizeTargetLevel(value, fallback = undefined) {
+    const num = Number(value);
+    if (Number.isInteger(num) && num >= 1 && num <= 5) return num;
+    return fallback;
+  }
+
+  function renderTargetReview(entries) {
+    if (!entries.length) return '<div class="no-data-message">No driver-card targets configured</div>';
+    const defaultVal = Number(state.targetDefaults?.target || 3);
+    return `
+      <table class="review-table">
+        <thead><tr><th>Driver card</th><th>Linked item</th><th>Type</th><th>Target</th></tr></thead>
+        <tbody>
+          ${entries.map(({ kind, item, driver_card_id }) => {
+            const driver = driverCardMeta(driver_card_id);
+            const driverName = driver?.name || item.driver_card_name || `Driver card #${driver_card_id}`;
+            const targetVal = normalizeTargetLevel(item.target_level, defaultVal);
+            const isDefault = !(Number.isInteger(item.target_level));
+            return `<tr>
+              <td>${escapeHtml(driverName)}</td>
+              <td>${escapeHtml(item.name || '')}</td>
+              <td>${escapeHtml(kind.charAt(0).toUpperCase() + kind.slice(1))}</td>
+              <td>${targetVal}: ${escapeHtml(levelLabel(targetVal))}${isDefault ? ' <span class="hint">(default)</span>' : ''}</td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    `;
+  }
+
+  function renderTargetRow(entry, defaultLevel) {
+    const { kind, index, item, driver_card_id } = entry;
+    const driver = driverCardMeta(driver_card_id);
+    const driverName = driver?.name || item.driver_card_name || `Driver card #${driver_card_id}`;
+    const sliderValue = normalizeTargetLevel(item.target_level, defaultLevel);
+    const sliderId = `target-${kind}-${index}`;
+    const usingDefault = !Number.isInteger(item.target_level);
+    const control = `
+      <button type="button" class="btn btn-link target-reset" data-action="reset" data-kind="${escapeAttr(kind)}" data-index="${index}" style="${usingDefault ? 'display:none;' : ''}">Use default</button>
+      <span class="hint target-default-flag" style="${usingDefault ? '' : 'display:none;'}">Using default</span>
+    `;
+    return `
+      <div class="target-row" data-kind="${escapeAttr(kind)}" data-index="${index}">
+        <div class="t-head">
+          <div>
+            <div class="t-name">${escapeHtml(item.name || '')}</div>
+            <div class="t-driver hint">${escapeHtml(driverName)}</div>
+          </div>
+          ${control}
+        </div>
+        <div class="t-sliders">
+          <div class="slider-block">
+            <label for="${escapeAttr(sliderId)}">Target level</label>
+            <input type="range" id="${escapeAttr(sliderId)}" class="lvl-slider" min="1" max="5" step="1" value="${sliderValue}" data-kind="${escapeAttr(kind)}" data-index="${index}" />
+            <div class="lvl-value">${sliderValue}: ${escapeHtml(levelLabel(sliderValue))}</div>
+            <div class="hint">1: Foundational · 5: Expert</div>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  function serializeKsaoItems(items, { includeTarget = true } = {}) {
+    const out = [];
+    (items || []).forEach((item) => {
+      const name = (item?.name || '').trim();
+      if (!name) return;
+      const record = { name };
+      if (item.description) record.description = item.description;
+      const driverId = getDriverCardId(item);
+      if (driverId) record.driver_card_id = driverId;
+      if (includeTarget && driverId) {
+        const val = normalizeTargetLevel(item.target_level);
+        if (val !== undefined) record.target_level = val;
+      }
+      out.push(record);
+    });
+    return out;
+  }
 
   function renderStep() {
     const mount = document.getElementById('role-wizard');
     if (!mount) return;
     const step = steps[stepIndex];
     let html = '';
+
+    if (!_driverCardLoadError && !_driverCardCache.length && ['knowledge','skills','abilities','outcomes','targets','review'].includes(step)) {
+      ensureDriverCards().then(() => {
+        if (steps[stepIndex] === step) renderStep();
+      });
+    }
     if (step === 'basics') {
       html = `
         <div class="grid two">
@@ -126,17 +344,53 @@ const RoleArchitect = (() => {
     } else if (step === 'knowledge' || step === 'skills' || step === 'abilities') {
       const key = step;
       const items = state[key] || [];
+      const editing = state._editing && state._editing[key];
+      const label = key === 'knowledge' ? 'Knowledge Area' : key === 'skills' ? 'Skill' : 'Ability';
       html = `
         <div class="list-editor">
-          <h3 style="margin:0 0 8px 0;">${key.charAt(0).toUpperCase()+key.slice(1)}</h3>
-          <div class="row gap">
-            <input id="item-input" placeholder="Enter a ${key === 'knowledge' ? 'knowledge area' : key === 'skills' ? 'skill' : 'ability'}…" autocomplete="off" />
-            <input id="item-notes" placeholder="Notes (optional)" />
-            <button id="item-add" class="btn">Add</button>
+          <h3 style="margin:0 0 8px 0;">${label}s</h3>
+          <div class="list-row">
+            <label class="field flex-1"><span>${label} name</span>
+              <textarea id="item-input" placeholder="Describe the ${label.toLowerCase()}" rows="3">${editing ? escapeHtml(editing.name || '') : ''}</textarea>
+            </label>
+            <label class="field flex-1"><span>Driver card</span>
+              ${driverCardSelectHtml(editing ? { id: editing.driver_card_id, name: editing.driver_card_name } : undefined)}
+            </label>
+            <label class="field" style="max-width:220px"><span>Target level</span>
+              <input type="range" id="item-target" min="1" max="5" step="1" value="${editing && typeof editing.target_level === 'number' ? editing.target_level : Number(state.targetDefaults?.target||3)}" data-default="${Number(state.targetDefaults?.target||3)}" />
+              <div class="hint" id="item-target-hint">Select a driver card to enable target level.</div>
+            </label>
+            <button id="item-add" class="btn primary" style="align-self:flex-end;">${editing ? 'Update' : 'Add'}</button>
+            ${editing ? '<button id="item-cancel" class="btn" style="align-self:flex-end;">Cancel</button>' : ''}
           </div>
           <div id="ksao-results" class="ksao-results" role="listbox" aria-label="Suggestions"></div>
           <ul id="item-list" class="chips mt">
-            ${items.map((x,i)=>`<li class="chip" data-idx="${i}" draggable="true"><span class="chip-label">${escapeHtml(x.name)}${x.description? ' — '+escapeHtml(x.description): ''}</span><button aria-label="Remove" data-action="del" data-idx="${i}" class="chip-x">×</button></li>`).join('')}
+            ${items.map((x,i)=>renderKsaoChip(key, x, i)).join('')}
+          </ul>
+        </div>
+      `;
+    } else if (step === 'outcomes') {
+      const items = state.outcomes || [];
+      const editing = state._editing && state._editing.outcomes;
+      html = `
+        <div class="list-editor">
+          <h3 style="margin:0 0 8px 0;">Outcomes</h3>
+          <div class="list-row">
+            <label class="field flex-1"><span>Outcome description</span>
+              <textarea id="outcome-input" placeholder="Describe the key outcome for this role" rows="3">${editing ? escapeHtml(editing.name || '') : ''}</textarea>
+            </label>
+            <label class="field flex-1"><span>Driver card</span>
+              ${driverCardSelectHtml(editing ? { id: editing.driver_card_id, name: editing.driver_card_name } : undefined, { id: 'outcome-driver' })}
+            </label>
+            <label class="field" style="max-width:220px"><span>Target level</span>
+              <input type="range" id="outcome-target" min="1" max="5" step="1" value="${editing && typeof editing.target_level === 'number' ? editing.target_level : Number(state.targetDefaults?.target||3)}" data-default="${Number(state.targetDefaults?.target||3)}" />
+              <div class="hint" id="outcome-target-hint">Select a driver card to enable target level.</div>
+            </label>
+            <button id="outcome-add" class="btn primary" style="align-self:flex-end;">${editing ? 'Update' : 'Add'}</button>
+            ${editing ? '<button id="outcome-cancel" class="btn" style="align-self:flex-end;">Cancel</button>' : ''}
+          </div>
+          <ul id="outcome-list" class="chips mt">
+            ${items.map((x,i)=>renderKsaoChip('outcomes', x, i)).join('')}
           </ul>
         </div>
       `;
@@ -157,69 +411,25 @@ const RoleArchitect = (() => {
         </div>
       `;
     } else if (step === 'targets') {
-      // Targets UI: role-level target only
+      const defaultVal = Number(state.targetDefaults?.target || 3);
+      const entries = driverLinkedEntries();
       html = `
-        <h3 style="margin:0 0 8px;">Set Target Levels for Role</h3>
-        <div class="targets-intro notice">Define the ideal competency levels for this role. Search for competencies by name and set their desired proficiency level (1–5) expected for anyone in this position.</div>
-        <div class="comp-search-wrap">
-          <label class="field" style="margin-bottom: 0;">
-            <span>Search Competencies</span>
-            <input id="comp-search" placeholder="Type to search (e.g., Strategic Acumen)" autocomplete="off" />
-          </label>
-          <div id="comp-results" class="comp-results" role="listbox" aria-label="Competency results"></div>
-        </div>
-        <div class="t-defaults mt" id="t-defaults" style="display:flex; gap:16px; align-items:center;">
+        <h3 style="margin:0 0 8px;">Configure Target Levels</h3>
+        <div class="targets-intro notice">Only Knowledge, Skills, Abilities, and Outcomes linked to driver cards appear below. Adjust target levels as needed or rely on the default.</div>
+        <div class="t-defaults mt" id="t-defaults" style="display:flex; gap:16px; align-items:center; flex-wrap:wrap;">
           <div style="display:grid; gap:6px; min-width:260px;">
-            <label for="def-tgt">Target Level for Role (1–5)</label>
-            <input type="range" id="def-tgt" min="1" max="5" step="1" value="${Number(state.targetDefaults?.target||3)}" />
-            <div class="hint">1: Foundational · 2: Basic · 3: Proficient · 4: Advanced · 5: Expert</div>
+            <label for="def-tgt">Default target level</label>
+            <input type="range" id="def-tgt" min="1" max="5" step="1" value="${defaultVal}" />
+            <div class="hint" id="def-tgt-value">${defaultVal}: ${escapeHtml(levelLabel(defaultVal))}</div>
           </div>
+          <div class="hint">Items using the default will update automatically when this value changes.</div>
         </div>
-
-        ${state.pendingTarget ? `
-          <div class="target-row mt" id="pending-target">
-            <div class="t-head">
-              <div class="t-title">${escapeHtml(state.pendingTarget.name)}</div>
-              <button class="btn" id="pt-clear">✕</button>
-            </div>
-            <div class="t-sliders">
-              <div class="slider-block">
-                <label for="pt-slider">Target Level for Role</label>
-                <input type="range" id="pt-slider" min="1" max="5" step="1" value="${Number(state.pendingTarget.level||Number(state.targetDefaults?.target||3))}" />
-                <div class="lvl-value" id="pt-value">${Number(state.pendingTarget.level||Number(state.targetDefaults?.target||3))}: ${levelLabel(Number(state.pendingTarget.level||Number(state.targetDefaults?.target||3)))}</div>
-                <div class="hint">1: Foundational · 5: Expert</div>
-              </div>
-            </div>
-            <div class="wizard-actions" style="margin-top:12px;">
-              <button class="btn primary" id="pt-add">+ Add Competency</button>
-            </div>
-          </div>
-        ` : ''}
-
         <div class="targets-summary mt" id="targets-summary">
-          ${state.targets.length === 0 ? `<div class="no-data-message">No competencies added yet. Use the search above to add.</div>` : ''}
-          ${[...state.targets].sort((a,b)=> (a.competency_name||'').localeCompare(b.competency_name||'')).map((t) => `
-            <div class="target-row" data-cid="${t.competency_id}">
-              <div class="t-head">
-                <div class="t-title">${escapeHtml(t.competency_name || ('#'+t.competency_id))}</div>
-                <button class="btn t-remove" data-action="del" data-cid="${t.competency_id}" aria-label="Remove ${escapeAttr(t.competency_name || ('#'+t.competency_id))}">✕</button>
-              </div>
-              <div class="t-sliders">
-                <div class="slider-block">
-                  <label for="tgt-${i}">Target Level for Role</label>
-                  <input type="range" id="tgt-${t.competency_id}" class="lvl-slider" min="1" max="5" step="1" value="${Number(t.target_level||Number(state.targetDefaults?.target||3))}" data-cid="${t.competency_id}" data-kind="target"/>
-                  <div class="lvl-value" aria-live="polite">${Number(t.target_level||Number(state.targetDefaults?.target||3))}: ${levelLabel(Number(t.target_level||Number(state.targetDefaults?.target||3)))}</div>
-                  <div class="hint">1: Foundational · 5: Expert</div>
-                </div>
-              </div>
-            </div>
-          `).join('')}
+          ${entries.length ? entries.map(entry => renderTargetRow(entry, defaultVal)).join('') : '<div class="no-data-message">Add driver cards to Knowledge, Skills, Abilities, or Outcomes to configure targets.</div>'}
         </div>
       `;
     } else if (step === 'review') {
-      const chips = (arr) => arr.length
-        ? `<ul class="chips">${arr.map(x=>`<li class=\"chip\"><span class=\"chip-label\">${escapeHtml(x.name)}${x.description? ' — '+escapeHtml(x.description): ''}</span></li>`).join('')}</ul>`
-        : '<div class="no-data-message">No items specified</div>';
+      const driverEntries = driverLinkedEntries();
       html = `
         <div class="review-grid">
           <div class="review-card">
@@ -245,7 +455,7 @@ const RoleArchitect = (() => {
               <h3>Knowledge</h3>
               <a href="#" class="edit-link" data-edit="knowledge">Edit</a>
             </div>
-            <div class="review-body">${chips(state.knowledge)}</div>
+            <div class="review-body">${renderReviewList('knowledge', state.knowledge)}</div>
           </div>
 
           <div class="review-card">
@@ -253,7 +463,7 @@ const RoleArchitect = (() => {
               <h3>Skills</h3>
               <a href="#" class="edit-link" data-edit="skills">Edit</a>
             </div>
-            <div class="review-body">${chips(state.skills)}</div>
+            <div class="review-body">${renderReviewList('skills', state.skills)}</div>
           </div>
 
           <div class="review-card">
@@ -261,7 +471,15 @@ const RoleArchitect = (() => {
               <h3>Abilities</h3>
               <a href="#" class="edit-link" data-edit="abilities">Edit</a>
             </div>
-            <div class="review-body">${chips(state.abilities)}</div>
+            <div class="review-body">${renderReviewList('abilities', state.abilities)}</div>
+          </div>
+
+          <div class="review-card">
+            <div class="review-head">
+              <h3>Outcomes</h3>
+              <a href="#" class="edit-link" data-edit="outcomes">Edit</a>
+            </div>
+            <div class="review-body">${renderReviewList('outcomes', state.outcomes)}</div>
           </div>
 
           <div class="review-card">
@@ -269,27 +487,15 @@ const RoleArchitect = (() => {
               <h3>Certifications & Other Requirements</h3>
               <a href="#" class="edit-link" data-edit="others">Edit</a>
             </div>
-            <div class="review-body">${chips(state.others)}</div>
+            <div class="review-body">${renderReviewList('others', state.others)}</div>
           </div>
 
           <div class="review-card wide">
             <div class="review-head">
-              <h3>Targets (Role-level)</h3>
+              <h3>Targets</h3>
               <a href="#" class="edit-link" data-edit="targets">Edit</a>
             </div>
-            <div class="review-body">
-              ${state.targets.length ? `
-                <table class="review-table">
-                  <thead><tr><th>Competency</th><th>Target Level</th><th>Proficiency</th></tr></thead>
-                  <tbody>
-                    ${[...state.targets].sort((a,b)=> (a.competency_name||'').localeCompare(b.competency_name||'')).map(t=>{
-                      const n = Number(t.target_level||3);
-                      return `<tr><td>${escapeHtml(t.competency_name || ('#'+t.competency_id))}</td><td>${n}</td><td>${levelLabel(n)}</td></tr>`;
-                    }).join('')}
-                  </tbody>
-                </table>
-              ` : '<div class="no-data-message">No targets specified</div>'}
-            </div>
+            <div class="review-body">${renderTargetReview(driverEntries)}</div>
           </div>
         </div>
       `;
@@ -316,38 +522,109 @@ const RoleArchitect = (() => {
     } else if (step === 'knowledge' || step === 'skills' || step === 'abilities') {
       const key = step;
       const input = document.getElementById('item-input');
-      const notes = document.getElementById('item-notes');
+      const driverSelect = document.getElementById('item-driver');
+      const targetSlider = document.getElementById('item-target');
+      const targetHint = document.getElementById('item-target-hint');
       const addBtn = document.getElementById('item-add');
+      const cancelBtn = document.getElementById('item-cancel');
       const list = document.getElementById('item-list');
       const results = document.getElementById('ksao-results');
+      const editing = state._editing && state._editing[key];
+
+      function normalizeName(v){
+        return (v || '').trim().toLowerCase();
+      }
+
       function exists(v){
-        const name = (v||'').trim().toLowerCase();
-        return (state[key]||[]).some(x => (x.name||'').trim().toLowerCase() === name);
+        const name = normalizeName(v);
+        return (state[key]||[]).some((x, idx) => {
+          if (editing && editing.index === idx) return false;
+          return normalizeName(x.name) === name;
+        });
       }
+
+      function updateTargetUI(){
+        if (!targetSlider) return;
+        const hasDriver = !!(driverSelect && driverSelect.value);
+        targetSlider.disabled = !hasDriver;
+        let val = Number(targetSlider.value);
+        if (Number.isNaN(val)) {
+          val = Number(targetSlider.dataset.default || 3);
+          targetSlider.value = String(val);
+        }
+        if (targetHint) {
+          targetHint.textContent = hasDriver ? `${val}: ${levelLabel(val)}` : 'Select a driver card to enable target level.';
+        }
+      }
+
+      if (editing) {
+        if (input) input.value = editing.name || '';
+        if (driverSelect) {
+          driverSelect.value = editing.driver_card_id ? String(editing.driver_card_id) : '';
+        }
+        if (targetSlider) {
+          const editLevel = typeof editing.target_level === 'number' ? editing.target_level : Number(targetSlider.dataset.default || 3);
+          targetSlider.value = String(editLevel);
+        }
+      }
+      updateTargetUI();
+
+      function resetEditing(){
+        if (state._editing) delete state._editing[key];
+      }
+
       function addItem(from){
+        if (!input) return;
         const v = (input.value || '').trim();
-        const d = (notes.value || '').trim();
         if (!v) return;
-        if (exists(v)) { showToast('That item already exists', 'info'); return; }
-        state[key].push({ name: v, description: d || undefined });
+        const driverIdRaw = driverSelect ? driverSelect.value : '';
+        const driverId = driverIdRaw ? Number(driverIdRaw) : null;
+        if (exists(v)) { alert('That item already exists'); return; }
+        const targetLevel = !targetSlider || targetSlider.disabled ? undefined : Number(targetSlider.value || Number(targetSlider.dataset.default || 3));
+        const driver = driverCardMeta(driverId);
+        const payload = {
+          name: v,
+          driver_card_id: driverId || undefined,
+          driver_card_name: driver ? driver.name : undefined,
+          target_level: driverId ? targetLevel : undefined,
+        };
+        if (editing) {
+          const idx = editing.index;
+          if (idx >= 0 && idx < state[key].length) {
+            const prev = state[key][idx] || {};
+            state[key][idx] = {
+              ...prev,
+              ...payload,
+            };
+          }
+          resetEditing();
+        } else {
+          state[key].push(payload);
+        }
         renderStep();
-        if (from !== 'click') input.focus();
+        if (from !== 'click' && input) input.focus();
       }
-      addBtn?.addEventListener('click', () => {
-        addItem('click');
-      });
+
+      addBtn?.addEventListener('click', () => addItem('click'));
+      cancelBtn?.addEventListener('click', () => { resetEditing(); renderStep(); });
       input?.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') { e.preventDefault(); addItem('enter'); }
+        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); addItem('enter'); }
       });
-      // Suggestions: search metrics/playbook
+      driverSelect?.addEventListener('change', () => {
+        updateTargetUI();
+      });
+      targetSlider?.addEventListener('input', () => {
+        updateTargetUI();
+      });
+
       input?.addEventListener('input', debounce(async () => {
+        if (!results) return;
         const q = (input.value || '').trim();
         if (!q || q.length < 2) { results.style.display = 'none'; results.innerHTML=''; return; }
         try {
           const data = await fetchJSON(`/api/metrics?search=${encodeURIComponent(q)}&per_page=10`);
           const items = (data.metrics||[]).map(m => m.name).filter(Boolean);
           if (items.length === 0) {
-            // fallback suggestions
             const s = await fetchJSON(`/api/search/suggestions?q=${encodeURIComponent(q)}&limit=8`);
             const sugg = s.suggestions || [];
             results.innerHTML = sugg.map(n => `<div class="ksao-item" role="option" data-name="${escapeAttr(n)}">${escapeHtml(n)}</div>`).join('');
@@ -357,24 +634,41 @@ const RoleArchitect = (() => {
           results.style.display = 'block';
         } catch(e){ results.style.display = 'none'; results.innerHTML=''; }
       }, 200));
+
       results?.addEventListener('click', (e) => {
         const el = e.target.closest('.ksao-item');
         if (!el) return;
         const v = el.dataset.name || '';
-        if (!exists(v)) {
-          state[key].push({ name: v });
-          renderStep();
-        } else { showToast('That item already exists', 'info'); }
+        if (exists(v)) { alert('That item already exists'); return; }
+        state[key].push({ name: v });
+        renderStep();
       });
+
       list?.addEventListener('click', (e) => {
         const tgt = e.target;
-        if (tgt && tgt.dataset && tgt.dataset.action === 'del') {
-          const idx = parseInt(tgt.dataset.idx, 10);
+        if (!tgt || !tgt.dataset) return;
+        const idx = parseInt(tgt.dataset.idx, 10);
+        if (Number.isNaN(idx)) return;
+        if (tgt.dataset.action === 'del') {
           state[key].splice(idx, 1);
+          if (state._editing && state._editing[key] && state._editing[key].index === idx){
+            resetEditing();
+          }
+          renderStep();
+        } else if (tgt.dataset.action === 'edit') {
+          state._editing = state._editing || {};
+          const item = state[key][idx] || {};
+          state._editing[key] = {
+            index: idx,
+            name: item.name || '',
+            driver_card_id: item.driver_card_id || item.driver_card?.id || null,
+            driver_card_name: item.driver_card_name || (item.driver_card && item.driver_card.name) || undefined,
+            target_level: typeof item.target_level === 'number' ? item.target_level : undefined,
+          };
           renderStep();
         }
       });
-      // Drag & drop sorting
+
       let dragIdx = null;
       list?.addEventListener('dragstart', (e) => {
         const li = e.target.closest('.chip');
@@ -394,7 +688,128 @@ const RoleArchitect = (() => {
         const [moved] = arr.splice(dragIdx, 1);
         arr.splice(overIdx, 0, moved);
         dragIdx = overIdx;
-        // re-render to update indexes
+        renderStep();
+      });
+    } else if (step === 'outcomes') {
+      const input = document.getElementById('outcome-input');
+      const driverSelect = document.getElementById('outcome-driver');
+      const targetSlider = document.getElementById('outcome-target');
+      const targetHint = document.getElementById('outcome-target-hint');
+      const addBtn = document.getElementById('outcome-add');
+      const cancelBtn = document.getElementById('outcome-cancel');
+      const list = document.getElementById('outcome-list');
+      const editing = state._editing && state._editing.outcomes;
+
+      function updateTargetUI(){
+        if (!targetSlider) return;
+        const hasDriver = !!(driverSelect && driverSelect.value);
+        targetSlider.disabled = !hasDriver;
+        let val = Number(targetSlider.value);
+        if (Number.isNaN(val)) {
+          val = Number(targetSlider.dataset.default || 3);
+          targetSlider.value = String(val);
+        }
+        if (targetHint) {
+          targetHint.textContent = hasDriver ? `${val}: ${levelLabel(val)}` : 'Select a driver card to enable target level.';
+        }
+      }
+
+      if (editing) {
+        if (driverSelect) driverSelect.value = editing.driver_card_id ? String(editing.driver_card_id) : '';
+        if (targetSlider) targetSlider.value = String(typeof editing.target_level === 'number' ? editing.target_level : Number(targetSlider.dataset.default || 3));
+      }
+      updateTargetUI();
+
+      function resetEditing(){
+        if (state._editing) delete state._editing.outcomes;
+      }
+
+      addBtn?.addEventListener('click', () => {
+        if (!input) return;
+        const v = (input.value || '').trim();
+        if (!v) return;
+        const driverIdRaw = driverSelect ? driverSelect.value : '';
+        const driverId = driverIdRaw ? Number(driverIdRaw) : null;
+        const driver = driverCardMeta(driverId);
+        const payload = {
+          name: v,
+          driver_card_id: driverId || undefined,
+          driver_card_name: driver ? driver.name : undefined,
+          target_level: driverId ? normalizeTargetLevel(targetSlider?.value, Number(targetSlider?.dataset.default || 3)) : undefined,
+        };
+        if (editing) {
+          const idx = editing.index;
+          if (idx >= 0 && idx < state.outcomes.length) {
+            const prev = state.outcomes[idx] || {};
+            state.outcomes[idx] = { ...prev, ...payload };
+          }
+          resetEditing();
+        } else {
+          state.outcomes.push(payload);
+        }
+        input.value = '';
+        if (driverSelect) driverSelect.value = '';
+        if (targetSlider) targetSlider.value = String(targetSlider.dataset.default || 3);
+        renderStep();
+      });
+
+      cancelBtn?.addEventListener('click', () => {
+        resetEditing();
+        renderStep();
+      });
+
+      driverSelect?.addEventListener('change', () => updateTargetUI());
+      targetSlider?.addEventListener('input', () => updateTargetUI());
+
+      list?.addEventListener('click', (e) => {
+        const btn = e.target.closest('button');
+        if (!btn || !btn.dataset) return;
+        const idx = parseInt(btn.dataset.idx, 10);
+        if (Number.isNaN(idx)) return;
+        if (btn.dataset.action === 'del') {
+          state.outcomes.splice(idx, 1);
+          if (state._editing && state._editing.outcomes && state._editing.outcomes.index === idx) {
+            resetEditing();
+          }
+          renderStep();
+        } else if (btn.dataset.action === 'edit') {
+          state._editing = state._editing || {};
+          const item = state.outcomes[idx] || {};
+          state._editing.outcomes = {
+            index: idx,
+            name: item.name || '',
+            driver_card_id: item.driver_card_id || item.driver_card?.id || null,
+            driver_card_name: item.driver_card_name || (item.driver_card && item.driver_card.name) || undefined,
+            target_level: typeof item.target_level === 'number' ? item.target_level : undefined,
+          };
+          renderStep();
+        }
+      });
+
+      list?.addEventListener('dragstart', (e) => {
+        const li = e.target.closest('.chip');
+        if (!li) return;
+        e.dataTransfer.effectAllowed = 'move';
+        li.classList.add('dragging');
+        list.dataset.dragIndex = li.dataset.idx;
+      });
+
+      list?.addEventListener('dragend', (e) => {
+        const li = e.target.closest('.chip');
+        li?.classList.remove('dragging');
+        delete list.dataset.dragIndex;
+      });
+
+      list?.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        const li = e.target.closest('.chip');
+        if (!li || !list.dataset.dragIndex) return;
+        const from = parseInt(list.dataset.dragIndex, 10);
+        const to = parseInt(li.dataset.idx, 10);
+        if (Number.isNaN(from) || Number.isNaN(to) || from === to) return;
+        const [moved] = state.outcomes.splice(from, 1);
+        state.outcomes.splice(to, 0, moved);
+        list.dataset.dragIndex = String(to);
         renderStep();
       });
     } else if (step === 'others') {
@@ -421,87 +836,53 @@ const RoleArchitect = (() => {
         }
       });
     } else if (step === 'targets') {
-      const summary = document.getElementById('targets-summary');
       const defTgt = document.getElementById('def-tgt');
-      defTgt?.addEventListener('input', ()=> { state.targetDefaults.target = parseInt(defTgt.value,10)||3; });
-      // Remove handlers
-      summary?.addEventListener('click', (e) => {
-        const el = e.target;
-        if (el && el.dataset && el.dataset.action === 'del') {
-          const cid = parseInt(el.dataset.cid, 10);
-          const idx = state.targets.findIndex(t => t.competency_id === cid);
-          if (idx >= 0) state.targets.splice(idx, 1);
-          renderStep();
-        }
-      });
-      summary?.addEventListener('input', (e) => {
-        const el = e.target;
-        if (el && el.classList.contains('lvl-slider')) {
-          const cid = parseInt(el.dataset.cid, 10);
-          const kind = el.dataset.kind;
-          const val = parseInt(el.value, 10) || 1;
-          const row = el.closest('.slider-block');
-          const labelEl = row?.querySelector('.lvl-value');
-          if (labelEl) labelEl.textContent = `${val}: ${levelLabel(val)}`;
-          const item = state.targets.find(t => t.competency_id === cid);
-          if (item && kind === 'target') item.target_level = val;
-        }
-      });
+      const defValue = document.getElementById('def-tgt-value');
+      const summary = document.getElementById('targets-summary');
 
-      // Searchable dropdown
-      const search = document.getElementById('comp-search');
-      const results = document.getElementById('comp-results');
-      if (search) {
-        search.addEventListener('input', debounce(async () => {
-          const q = (search.value || '').trim().toLowerCase();
-          if (!q) { results.innerHTML = ''; results.style.display = 'none'; return; }
-          const items = await loadCompetencies();
-          const matches = items.filter(c => c.name_lc.includes(q)).slice(0, 8);
-          if (matches.length === 0) { results.innerHTML = '<div class="comp-empty">No results</div>'; results.style.display = 'block'; return; }
-          results.innerHTML = matches.map(c => `
-            <div class="comp-item" role="option" data-id="${c.id}" data-name="${escapeAttr(c.name)}">${escapeHtml(c.name)} <span class="comp-fw">${escapeHtml(c.framework_name || '')}</span></div>
-          `).join('');
-          results.style.display = 'block';
-        }, 200));
-      }
-      if (results) {
-        results.addEventListener('click', (e) => {
-          const el = e.target.closest('.comp-item');
-          if (!el) return;
-          const id = parseInt(el.dataset.id, 10);
-          const name = el.dataset.name || ('#'+id);
-          if (state.targets.some(t => t.competency_id === id)) { showToast('Already added to targets', 'info'); results.innerHTML=''; results.style.display='none'; return; }
-          const tgt = Number(state.targetDefaults?.target||3);
-          state.pendingTarget = { id, name, level: tgt };
-          renderStep();
-          // Clear & hide results
-          const s = document.getElementById('comp-search');
-          if (s) s.value = '';
-          results.innerHTML = '';
-          results.style.display = 'none';
+      defTgt?.addEventListener('input', () => {
+        const val = Number(defTgt.value || state.targetDefaults.target || 3);
+        state.targetDefaults.target = val;
+        if (defValue) defValue.textContent = `${val}: ${levelLabel(val)}`;
+        driverLinkedEntries().forEach(({ kind, index, item }) => {
+          if (!Number.isInteger(item.target_level)) {
+            item.target_level = undefined;
+          }
         });
-      }
-
-      // Pending add handlers
-      const ptSlider = document.getElementById('pt-slider');
-      const ptValue = document.getElementById('pt-value');
-      const ptAdd = document.getElementById('pt-add');
-      const ptClear = document.getElementById('pt-clear');
-      ptSlider?.addEventListener('input', () => {
-        const v = parseInt(ptSlider.value, 10) || 1;
-        if (ptValue) ptValue.textContent = `${v}: ${levelLabel(v)}`;
-        if (state.pendingTarget) state.pendingTarget.level = v;
-      });
-      ptAdd?.addEventListener('click', () => {
-        const p = state.pendingTarget;
-        if (!p) return;
-        if (!state.targets.some(t => t.competency_id === p.id)) {
-          state.targets.push({ competency_id: p.id, competency_name: p.name, target_level: Number(p.level||state.targetDefaults?.target||3), weight: 1.0 });
-        }
-        state.pendingTarget = null;
         renderStep();
       });
-      ptClear?.addEventListener('click', () => { state.pendingTarget = null; renderStep(); });
+
+      summary?.addEventListener('input', (e) => {
+        const slider = e.target.closest('.lvl-slider');
+        if (!slider) return;
+        const kind = slider.dataset.kind;
+        const index = Number(slider.dataset.index);
+        const val = Number(slider.value);
+        const entries = driverLinkedEntries();
+        const entry = entries.find(en => en.kind === kind && en.index === index);
+        const row = slider.closest('.target-row');
+        const valueEl = row?.querySelector('.lvl-value');
+        const resetBtn = row?.querySelector('.target-reset');
+        const flagEl = row?.querySelector('.target-default-flag');
+        if (valueEl) valueEl.textContent = `${val}: ${levelLabel(val)}`;
+        if (entry) {
+          entry.item.target_level = val;
+        }
+        if (resetBtn) resetBtn.style.display = '';
+        if (flagEl) flagEl.style.display = 'none';
+      }, true);
+
+      summary?.addEventListener('click', (e) => {
+        const btn = e.target.closest('.target-reset');
+        if (!btn) return;
+        const kind = btn.dataset.kind;
+        const index = Number(btn.dataset.index);
+        const entries = driverLinkedEntries();
+        const entry = entries.find(en => en.kind === kind && en.index === index);
+        if (!entry) return;
+        entry.item.target_level = undefined;
+        renderStep();
+      });
     }
   }
 
@@ -591,13 +972,13 @@ const RoleArchitect = (() => {
         if (!roleId) throw new Error('Missing role id after create');
         // 2) Upsert KSAOs
         await fetchJSON(`/api/roles/${roleId}/ksaos`, { method: 'POST', body: JSON.stringify({
-          knowledge: state.knowledge,
-          skills: state.skills,
-          abilities: state.abilities,
-          others: state.others,
+          knowledge: serializeKsaoItems(state.knowledge),
+          skills: serializeKsaoItems(state.skills),
+          abilities: serializeKsaoItems(state.abilities),
+          others: serializeKsaoItems(state.others, { includeTarget: false }),
+          outcomes: serializeKsaoItems(state.outcomes),
         })});
-        // 3) Upsert targets
-        await fetchJSON(`/api/roles/${roleId}/targets`, { method: 'POST', body: JSON.stringify({ targets: state.targets })});
+        // 3) Targets are implied by KSAO target levels; no separate endpoint
         alert('Role Profile saved.');
         const fromAdmin = window.location.pathname.startsWith('/admin');
         window.location.href = fromAdmin ? '/admin/roles?saved=1' : '/roles';
@@ -620,11 +1001,35 @@ const RoleArchitect = (() => {
         state.name = r.name || '';
         state.description = r.description || '';
         state.department = r.department || '';
-        state.knowledge = (r.knowledge || []).map(x=>({ name: x.name || '' }));
-        state.skills = (r.skills || []).map(x=>({ name: x.name || '' }));
-        state.abilities = (r.abilities || []).map(x=>({ name: x.name || '' }));
-        state.others = (r.others || []).map(x=>({ name: x.name || '' }));
-        state.targets = r.competency_targets || [];
+        state.knowledge = (r.knowledge || []).map(x=>({
+          name: x.name || '',
+          description: x.description || '',
+          driver_card_id: x.driver_card_id,
+          driver_card_name: x.driver_card?.name,
+          target_level: normalizeTargetLevel(x.target_level),
+        }));
+        state.skills = (r.skills || []).map(x=>({
+          name: x.name || '',
+          description: x.description || '',
+          driver_card_id: x.driver_card_id,
+          driver_card_name: x.driver_card?.name,
+          target_level: normalizeTargetLevel(x.target_level),
+        }));
+        state.abilities = (r.abilities || []).map(x=>({
+          name: x.name || '',
+          description: x.description || '',
+          driver_card_id: x.driver_card_id,
+          driver_card_name: x.driver_card?.name,
+          target_level: normalizeTargetLevel(x.target_level),
+        }));
+        state.outcomes = (r.outcomes || []).map(x=>({
+          name: x.name || '',
+          description: x.description || '',
+          driver_card_id: x.driver_card_id,
+          driver_card_name: x.driver_card?.name,
+          target_level: normalizeTargetLevel(x.target_level),
+        }));
+        state.others = (r.others || []).map(x=>({ name: x.name || '', description: x.description || '' }));
         renderStep();
       }).catch(() => renderStep());
     } else {

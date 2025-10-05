@@ -1,7 +1,16 @@
 from functools import wraps
 from flask import Blueprint, jsonify, request, session, current_app, abort
 from app.models import AdminUser, Metric, LDOutcome, MetricType, ReportTemplate, DynamicReport, ReportAnalytics, Framework, Competency, UserSession, competency_metrics
-from app.models import RoleProfile, RoleKnowledge, RoleSkill, RoleAbility, RoleOtherRequirement, RoleCompetencyTarget, RoleAssignment
+from app.models import (
+    RoleProfile,
+    RoleKnowledge,
+    RoleSkill,
+    RoleAbility,
+    RoleOtherRequirement,
+    RoleOutcome,
+    RoleCompetencyTarget,
+    RoleAssignment,
+)
 from app import db
 from app.ollama_integration import recommendation_engine, report_generator, event_analyzer
 from app.database import create_event_analysis, get_recent_event_analyses
@@ -1328,7 +1337,8 @@ def get_role(role_id: int):
         role = RoleProfile.query.get(role_id)
         if not role:
             return jsonify({'error': f'Role with id {role_id} not found'}), 404
-        return jsonify({'role': role.to_dict(include_ksaos=include_ksaos, include_targets=include_targets)}), 200
+        payload = role.to_dict(include_ksaos=include_ksaos, include_targets=include_targets)
+        return jsonify({'role': payload}), 200
     except Exception as e:
         return jsonify({'error': 'Failed to get role', 'details': str(e)}), 500
 
@@ -1358,8 +1368,6 @@ def update_role(role_id: int):
     except Exception as e:
         db.session.rollback()
         return jsonify({'error': 'Failed to update role', 'details': str(e)}), 500
-
-
 @api.route('/roles/<int:role_id>', methods=['DELETE'])
 @admin_required
 def delete_role(role_id: int):
@@ -1382,10 +1390,11 @@ def upsert_role_ksaos(role_id: int):
 
     Expected JSON:
     {
-      "knowledge": [{"name": "Knowledge of SQL", "description": "..."}],
-      "skills": [{"name": "Project Management"}],
+      "knowledge": [{"name": "Knowledge of SQL", "description": "...", "driver_card_id": 123}],
+      "skills": [{"name": "Project Management", "driver_card_id": 456}],
       "abilities": [{"name": "Analytical Thinking"}],
-      "others": [{"name": "Certification XYZ"}]
+      "others": [{"name": "Certification XYZ"}],
+      "outcomes": [{"name": "Learning & Development", "driver_card_id": 789}]
     }
     """
     try:
@@ -1395,23 +1404,51 @@ def upsert_role_ksaos(role_id: int):
         data = request.get_json(silent=True) or {}
 
         # Clear existing
-        for coll in (role.knowledge_items, role.skill_items, role.ability_items, role.other_requirements):
+        for coll in (role.knowledge_items, role.skill_items, role.ability_items, role.other_requirements, role.outcomes):
             for item in list(coll):
                 db.session.delete(item)
 
         # Insert new
         for k in _parse_list(data.get('knowledge')):
             if (k.get('name') or '').strip():
-                db.session.add(RoleKnowledge(role_profile_id=role.id, name=k['name'].strip(), description=k.get('description')))
+                db.session.add(RoleKnowledge(
+                    role_profile_id=role.id,
+                    name=k['name'].strip(),
+                    description=k.get('description'),
+                    driver_card_id=k.get('driver_card_id'),
+                ))
         for s in _parse_list(data.get('skills')):
             if (s.get('name') or '').strip():
-                db.session.add(RoleSkill(role_profile_id=role.id, name=s['name'].strip(), description=s.get('description')))
+                db.session.add(RoleSkill(
+                    role_profile_id=role.id,
+                    name=s['name'].strip(),
+                    description=s.get('description'),
+                    driver_card_id=s.get('driver_card_id'),
+                ))
         for a in _parse_list(data.get('abilities')):
             if (a.get('name') or '').strip():
-                db.session.add(RoleAbility(role_profile_id=role.id, name=a['name'].strip(), description=a.get('description')))
+                db.session.add(RoleAbility(
+                    role_profile_id=role.id,
+                    name=a['name'].strip(),
+                    description=a.get('description'),
+                    driver_card_id=a.get('driver_card_id'),
+                ))
         for o in _parse_list(data.get('others')):
             if (o.get('name') or '').strip():
-                db.session.add(RoleOtherRequirement(role_profile_id=role.id, name=o['name'].strip(), description=o.get('description')))
+                db.session.add(RoleOtherRequirement(
+                    role_profile_id=role.id,
+                    name=o['name'].strip(),
+                    description=o.get('description'),
+                    driver_card_id=o.get('driver_card_id'),
+                ))
+        for outcome in _parse_list(data.get('outcomes')):
+            if (outcome.get('name') or '').strip():
+                db.session.add(RoleOutcome(
+                    role_profile_id=role.id,
+                    name=outcome['name'].strip(),
+                    description=outcome.get('description'),
+                    driver_card_id=outcome.get('driver_card_id'),
+                ))
 
         db.session.commit()
         return jsonify({'role': role.to_dict(include_ksaos=True, include_targets=False)}), 200

@@ -687,6 +687,7 @@ class RoleProfile(db.Model):
     skill_items = db.relationship('RoleSkill', backref='role_profile', cascade='all, delete-orphan')
     ability_items = db.relationship('RoleAbility', backref='role_profile', cascade='all, delete-orphan')
     other_requirements = db.relationship('RoleOtherRequirement', backref='role_profile', cascade='all, delete-orphan')
+    outcomes = db.relationship('RoleOutcome', backref='role_profile', cascade='all, delete-orphan')
     competency_targets = db.relationship('RoleCompetencyTarget', backref='role_profile', cascade='all, delete-orphan')
 
     def __repr__(self):
@@ -707,6 +708,7 @@ class RoleProfile(db.Model):
                 'skills': [s.to_dict() for s in self.skill_items],
                 'abilities': [a.to_dict() for a in self.ability_items],
                 'others': [o.to_dict() for o in self.other_requirements],
+                'outcomes': [out.to_dict() for out in self.outcomes],
             })
         if include_targets:
             data['competency_targets'] = [t.to_dict() for t in self.competency_targets]
@@ -720,9 +722,19 @@ class RoleKnowledge(db.Model):
     role_profile_id = db.Column(db.Integer, db.ForeignKey('role_profiles.id'), nullable=False, index=True)
     name = db.Column(db.String(300), nullable=False)
     description = db.Column(db.Text)
+    driver_card_id = db.Column(db.Integer, db.ForeignKey('metrics.id', ondelete='SET NULL'))
+    driver_card = db.relationship('Metric', foreign_keys=[driver_card_id])
+    target_level = db.Column(db.Integer)
 
     def to_dict(self):
-        return {'id': self.id, 'name': self.name, 'description': self.description}
+        return {
+            'id': self.id,
+            'name': self.name,
+            'description': self.description,
+            'driver_card_id': self.driver_card_id,
+            'driver_card': {'id': self.driver_card.id, 'name': self.driver_card.name} if self.driver_card else None,
+            'target_level': self.target_level,
+        }
 
 
 class RoleSkill(db.Model):
@@ -732,9 +744,19 @@ class RoleSkill(db.Model):
     role_profile_id = db.Column(db.Integer, db.ForeignKey('role_profiles.id'), nullable=False, index=True)
     name = db.Column(db.String(300), nullable=False)
     description = db.Column(db.Text)
+    driver_card_id = db.Column(db.Integer, db.ForeignKey('metrics.id', ondelete='SET NULL'))
+    driver_card = db.relationship('Metric', foreign_keys=[driver_card_id])
+    target_level = db.Column(db.Integer)
 
     def to_dict(self):
-        return {'id': self.id, 'name': self.name, 'description': self.description}
+        return {
+            'id': self.id,
+            'name': self.name,
+            'description': self.description,
+            'driver_card_id': self.driver_card_id,
+            'driver_card': {'id': self.driver_card.id, 'name': self.driver_card.name} if self.driver_card else None,
+            'target_level': self.target_level,
+        }
 
 
 class RoleAbility(db.Model):
@@ -744,9 +766,19 @@ class RoleAbility(db.Model):
     role_profile_id = db.Column(db.Integer, db.ForeignKey('role_profiles.id'), nullable=False, index=True)
     name = db.Column(db.String(300), nullable=False)
     description = db.Column(db.Text)
+    driver_card_id = db.Column(db.Integer, db.ForeignKey('metrics.id', ondelete='SET NULL'))
+    driver_card = db.relationship('Metric', foreign_keys=[driver_card_id])
+    target_level = db.Column(db.Integer)
 
     def to_dict(self):
-        return {'id': self.id, 'name': self.name, 'description': self.description}
+        return {
+            'id': self.id,
+            'name': self.name,
+            'description': self.description,
+            'driver_card_id': self.driver_card_id,
+            'driver_card': {'id': self.driver_card.id, 'name': self.driver_card.name} if self.driver_card else None,
+            'target_level': self.target_level,
+        }
 
 
 class RoleOtherRequirement(db.Model):
@@ -756,9 +788,40 @@ class RoleOtherRequirement(db.Model):
     role_profile_id = db.Column(db.Integer, db.ForeignKey('role_profiles.id'), nullable=False, index=True)
     name = db.Column(db.String(300), nullable=False)
     description = db.Column(db.Text)
+    driver_card_id = db.Column(db.Integer, db.ForeignKey('metrics.id', ondelete='SET NULL'))
+    driver_card = db.relationship('Metric', foreign_keys=[driver_card_id])
 
     def to_dict(self):
-        return {'id': self.id, 'name': self.name, 'description': self.description}
+        return {
+            'id': self.id,
+            'name': self.name,
+            'description': self.description,
+            'driver_card_id': self.driver_card_id,
+            'driver_card': {'id': self.driver_card.id, 'name': self.driver_card.name} if self.driver_card else None,
+        }
+
+
+class RoleOutcome(db.Model):
+    __tablename__ = 'role_outcomes'
+
+    id = db.Column(db.Integer, primary_key=True)
+    role_profile_id = db.Column(db.Integer, db.ForeignKey('role_profiles.id'), nullable=False, index=True)
+    name = db.Column(db.String(300), nullable=False)
+    description = db.Column(db.Text)
+    driver_card_id = db.Column(db.Integer, db.ForeignKey('metrics.id', ondelete='SET NULL'))
+    target_level = db.Column(db.Integer)
+
+    driver_card = db.relationship('Metric', foreign_keys=[driver_card_id])
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'name': self.name,
+            'description': self.description,
+            'driver_card_id': self.driver_card_id,
+            'driver_card': {'id': self.driver_card.id, 'name': self.driver_card.name} if self.driver_card else None,
+            'target_level': self.target_level,
+        }
 
 
 class RoleCompetencyTarget(db.Model):

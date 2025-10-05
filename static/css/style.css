@@ -158,6 +158,118 @@ body { margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial
 .badge-type { background: #eaf7ff; color: #0a67a3; border-color: #cfeeff; }
 .badge-outcome { background: #e9fbf5; color: #0d6e55; border-color: #c9f3e6; }
 
+/* Plan Builder suggestion cards */
+.suggestion-card {
+  background: #ffffff;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: 0 12px 32px rgba(12, 26, 75, 0.08);
+  padding: 16px;
+  display: grid;
+  gap: 12px;
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+.suggestion-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 18px 42px rgba(12, 26, 75, 0.12);
+}
+.suggestion-card__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.suggestion-card__title {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 700;
+  font-size: 16px;
+  color: var(--text);
+}
+.suggestion-card__icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  background: #f3f0ff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+}
+.suggestion-card--bias .suggestion-card__icon {
+  background: #eaf7ff;
+}
+.suggestion-card--metric .suggestion-card__icon {
+  background: #e9fbf5;
+}
+.suggestion-card__badges {
+  display: inline-flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.suggestion-card__description {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.4;
+  font-size: 14px;
+}
+.suggestion-card__empty {
+  color: #a1a5b7;
+  font-style: italic;
+}
+.suggestion-card__footer {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.suggestion-card__link {
+  font-size: 13px;
+  color: var(--primary-600);
+  text-decoration: none;
+  font-weight: 600;
+}
+.suggestion-card__link:hover {
+  text-decoration: underline;
+}
+.suggestion-card--bias {
+  border-left: 4px solid #0a67a3;
+}
+.suggestion-card--driver {
+  border-left: 4px solid #6b4eff;
+}
+.suggestion-card--metric {
+  border-left: 4px solid #0d6e55;
+}
+
+/* Plan Builder suggestion sections */
+.suggestion-section { display: grid; gap: 14px; }
+.suggestion-section__header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.suggestion-section__header h4 { margin: 0; font-size: 16px; }
+.suggestion-section__controls { display: inline-flex; }
+.suggestion-grid { display: grid; gap: 12px; }
+@media (min-width: 720px){
+  .suggestion-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (min-width: 1080px){
+  .suggestion-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+/* Plan Builder sidebar + pills */
+.pb-sidebar .pb-group { border-top: 1px dashed var(--border); padding-top: 8px; margin-top: 8px; }
+.pb-sidebar .pb-item { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 0; }
+.pb-sidebar .pb-item .btn { min-width: 72px; }
+.pb-competencies .pb-competency { border: 1px solid rgba(255,255,255,0.9); color: #fff; background: transparent; transition: transform 0.12s ease, box-shadow 0.12s ease; }
+.pb-competencies .pb-competency:hover, .pb-competencies .pb-competency:focus { border-color: #fff; color: #fff; box-shadow: 0 0 0 3px rgba(255,255,255,0.22); transform: translateY(-1px); }
+.pb-competencies .pb-competency.is-active { border-color: #fff; color: #fff; box-shadow: 0 0 0 3px rgba(255,255,255,0.28); font-weight: 700; }
+
+/* Plan Builder summary modal overrides */
+#pb-summary-modal .modal-content { max-width: 720px; margin: 10vh auto; background: #fff; border-radius: 12px; padding: 24px; box-shadow: 0 22px 60px rgba(12, 26, 75, 0.22); }
+#pb-summary-modal .modal-close { position: absolute; top: 12px; right: 12px; border: none; background: transparent; font-size: 24px; cursor: pointer; }
+#pb-summary-modal .modal-backdrop { position: fixed; inset: 0; background: rgba(12, 26, 75, 0.45); }
+#pb-summary-modal .notice { margin-top: 18px; }
+
 /* Segmented buttons */
 .segmented { display: inline-flex; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: #fff; }
 .segmented .seg-btn, .segmented .seg-btn:where(button) { border: none; background: transparent; padding: 8px 12px; cursor: pointer; color: var(--muted); font-weight: 600; }

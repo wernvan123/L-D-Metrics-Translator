@@ -20,15 +20,17 @@
   .modal.show {
     display: block;
   }
+  .modal {
+    overflow-y: auto;
+  }
   .modal .form-label {
     font-weight: 600;
   }
-  .modal .modal-body {
-    max-height: 70vh;
-    overflow-y: auto;
-  }
   .badge-kind {
     text-transform: capitalize;
+  }
+  .required-label::after {
+    content: ' *';
   }
   .required-label::after {
     content: ' *';
@@ -83,7 +85,7 @@
 
 <!-- Create / Edit Modal -->
 <div class="modal fade" id="driverCardModal" tabindex="-1" aria-hidden="true">
-  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+  <div class="modal-dialog modal-lg">
     <div class="modal-content">
       <div class="modal-header">
         <h5 class="modal-title" id="driverCardModalLabel">Add Driver Card</h5>
@@ -168,26 +170,28 @@
           </div>
           <div class="row g-3 mt-1">
             <div class="col-md-6">
-              <label for="dc-kind" class="form-label">Kind</label>
+              <label for="dc-kind" class="form-label">Type</label>
               <select id="dc-kind" class="form-select" name="kind">
                 <option value="driver">Driver</option>
                 <option value="bias">Bias</option>
                 <option value="heuristic">Heuristic</option>
+                <option value="nudge">Nudge</option>
+                <option value="kpi">KPI</option>
+                <option value="outcome">Outcome</option>
               </select>
             </div>
             <div class="col-md-6">
-              <label for="dc-identifier" class="form-label">Identifier Type</label>
+              <label for="dc-identifier" class="form-label">Sub-Type</label>
               <select id="dc-identifier" class="form-select" name="identifier_type">
                 <option value="concept">Concept</option>
                 <option value="behavior">Behavior</option>
-                <option value="kpi">KPI</option>
-                <option value="outcome">Outcome</option>
+                <option value="skill">Skill</option>
+                <option value="trait_attribute">Trait/Attribute</option>
               </select>
             </div>
           </div>
           <div class="row g-3 mt-1">
             <div class="col-md-6">
-              <label for="dc-tags" class="form-label">Tags (comma separated)</label>
               <input type="text" class="form-control" id="dc-tags" name="tags" placeholder="growth mindset, leadership" />
             </div>
             <div class="col-md-6">

@@ -2,70 +2,323 @@
 
 {% block content %}
 <style>
-  /* Minimal, page-local styles for Reports UX */
-  .table { width: 100%; border-collapse: separate; border-spacing: 0; }
-  .table th, .table td { padding: 8px 10px; vertical-align: middle; text-align: left; }
-  /* Force left alignment in case a global style overrides it */
-  .page.reports .table th, .page.reports .table td { text-align: left !important; }
-  /* Extra spacing between Date and Status */
-  .table td:nth-child(3), .table th:nth-child(3) { padding-right: 12px; }
-  /* Status badges */
-  .status-badge { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; border: 1px solid transparent; }
-  .status-badge.ok { background: #e8fbef; color: #0e6b3b; border-color: #c9f3df; }
-  .status-badge.info { background: #eef7ff; color: #0a67a3; border-color: #cfe7ff; }
-  .status-badge.err { background: #ffe9ef; color: #8a1231; border-color: #ffd0db; }
-  .status-badge.muted { background: #f3f4f6; color: #6b7280; border-color: #e5e7eb; }
-  /* Make the filter input a bit wider on desktop */
-  #report-search { min-width: 280px; }
-  @media (max-width: 640px){ #report-search { min-width: 0; width: 100%; } }
-  /* Add spacing below filter row */
-  .filters-row { margin-bottom: 16px !important; }
-  /* Increase vertical spacing between stacked action buttons */
-  .page.reports td:last-child .btn { 
-    display: block; 
-    width: max-content; /* shrink to content to avoid wide white space */
-    padding: 6px 10px; 
-    margin: 8px 0 !important; 
+  .page.reports {
+    padding: clamp(36px, 6vw, 72px) clamp(22px, 6vw, 88px) clamp(48px, 10vw, 96px);
+    background: radial-gradient(circle at top left, rgba(129, 141, 248, 0.614) 0%, rgba(99, 102, 241, 0.26) 38%, rgba(30, 41, 59, 0.7) 100%),
+                linear-gradient(200deg, rgba(15, 23, 42, 0.78) 0%, rgba(30, 41, 59, 0.62) 65%);
+    min-height: calc(100vh - 160px);
   }
-  .page.reports td:last-child .btn:first-child { margin-top: 0 !important; }
-  .page.reports td:last-child .btn:last-child { margin-bottom: 0 !important; }
-  /* Ensure actions column is wide enough to avoid accidental overlap */
-  .page.reports table.table th:last-child, .page.reports table.table td:last-child { width: 220px; }
+  .reports-shell {
+      max-width: 1140px;
+      margin: 0 auto;
+      display: grid;
+      gap: clamp(24px, 4vw, 38px);
+    }
+    .reports-header {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+      padding: clamp(26px, 5vw, 38px);
+      border-radius: 28px;
+      background: linear-gradient(135deg, rgba(23, 37, 84, 0.82), rgba(67, 56, 202, 0.78));
+      backdrop-filter: blur(14px);
+      border: 1px solid rgba(99, 102, 241, 0.45);
+      box-shadow: 0 28px 64px rgba(15, 23, 42, 0.35);
+    }
+    .reports-header .eyebrow {
+      font-size: 12px;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: rgba(226, 232, 240, 0.88);
+      margin-bottom: 6px;
+    }
+    .reports-header h1 {
+      margin: 0;
+      font-size: clamp(28px, 5vw, 36px);
+      font-weight: 700;
+      color: #f8fafc;
+      letter-spacing: 0.01em;
+    }
+    .reports-header .subtitle {
+      margin: 8px 0 0;
+      color: rgba(226, 232, 240, 0.76);
+      max-width: 520px;
+      line-height: 1.5;
+    }
+    .reports-header .header-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+    .reports-header .header-actions .btn,
+    .reports-header .header-actions button {
+      border-radius: 16px;
+      padding: 10px 18px;
+      font-weight: 600;
+      border: 1px solid rgba(255, 255, 255, 0.28);
+      background: rgba(255, 255, 255, 0.18);
+      color: #f1f5f9;
+      backdrop-filter: blur(10px);
+      transition: transform 0.14s ease, box-shadow 0.14s ease;
+    }
+    .reports-header .header-actions button:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 12px 30px rgba(26, 35, 80, 0.22);
+    }
+    .reports-header .header-actions button[disabled] {
+      opacity: 0.6;
+      pointer-events: none;
+    }
+
+    .reports-notice {
+      padding: 16px 20px;
+      border-radius: 16px;
+      border: 1px dashed rgba(148, 163, 184, 0.5);
+      background: rgba(241, 245, 249, 0.7);
+      color: #0f172a;
+    }
+
+    .reports-toolbar {
+      display: grid;
+      grid-template-columns: minmax(240px, 1fr) auto;
+      gap: 18px;
+      align-items: end;
+      padding: clamp(24px, 4vw, 30px);
+      border-radius: 26px;
+      background: rgba(255, 255, 255, 0.88);
+      box-shadow: 0 28px 60px rgba(15, 23, 42, 0.14);
+      border: 1px solid rgba(203, 213, 225, 0.4);
+    }
+    .reports-toolbar label {
+      display: grid;
+      gap: 8px;
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #475569;
+    }
+    #report-search {
+      width: 100%;
+      padding: 14px 18px;
+      border-radius: 16px;
+      border: 1px solid rgba(148, 163, 184, 0.55);
+      background: #ffffff;
+      font-size: 16px;
+      color: #0f172a;
+      box-shadow: inset 0 1px 3px rgba(15, 23, 42, 0.06);
+    }
+    #report-search::placeholder {
+      color: rgba(71, 85, 105, 0.6);
+    }
+    .reports-toolbar .meta {
+      justify-self: end;
+      font-size: 13px;
+      color: rgba(15, 23, 42, 0.64);
+    }
+
+    .reports-table-card {
+      border-radius: 26px;
+      background: rgba(255, 255, 255, 0.92);
+      border: 1px solid rgba(203, 213, 225, 0.45);
+      box-shadow: 0 32px 80px rgba(15, 23, 42, 0.18);
+      overflow: hidden;
+    }
+    .reports-table-card header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 20px 26px;
+      background: rgba(241, 245, 249, 0.76);
+      border-bottom: 1px solid rgba(203, 213, 225, 0.6);
+    }
+    .reports-table-card header h2 {
+      margin: 0;
+      font-size: 18px;
+      font-weight: 700;
+      color: #1e293b;
+    }
+    .reports-table-card header span {
+      font-size: 13px;
+      color: rgba(71, 85, 105, 0.78);
+    }
+    .reports-table-card .table-scroll {
+      overflow-x: auto;
+    }
+    table.table {
+      width: 100%;
+      border-collapse: separate;
+      border-spacing: 0;
+      min-width: 720px;
+    }
+    table.table thead {
+      background: rgba(248, 250, 252, 0.98);
+      text-transform: uppercase;
+      font-size: 12px;
+      letter-spacing: 0.06em;
+      color: #475569;
+    }
+    table.table th,
+    table.table td {
+      padding: 14px 18px;
+      text-align: left;
+      border-bottom: 1px solid rgba(226, 232, 240, 0.8);
+      vertical-align: middle;
+    }
+    table.table tbody tr {
+      transition: background 0.12s ease, transform 0.12s ease;
+    }
+    table.table tbody tr:hover {
+      background: rgba(226, 232, 240, 0.45);
+      transform: translateX(2px);
+    }
+    table.table td:last-child .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      padding: 8px 14px;
+      margin: 4px 4px 4px 0;
+      border-radius: 14px;
+      border: 1px solid rgba(59, 130, 246, 0.18);
+      background: rgba(59, 130, 246, 0.12);
+      color: #1d4ed8;
+      font-weight: 600;
+      transition: transform 0.1s ease;
+    }
+    table.table td:last-child .btn:hover { transform: translateY(-1px); }
+    table.table td:last-child .btn[disabled] {
+      opacity: 0.6;
+      background: rgba(148, 163, 184, 0.16);
+      color: rgba(71, 85, 105, 0.7);
+      border-color: rgba(148, 163, 184, 0.4);
+    }
+    table.table th:last-child,
+    table.table td:last-child {
+      width: 240px;
+      white-space: nowrap;
+    }
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 12px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 600;
+      border: 1px solid transparent;
+      text-transform: capitalize;
+    }
+    .status-badge.ok { background: #ecfdf5; color: #047857; border-color: #a7f3d0; }
+    .status-badge.info { background: #eff6ff; color: #1d4ed8; border-color: #bfdbfe; }
+    .status-badge.err { background: #fef2f2; color: #b91c1c; border-color: #fecaca; }
+    .status-badge.muted { background: #f1f5f9; color: #475569; border-color: #cbd5f5; }
+
+    .reports-footer {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      align-items: center;
+      justify-content: space-between;
+      padding: 20px 26px;
+      background: rgba(248, 250, 252, 0.92);
+    }
+    .reports-footer .hint {
+      font-size: 13px;
+      color: rgba(71, 85, 105, 0.8);
+    }
+
+    @media (max-width: 900px) {
+      .reports-toolbar {
+        grid-template-columns: 1fr;
+      }
+      .reports-toolbar .meta {
+        justify-self: start;
+      }
+      .reports-header {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+      .reports-header .header-actions {
+        width: 100%;
+      }
+      .reports-header .header-actions button {
+        flex: 1 1 auto;
+      }
+    }
+    @media (max-width: 640px) {
+      table.table {
+        min-width: 100%;
+      }
+      table.table th,
+      table.table td {
+        padding: 12px 14px;
+      }
+      .reports-footer {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+    }
 </style>
-<section class="page reports">
-  <div class="card">
-    <div class="card-header">
-      <h2>Reports</h2>
-      <div class="actions">
-        <button id="sort-date" class="btn" title="Toggle sort by Date">Sort: Date</button>
-        <button id="sort-status" class="btn" title="Toggle sort by Status">Sort: Status</button>
-        <button id="btn-compare" class="btn" disabled>Compare Reports</button>
+
+<section class="page reports" data-is-admin="{{ 1 if is_admin else 0 }}">
+  <div class="reports-shell">
+    <header class="reports-header">
+      <div>
+        <div class="eyebrow">Report Center</div>
+        <h1>Insights &amp; Outputs</h1>
+        <p class="subtitle">Review generated plans, diagnostics, and summaries in one place. Sort, search, and compare to track progress over time.</p>
       </div>
+      <div class="header-actions">
+        <button id="sort-date" title="Toggle sort by Date">Sort: Date</button>
+        <button id="sort-status" title="Toggle sort by Status">Sort: Status</button>
+        <button id="btn-compare" disabled>Compare Reports</button>
+      </div>
+    </header>
+
+    {% if not is_admin %}
+    <div class="reports-notice" role="alert">
+      Limited access: administrative actions such as regenerate or delete require elevated permissions.
     </div>
-    <div class="card-body">
-      {% if not is_admin %}
-      <div class="notice" style="margin-bottom:12px;">
-        Limited access: some administrative actions are disabled for your account.
+    {% endif %}
+
+    <div class="reports-toolbar">
+      <label>
+        <span>Search Reports</span>
+        <input id="report-search" type="search" placeholder="Find by title or keyword" />
+      </label>
+      <span class="meta">Select two reports to enable comparison.</span>
+    </div>
+
+    <div class="reports-table-card">
+      <header>
+        <div>
+          <h2>History</h2>
+          <span id="reports-table-meta">All generated reports</span>
+        </div>
+      </header>
+      <div class="table-scroll">
+        <table class="table">
+          <thead>
+            <tr>
+              <th style="width:42px"></th>
+              <th>Title</th>
+              <th>Date</th>
+              <th>Status</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="reports-tbody">
+            <tr><td colspan="5">Loading…</td></tr>
+          </tbody>
+        </table>
       </div>
-      {% endif %}
-      <div class="row filters-row" style="gap:12px;align-items:center;margin-top:8px;">
-        <label for="report-search">Search</label>
-        <input id="report-search" placeholder="Search reports..." />
-      </div>
-      <table class="table">
-        <thead>
-          <tr>
-            <th style="width:36px"></th>
-            <th>Title</th>
-            <th>Date</th>
-            <th>Status</th>
-            <th style="width:200px">Actions</th>
-          </tr>
-        </thead>
-        <tbody id="reports-tbody">
-          <tr><td colspan="5">Loading…</td></tr>
-        </tbody>
-      </table>
+      <footer class="reports-footer">
+        <div class="hint">Use the search field to quickly locate recent exports or diagnostics.</div>
+        <div class="hint">Need deeper analysis? Compare two completed reports.</div>
+      </footer>
     </div>
   </div>
 </section>
@@ -73,11 +326,11 @@
 
 {% block scripts %}
 <script>
-  window.IS_ADMIN = {{ is_admin | tojson }};
-  // simple cache-busting marker for this page
+  window.IS_ADMIN = JSON.parse('{{ "true" if is_admin else "false" }}');
   window.__REPORTS_LIST_BUILD__ = '2025-09-16';
-  // Optional: expose for debugging
-  console.debug('[Reports] is_admin =', window.IS_ADMIN);
+  if (window.console && typeof window.console.debug === 'function') {
+    window.console.debug('[Reports] is_admin =', window.IS_ADMIN);
+  }
 </script>
 <script src="{{ url_for('static', filename='js/reports-list.js') }}?v=20250916"></script>
 {% endblock %}

@@ -173,6 +173,39 @@
     return frag;
   }
 
+  function formatIdentifierType(idType){
+    if(!idType) return '';
+    const map = {
+      trait_attribute: 'Trait/Attribute',
+      behavior: 'Behavior',
+      behaviour: 'Behavior',
+      skill: 'Skill',
+      concept: 'Concept',
+      competency: 'Competency'
+    };
+    const key = String(idType).toLowerCase();
+    return map[key] || key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+  }
+
+  function getFrameworkEntries(card){
+    const normalize = renderer && typeof renderer.normalize === 'function' ? renderer.normalize : null;
+    const raw = normalize && !card.__normalized ? normalize(card) : card;
+    const source = Array.isArray(raw.frameworks) && raw.frameworks.length ? raw.frameworks :
+      (Array.isArray(card.associated_frameworks) ? card.associated_frameworks : []);
+    return source
+      .map(fw => {
+        if(!fw) return null;
+        if(typeof fw === 'string') return { name: fw };
+        if(typeof fw === 'object'){
+          const name = fw.name || fw.title || fw.framework_name || '';
+          if(!name) return null;
+          return { id: fw.id ?? fw.framework_id ?? null, name };
+        }
+        return null;
+      })
+      .filter(Boolean);
+  }
+
   function renderGrid(items){
     if(!els.grid) return;
     els.grid.innerHTML = '';
@@ -206,50 +239,65 @@
     }
     const frag = document.createDocumentFragment();
     for(const card of items){
+      const normalized = renderer && typeof renderer.normalize === 'function' ? renderer.normalize(card) : card;
+      const cardId = normalized.id ?? card.id;
       const div = document.createElement('div');
       div.className = 'metric-card';
-      div.setAttribute('data-id', card.id);
-      // Build compact chain (first 2 items per stage)
+      if(Number.isFinite(cardId)) div.setAttribute('data-id', cardId);
+      const kindLabel = badgeForKind(normalized.kind || card.kind);
+      const subTypeLabel = formatIdentifierType(normalized.identifier_type || card.identifier_type);
+      const outcomeLabel = normalized.outcome?.name ? escapeHtml(normalized.outcome.name) : '—';
+      const frameworks = getFrameworkEntries(normalized);
+      const fwHtml = frameworks.length ? `
+          <div class="metric-frameworks">
+            <span class="metric-frameworks-label">Capability Framework${frameworks.length>1?'s':''}</span>
+            <div class="metric-frameworks-chips">
+              ${frameworks.slice(0,2).map(fw => `<span class="badge badge-framework">${escapeHtml(fw.name)}</span>`).join('')}
+              ${frameworks.length>2 ? `<span class="badge badge-framework badge-framework--more">+${frameworks.length-2}</span>` : ''}
+            </div>
+          </div>` : '';
+
       let chainHtml = '';
       try{
-        const stages = Array.isArray(card.driver_chain) ? card.driver_chain : [];
+        const stages = Array.isArray(normalized.driver_chain) ? normalized.driver_chain : Array.isArray(card.driver_chain) ? card.driver_chain : [];
         if(stages.length){
-          const blocks = stages.map(st => {
-            const items = (st.items||[]).slice(0,2).map(name => `<li><button class=\"dc-pill-link\" data-item-name=\"${escapeHtml(name)}\">${escapeHtml(name)}</button></li>`).join('');
-            return `
+          const blocks = stages.map((st, index) => {
+            const items = (st.items || []).slice(0,2).map(name => `<li><button class=\"dc-pill-link\" data-item-name=\"${escapeHtml(name)}\">${escapeHtml(name)}</button></li>`).join('');
+            const remaining = Math.max(0, (st.items || []).length - 2);
+            const extra = remaining ? `<li class=\"dc-more\">+${remaining} more</li>` : '';
+            const empty = !items && !remaining ? '<li class=\"dc-empty\">No entries yet</li>' : '';
+            const stageBlock = `
               <div class=\"dc-stage\">
                 <div class=\"dc-stage-title\">${escapeHtml(st.title||'')}</div>
-                <ul class=\"dc-stage-list\">${items}${(st.items||[]).length>2?`<li>+${(st.items||[]).length-2} more</li>`:''}</ul>
+                <ul class=\"dc-stage-list\">${items || ''}${extra}${empty}</ul>
               </div>`;
-          }).join('<div class=\"dc-arrow\">→</div>');
-          chainHtml = `<div class=\"dc-chain dc-compact\">${blocks}</div>`;
+            const arrow = index < stages.length - 1 ? '<div class=\"dc-arrow dc-arrow-down\" aria-hidden=\"true\">↓</div>' : '';
+            return stageBlock + arrow;
+          }).join('');
+          chainHtml = `<div class=\"dc-chain dc-vertical\">${blocks}</div>`;
         }
       }catch{}
-      const ident = (card.identifier_type || '').toString();
-      const identLabel = ident ? ident.toUpperCase() : '';
-      const identClass = ident ? `ident-${ident.toLowerCase()}` : '';
+
       div.innerHTML = `
         <div class="metric-header">
-          <h3 class="metric-title">${escapeHtml(card.name)}</h3>
-          <div class="metric-badges">
-            <span class="badge badge-kind">${badgeForKind(card.kind)}</span>
-            ${card.outcome?.name ? `<span class="badge badge-outline badge-outcome">${escapeHtml(card.outcome.name)}</span>` : ''}
-            ${card.metric_type?.name ? `<span class="badge badge-outline badge-type">${escapeHtml(card.metric_type.name)}</span>` : ''}
-          </div>
+          <h3 class="metric-title">${escapeHtml(normalized.name || card.name || 'Driver')}</h3>
         </div>
-        ${identLabel ? `<span class=\"badge badge-ident ${identClass}\">${escapeHtml(identLabel)}</span>` : ''}
+        <div class="metric-meta">
+          <span class="badge badge-kind">${kindLabel}</span>
+          ${subTypeLabel ? `<span class="badge badge-subtype">${escapeHtml(subTypeLabel)}</span>` : ''}
+        </div>
         <div class="metric-content">
-          <p class="metric-description">${escapeHtml(card.description || '')}</p>
-          ${(Array.isArray(card.tags) && card.tags.length) ? `
-            <div class="tag-chips">
-              ${card.tags.map(t => `<button class="tag-chip" data-tag="${escapeHtml(t)}" title="Filter by ${escapeHtml(t)}">#${escapeHtml(t)}</button>`).join('')}
-            </div>
-          ` : ''}
+          <p class="metric-description">${escapeHtml(normalized.description || card.description || '')}</p>
+          ${fwHtml}
+          <div class="metric-outcome">
+            <span class="metric-outcome-label">L&D Outcome</span>
+            <span class="metric-outcome-value">${outcomeLabel}</span>
+          </div>
           ${chainHtml}
         </div>
         <div class="metric-actions">
-          <button class="btn btn-sm btn-primary" data-action="add" data-kind="${escapeHtml(card.kind||'driver')}" data-id="${card.id}" data-label="${escapeHtml(card.name)}">Add to Plan</button>
-          <button class="btn btn-sm btn-outline" data-action="view" data-id="${card.id}">View Details</button>
+          <button class="btn btn-sm btn-primary" data-action="add" data-kind="${escapeHtml((normalized.kind||card.kind||'driver'))}" data-id="${cardId}" data-label="${escapeHtml(normalized.name || card.name || 'Driver')}">Add to Plan</button>
+          <button class="btn btn-sm btn-outline" data-action="view" data-id="${cardId}">View Details</button>
         </div>
       `;
       frag.appendChild(div);
@@ -498,6 +546,20 @@
         const label = btn.getAttribute('data-label') || 'Item';
         addToPlan(kind, label, Number.isFinite(id) ? id : null, {});
       });
+      // Card click opens details (excluding interactive elements)
+      els.grid.addEventListener('click', (e) => {
+        if(e.defaultPrevented) return;
+        if(e.target.closest('button[data-action="add"]')) return;
+        if(e.target.closest('button[data-action="view"]')) return;
+        if(e.target.closest('.tag-chip')) return;
+        if(e.target.closest('.dc-pill-link')) return;
+        if(e.target.closest('.seg-btn')) return;
+        const cardEl = e.target.closest('.metric-card');
+        if(!cardEl) return;
+        const id = parseInt(cardEl.getAttribute('data-id'), 10);
+        if(!Number.isFinite(id)) return;
+        openDetailsModal(id);
+      });
     }
 
     // Modal close handlers
@@ -543,18 +605,33 @@
       if(!res.ok){ throw new Error(`Failed to load card ${id}`); }
       const data = await res.json();
       const card = data.driver_card || {};
-      const tags = Array.isArray(card.tags) ? card.tags : [];
+      const normalized = renderer && typeof renderer.normalize === 'function' ? renderer.normalize(card) : card;
+      const tags = Array.isArray(normalized.tags) ? normalized.tags : [];
       const tagHtml = tags.length ? `<div class="tag-chips">${tags.map(t=>`<button class=\"tag-chip\" data-tag=\"${escapeHtml(t)}\">#${escapeHtml(t)}</button>`).join('')}</div>` : '';
-      const kindLabel = badgeForKind(card.kind);
-      const exploreUrl = buildPlaybookLink(card, tags);
-      const ident = (card.identifier_type || '').toString();
+      const frameworks = getFrameworkEntries(normalized);
+      const fwHtml = frameworks.length ? `
+        <div class="dc-fw">
+          <div class="dc-label">Capability Framework${frameworks.length>1?'s':''}</div>
+          <ul class="dc-fw-list">
+            ${frameworks.map(fw => {
+              const name = escapeHtml(fw.name || 'Framework');
+              return `<li><a class=\"dc-fw-link\" href=\"/playbook?q=${encodeURIComponent(fw.name || '')}\">${name}</a></li>`;
+            }).join('')}
+          </ul>
+        </div>` : '';
+      const kindLabel = badgeForKind(normalized.kind || card.kind);
+      const exploreUrl = buildPlaybookLink(normalized, tags);
+      const ident = (normalized.identifier_type || card.identifier_type || '').toString();
       const identLabel = ident ? ident.toUpperCase() : '';
       const identClass = ident ? `ident-${ident.toLowerCase()}` : '';
+      const relatedItems = Array.isArray(normalized.related_items) && normalized.related_items.length
+        ? normalized.related_items
+        : (Array.isArray(card.related_items) ? card.related_items : []);
 
       // Build Driver Chain
       let chainHtml = '';
       try{
-        const stages = Array.isArray(card.driver_chain) ? card.driver_chain : [];
+        const stages = Array.isArray(normalized.driver_chain) ? normalized.driver_chain : Array.isArray(card.driver_chain) ? card.driver_chain : [];
         if(stages.length){
           const blocks = stages.map(st => {
             const items = (st.items || []).map(name => `<li><button class=\"dc-pill-link\" data-item-name=\"${escapeHtml(name)}\">${escapeHtml(name)}</button></li>`).join('');
@@ -571,12 +648,12 @@
       // Build Classification grid
       let classHtml = '';
       try{
-        const c = card.classification || {};
+        const c = normalized.classification || card.classification || {};
         const cells = [
-          {k: 'L&D OUTCOME', v: c.ld_outcome || card.outcome?.name || ''},
-          {k: 'METRIC TYPE', v: c.metric_type || card.metric_type?.name || ''},
-          {k: 'DATA COLLECTION', v: c.data_collection || ''},
-          {k: 'FREQUENCY', v: c.frequency || ''},
+          {k: 'L&D OUTCOME', v: c.ld_outcome || normalized.outcome?.name || card.outcome?.name || ''},
+          {k: 'METRIC TYPE', v: c.metric_type || normalized.metric_type?.name || card.metric_type?.name || ''},
+          {k: 'DATA COLLECTION', v: c.data_collection || normalized.classification?.data_collection || ''},
+          {k: 'FREQUENCY', v: c.frequency || normalized.classification?.frequency || ''},
         ];
         classHtml = `
           <div class=\"dc-class\">
@@ -590,7 +667,7 @@
       // Neuro section (optional)
       let neuroHtml = '';
       try{
-        const neuro = card.neuro_link || card.neuropsychology;
+        const neuro = normalized.neuro_link || normalized.neuropsychology || card.neuro_link || card.neuropsychology;
         if(neuro){
           neuroHtml = `
             <div class=\"dc-neuro\">
@@ -601,32 +678,29 @@
       }catch{}
       els.modalBody.innerHTML = `
         <div class="driver-card-detail">
-          <h2>${escapeHtml(card.name || 'Driver')}</h2>
+          <h2>${escapeHtml(normalized.name || card.name || 'Driver')}</h2>
           <div class="detail-badges">
-            ${card.outcome?.name ? `<span class=\"badge badge-outcome\">${escapeHtml(card.outcome.name)}</span>` : ''}
-            ${card.metric_type?.name ? `<span class=\"badge badge-type\">${escapeHtml(card.metric_type.name)}</span>` : ''}
+            ${normalized.outcome?.name ? `<span class=\"badge badge-outcome\">${escapeHtml(normalized.outcome.name)}</span>` : ''}
+            ${normalized.metric_type?.name ? `<span class=\"badge badge-type\">${escapeHtml(normalized.metric_type.name)}</span>` : ''}
             <span class="badge badge-kind">${kindLabel}</span>
             ${identLabel ? `<span class=\"badge badge-ident ${identClass}\">${escapeHtml(identLabel)}</span>` : ''}
           </div>
-          <p class="detail-description">${escapeHtml(card.description || '')}</p>
+          <p class="detail-description">${escapeHtml(normalized.description || card.description || '')}</p>
           ${tagHtml}
+          ${fwHtml}
           ${chainHtml}
           ${neuroHtml}
           ${classHtml}
           <div class="detail-actions">
-            <button class="btn btn-secondary" data-action="add-plan" data-kind="${card.kind||'driver'}" data-id="${card.id}" data-label="${escapeHtml(card.name||'Item')}">Add to Plan</button>
+            <button class="btn btn-secondary" data-action="add-plan" data-kind="${normalized.kind||card.kind||'driver'}" data-id="${normalized.id||card.id}" data-label="${escapeHtml(normalized.name||card.name||'Item')}">Add to Plan</button>
             <a class="btn btn-primary" href="${exploreUrl}">Explore Nudges in Playbook</a>
           </div>
-          ${Array.isArray(card.related_nudges) && card.related_nudges.length ? `
-            <div class="related-list"><h4>Recommended Nudges</h4>
+          ${relatedItems.length ? `
+            <div class="related-list"><h4>Related</h4>
               <div class="dc-related-chips">
-                ${card.related_nudges.map(n => `<button class=\"tag-chip tag-chip--nudge nudge-chip\" data-nudge-name=\"${escapeHtml(n)}\" title=\"Preview ${escapeHtml(n)}\">${escapeHtml(n)}</button>`).join('')}
+                ${relatedItems.map(r => `<button class="tag-chip related-chip" data-related-id="${r.id}" title="View ${escapeHtml(r.name)}">${escapeHtml(r.name)}<span class="related-kind">${escapeHtml(badgeForKind(r.kind))}</span></button>`).join('')}
               </div>
             </div>` : ''}
-          ${Array.isArray(card.related_items) && card.related_items.length ? `
-            <div class="related-list"><h4>Related</h4><ul>
-              ${card.related_items.map(r => `<li><a href="#" data-related-id="${r.id}" class="related-link">${escapeHtml(r.name)} (${escapeHtml(badgeForKind(r.kind))})</a></li>`).join('')}
-            </ul></div>` : ''}
         </div>
       `;
       // Tag chip and related link interactions inside modal (delegated, persistent)
@@ -649,7 +723,7 @@
           if(name){ openMiniPreviewByName(name, 'nudge'); }
           return;
         }
-        const rel = e.target.closest('.related-link');
+        const rel = e.target.closest('.related-chip');
         if(rel){
           e.preventDefault();
           const rid = parseInt(rel.getAttribute('data-related-id'), 10);

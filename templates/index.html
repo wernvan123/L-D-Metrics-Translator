@@ -67,6 +67,7 @@
       <div class="stat"><div class="value" id="stat-metrics">0</div><div class="label">Selected Metrics</div></div>
       <div class="stat"><div class="value" id="stat-plan">—</div><div class="label">Plan Config</div></div>
     </div>
+
   </section>
 {% endblock %}
 
@@ -112,8 +113,6 @@
           <a class="btn" href="/playbook">Explore Playbook</a>
         </div>
       `;
-
-      // Populate stat blocks and show them
       const stat = id => document.getElementById(id);
       stat('stat-framework').textContent = data.framework_name || '—';
       stat('stat-competencies').textContent = compCount;

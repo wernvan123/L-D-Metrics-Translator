@@ -4,22 +4,227 @@
 <section class="page roles" data-is-admin="{{ 1 if is_admin else 0 }}">
   <style>
     /* Scoped to roles page to avoid side effects */
-    .page.roles .card-header { padding-bottom: 14px; }
-    .page.roles .card-header h2 { color: #fff; margin: 0 0 12px; }
+    .page.roles {
+      padding: clamp(40px, 7vw, 82px) clamp(38px, 9vw, 110px) clamp(60px, 11vw, 120px);
+      padding-left: clamp(88px, 14vw, 220px);
+      color: #f8f9ff;
+    }
+    .page.roles .card {
+      max-width: 1120px;
+      margin-left: clamp(24px, 6vw, 96px);
+      padding: clamp(32px, 4vw, 46px);
+      border-radius: 28px;
+      border: 1px solid rgba(255, 255, 255, 0.24);
+      background: linear-gradient(135deg, rgba(255, 255, 255, 0.22), rgba(255, 255, 255, 0.12));
+      backdrop-filter: blur(22px);
+      box-shadow: 0 32px 90px rgba(14, 10, 48, 0.32);
+      display: grid;
+      gap: clamp(28px, 3vw, 38px);
+    }
+    .page.roles .card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+      padding-bottom: 24px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.18);
+    }
+    .page.roles .card-header h2 {
+      margin: 0;
+      font-size: clamp(28px, 3vw, 34px);
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      color: #fff;
+    }
+    .page.roles .actions {
+      display: inline-flex;
+      align-items: center;
+      gap: 16px;
+    }
+    .page.roles .actions .btn.primary {
+      border-radius: 18px;
+      padding: 12px 22px;
+      font-weight: 600;
+      box-shadow: 0 22px 70px rgba(38, 46, 112, 0.32);
+    }
+    .page.roles .card-body {
+      display: grid;
+      gap: clamp(26px, 4vw, 36px);
+    }
+    .page.roles .roles-controls {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: flex-end;
+      gap: 20px;
+      margin: 0;
+    }
+    .page.roles .roles-controls .field {
+      flex: 1 1 420px;
+      display: grid;
+      gap: 8px;
+    }
+    .page.roles .field > span {
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: rgba(255, 255, 255, 0.74);
+    }
     .page.roles #roles-search {
       width: 100%;
-      min-width: 360px;
-      max-width: 640px;
-      padding: 10px 12px;
-      border-radius: 999px; /* fully rounded to match other inputs */
-      border: 1px solid #e5e7eb;
-      background: #fff;
+      padding: 14px 18px;
+      border-radius: 18px;
+      border: 1px solid rgba(255, 255, 255, 0.35);
+      background: rgba(255, 255, 255, 0.94);
+      color: #172042;
+      font-size: 16px;
+      box-shadow: 0 26px 70px rgba(12, 16, 72, 0.25);
     }
-    .page.roles .row.gap { align-items: center; gap: 16px; margin: 8px 0 14px; }
-    .page.roles #roles-table-wrap { margin-top: 16px; }
-    .page.roles .card-body .mt { margin-top: 18px; }
-    .page.roles .field > span { display: block; margin-bottom: 6px; }
-    .page.roles .actions { display: flex; gap: 8px; align-items: center; }
+    .page.roles #roles-search::placeholder {
+      color: rgba(23, 32, 66, 0.55);
+    }
+    .page.roles #roles-refresh {
+      padding: 12px 22px;
+      border-radius: 18px;
+      border: 1px solid rgba(255, 255, 255, 0.4);
+      background: rgba(255, 255, 255, 0.86);
+      color: #1f2550;
+      font-weight: 600;
+      box-shadow: 0 20px 60px rgba(16, 20, 68, 0.28);
+      transition: transform 0.12s ease, box-shadow 0.12s ease;
+    }
+    .page.roles #roles-refresh:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 24px 70px rgba(16, 20, 68, 0.32);
+    }
+    .page.roles #roles-table-wrap {
+      border-radius: 22px;
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      background: rgba(255, 255, 255, 0.08);
+      box-shadow: 0 28px 90px rgba(10, 8, 56, 0.32);
+      overflow: hidden;
+    }
+    .page.roles table {
+      width: 100%;
+      border-collapse: collapse;
+      color: #f8f9ff;
+    }
+    .page.roles thead {
+      background: rgba(255, 255, 255, 0.12);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      font-size: 12px;
+    }
+    .page.roles th,
+    .page.roles td {
+      padding: 14px 20px;
+      vertical-align: middle;
+    }
+    .page.roles td.actions-cell {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      justify-content: flex-end;
+    }
+    .page.roles tbody tr {
+      transition: background 0.12s ease, transform 0.12s ease;
+    }
+    .page.roles tbody tr + tr {
+      border-top: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .page.roles tbody tr:hover {
+      background: rgba(255, 255, 255, 0.08);
+      transform: translateX(2px);
+    }
+    .page.roles tbody td:first-child {
+      width: 48px;
+    }
+    .page.roles .roles-actions {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 14px;
+    }
+    .page.roles .roles-actions .btn {
+      border-radius: 14px;
+      padding: 8px 16px;
+      font-weight: 600;
+      box-shadow: 0 16px 42px rgba(22, 26, 78, 0.22);
+    }
+    .page.roles .roles-actions .btn[disabled] {
+      opacity: 0.7;
+      box-shadow: none;
+    }
+    .page.roles .roles-hint {
+      margin: 0;
+      font-size: 14px;
+      color: rgba(255, 255, 255, 0.76);
+    }
+    @media (max-width: 960px) {
+      .page.roles {
+        padding-left: clamp(36px, 8vw, 68px);
+      }
+      .page.roles .card {
+        padding: clamp(28px, 6vw, 40px);
+      }
+      .page.roles thead {
+        font-size: 11px;
+      }
+      .page.roles th,
+      .page.roles td {
+        padding: 12px 14px;
+      }
+    }
+    @media (max-width: 640px) {
+      .page.roles {
+        padding: clamp(28px, 8vw, 48px) clamp(18px, 6vw, 32px) clamp(48px, 10vw, 72px);
+      }
+      .page.roles .card {
+        border-radius: 22px;
+        box-shadow: 0 26px 70px rgba(16, 12, 48, 0.28);
+      }
+      .page.roles .card-header {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+      .page.roles .roles-controls {
+        gap: 16px;
+      }
+      .page.roles #roles-refresh {
+        width: 100%;
+      }
+      .page.roles table,
+      .page.roles thead,
+      .page.roles tbody,
+      .page.roles th,
+      .page.roles td,
+      .page.roles tr {
+        display: block;
+      }
+      .page.roles thead {
+        display: none;
+      }
+      .page.roles tbody tr {
+        border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+        padding: 16px 0;
+      }
+      .page.roles tbody td {
+        padding: 6px 0;
+        display: flex;
+        justify-content: space-between;
+        gap: 16px;
+        font-size: 15px;
+      }
+      .page.roles tbody td::before {
+        content: attr(data-label);
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: rgba(255, 255, 255, 0.6);
+      }
+      .page.roles tbody td:first-child {
+        width: 100%;
+      }
+    }
   </style>
   <div class="card">
     <div class="card-header">
@@ -61,9 +266,9 @@
         </table>
       </div>
       <div class="mt" style="display:flex; align-items:center; gap:12px;">
-        <button id="compare-reports" class="btn" disabled>Compare Reports</button>
         <a class="btn primary" href="/roles/new">New Role</a>
       </div>
+      <p class="meta" style="margin-top:8px;">Select two roles above to open the comparison view in Reports.</p>
     </div>
   </div>
 </section>

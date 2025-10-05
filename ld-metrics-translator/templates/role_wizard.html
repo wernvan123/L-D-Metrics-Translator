@@ -21,6 +21,7 @@
         <li>Knowledge</li>
         <li>Skills</li>
         <li>Abilities</li>
+        <li>Outcomes</li>
         <li>Others</li>
         <li>Targets</li>
         <li>Review & Save</li>
@@ -52,7 +53,7 @@
 {% block page_styles %}
 <style>
   /* Page-scoped fallback styles to ensure the new UX appears even if global CSS is cached */
-  .wizard-steps { list-style: none; display: grid; grid-template-columns: repeat(7, minmax(0,1fr)); gap: 10px; padding: 0; margin: 6px 0 18px; }
+  .wizard-steps { list-style: none; display: grid; grid-template-columns: repeat(8, minmax(0,1fr)); gap: 10px; padding: 0; margin: 6px 0 18px; }
   .wizard-steps li { position: relative; padding: 10px 12px 10px 36px; border: 1px solid #e6e6ef; border-radius: 999px; color: #6b7280; background: #fff; line-height: 1.2; }
   .wizard-steps li .step-mark { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); width: 22px; height: 22px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; background: #f3f4ff; color: #4350d8; border: 1px solid #e1e6ff; }
   .wizard-steps li.active { color: #2f57b2; border-color: #dbe5ff; background: #eef3ff; font-weight: 700; }

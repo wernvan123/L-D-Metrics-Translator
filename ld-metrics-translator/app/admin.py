@@ -379,10 +379,12 @@ def add_metric_type():
         )
         db.session.add(metric_type)
         db.session.commit()
-        
+
         log_admin_action('ADD_TYPE', f'Added metric type: {metric_type.name}')
         flash('Metric Type added successfully!', 'success')
         return redirect(url_for('admin.metric_types'))
+
+    return render_template('admin/metric_type_form.html', form=form, title='Add Metric Type')
 
 # Frameworks management
 @admin.route('/frameworks')

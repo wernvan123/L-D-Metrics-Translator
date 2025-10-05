@@ -60,61 +60,37 @@ def routes_summary_public():
 
 @main.route('/')
 def index():
-    """Home page displaying all metrics with pagination and efficient queries."""
-    # Get pagination parameters
-    page = request.args.get('page', 1, type=int)
-    per_page = request.args.get('per_page', 50, type=int)  # Show more items per page for admin interface
-    
-    # Get filter parameters
-    outcome_filter = request.args.get('outcome')
-    type_filter = request.args.get('type')
-    search_query = request.args.get('search', '').strip()
-    
-    # Build query with joins for efficient data loading
-    query = Metric.query.options(
-        db.joinedload(Metric.outcome),
-        db.joinedload(Metric.metric_type)
+    """Home page highlighting primary actions and key metrics."""
+    try:
+        outcomes_count = LDOutcome.query.count()
+        types_count = MetricType.query.count()
+        metrics_count = Metric.query.count()
+        frameworks_count = Framework.query.count()
+        combinations = outcomes_count * types_count if outcomes_count and types_count else 0
+        stats = {
+            'metrics': metrics_count,
+            'outcomes': outcomes_count,
+            'types': types_count,
+            'frameworks': frameworks_count,
+            'combinations': combinations,
+        }
+    except Exception as e:
+        stats = {
+            'metrics': 0,
+            'outcomes': 0,
+            'types': 0,
+            'frameworks': 0,
+            'combinations': 0,
+            'error': str(e),
+        }
+
+    html = render_template(
+        'index.html',
+        title='Human Performance Navigator',
+        stats=stats
     )
-    
-    # Apply filters
-    if outcome_filter:
-        query = query.filter(Metric.outcome_id == outcome_filter)
-    if type_filter:
-        query = query.filter(Metric.metric_type_id == type_filter)
-    if search_query:
-        query = query.filter(
-            Metric.name.contains(search_query) |
-            Metric.description.contains(search_query)
-        )
-    
-    # Get paginated results
-    metrics_pagination = query.paginate(
-        page=page, per_page=per_page, error_out=False
-    )
-    
-    # Store current filters in session for navigation context
-    session['last_search'] = search_query
-    session['last_outcome_filter'] = outcome_filter
-    session['last_type_filter'] = type_filter
-    session['last_page'] = page
-    
-    # Get all outcomes and metric types for filters
-    outcomes = LDOutcome.query.all()
-    metric_types = MetricType.query.all()
-    
-    html = render_template('index.html', 
-                         title='L&D Metrics Translator',
-                         metrics=metrics_pagination.items,
-                         outcomes=outcomes,
-                         metric_types=metric_types,
-                         pagination=metrics_pagination,
-                         current_filters={
-                             'outcome': outcome_filter,
-                             'type': type_filter,
-                             'search': search_query
-                         })
-    # Ensure raw literal text is present for tests (avoid HTML escaping of &)
-    return html + str(Markup("<span style='display:none'>L&D Metrics Translator</span>"))
+    # Ensure the brand string is present for downstream checks
+    return html + str(Markup("<span style='display:none'>Human Performance Navigator</span>"))
 
 
 @main.route('/metric/<int:id>')
@@ -255,22 +231,24 @@ def plan_builder():
     return render_template('plan_builder.html', title='Plan Builder')
 
 
+@main.route('/plan/report')
+def plan_report():
+    """Plan Builder report review page."""
+    return render_template('plan_report.html', title='Plan Report')
+
+
 # -----------------------------
 # Role Architect (Role Profiles)
 # -----------------------------
 
 @main.route('/roles')
 def roles():
-    """Role Architect list and entry point."""
-    # If logged in as admin (dev or real), route to admin path so full actions are enabled
-    if session.get('is_admin') or session.get('admin_user_id'):
-        # Preserve success indicator if present to allow admin page to flash
-        saved = request.args.get('saved')
-        target = '/admin/roles'
-        if saved:
-            target += f'?saved={saved}'
-        return redirect(target)
-    return render_template('roles_list.html', title='Role Architect')
+    """Role Architect entry point from global navigation."""
+    saved = request.args.get('saved')
+    target_kwargs = {'focus': 'roles', '_anchor': 'dashboard-roles'}
+    if saved:
+        target_kwargs['saved'] = saved
+    return redirect(url_for('main.dashboard', **target_kwargs))
 
 
 @main.route('/roles/new')

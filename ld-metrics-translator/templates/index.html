@@ -1,797 +1,100 @@
 {% extends "base.html" %}
 
 {% block content %}
-{% if HOME_HERO_V2 %}
-<section class="home-hero" aria-label="Primary Actions">
-    <div class="container home-hero-container">
-        <h1 class="home-title">Welcome to L & D Metrics Translator</h1>
-        <p class="home-subtitle">Choose how you want to get started:</p>
-        <div class="home-actions">
-            <a href="{{ url_for('main.dashboard') }}" class="home-card" aria-label="Go to Dashboard">
-                <div class="home-card-icon">📊</div>
-                <h3 class="home-card-title">Dashboard</h3>
-                <p class="home-card-text">Overview and quick navigation to frameworks, outcomes, and activity.</p>
-            </a>
-            <a href="{{ url_for('main.diagnostics') }}" class="home-card" aria-label="Run Diagnostics">
-                <div class="home-card-icon">🧪</div>
-                <h3 class="home-card-title">Diagnostics</h3>
-                <p class="home-card-text">Explore Driver Cards including Biases and Heuristics to diagnose drivers.</p>
-            </a>
-            <a href="{{ url_for('main.plan_builder') }}" class="home-card" aria-label="Open Plan Builder">
-                <div class="home-card-icon">🧭</div>
-                <h3 class="home-card-title">Plan Builder</h3>
-                <p class="home-card-text">Build your plan and generate dynamic reports with your selections.</p>
-            </a>
-        </div>
-    </div>
+<section class="page-section home-hero">
+  <div class="container text-on-hero">
+    <h1>Human Performance Navigator</h1>
+    <p>Bridge the gap between learning initiatives and business results.</p>
+  </div>
 </section>
-{% endif %}
-<!-- Main Tab Navigation removed to avoid duplicate navigation on dashboard -->
 
-<div class="hero-section">
-    <div class="container">
-        <h1 class="hero-title">L & D Metrics Translator</h1>
-        <p class="hero-subtitle">Bridge the gap between learning initiatives and business results</p>
+<section class="page-section">
+  <div class="container">
+    <style>
+      .action-cards {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 24px;
+        margin-top: 24px;
+      }
+      .action-card {
+        border-radius: 20px;
+        padding: 28px 24px;
+        color: #ffffff;
+        box-shadow: 0 18px 40px rgba(0,0,0,0.12);
+        transition: transform .15s ease, box-shadow .15s ease;
+        text-decoration: none;
+        display: block;
+        min-height: 200px;
+      }
+      .action-card:hover { transform: translateY(-3px); box-shadow: 0 24px 56px rgba(0,0,0,0.16); }
+      .action-card h3 { font-size: 20px; line-height: 1.2; margin: 6px 0 8px; font-weight: 700; }
+      .action-card p { color: rgba(255,255,255,0.95); max-width: 32ch; }
+      .action-icon { width: 44px; height: 44px; border-radius: 12px; background: rgba(255,255,255,0.2); display:flex; align-items:center; justify-content:center; }
+      .card-blue { background: linear-gradient(180deg, #2d6cdf, #1f4fb9); }
+      .card-white { background: #ffffff; color: #1f2937; }
+      .card-white p { color: #4b5563; }
+      .card-green { background: linear-gradient(180deg, #1fc48b, #18a574); }
+      @media (max-width: 900px) { .action-cards { grid-template-columns: 1fr; } }
+    </style>
+
+    <div class="action-cards" aria-label="Primary actions">
+      <a class="action-card card-blue" href="{{ url_for('main.diagnostics') }}">
+        <div class="action-icon" aria-hidden="true">🧠</div>
+        <h3>Diagnose a Challenge</h3>
+        <p>Use AI and behavioral science to find the root cause of complex issues.</p>
+      </a>
+
+      <a class="action-card card-white" href="{{ url_for('main.plan_builder') }}">
+        <div class="action-icon" aria-hidden="true">🗺️</div>
+        <h3>Build a Development Plan</h3>
+        <p>Use frameworks and outcomes to create a targeted plan.</p>
+      </a>
+
+      <a class="action-card card-green" href="{{ url_for('main.playbook') }}">
+        <div class="action-icon" aria-hidden="true">📘</div>
+        <h3>Explore the Playbook</h3>
+        <p>Browse our library of interconnected drivers, concepts, and nodes.</p>
+      </a>
     </div>
-</div>
+  </div>
+</section>
 
-<!-- Key Numbers Section (positioned under hero; visibility controlled by tabs.js) -->
 <section id="key-numbers" class="page-section key-numbers-section">
-    <div class="container">
-        <div class="summary-stats">
-            <div class="stat-card">
-                <h3 id="key-metrics-count">{{ metrics|length }}</h3>
-                <p>METRICS</p>
-                <span class="stat-trend">+5 this month</span>
-            </div>
-            <div class="stat-card">
-                <h3 id="key-outcomes-count">{{ outcomes|length }}</h3>
-                <p>OUTCOMES</p>
-                <span class="stat-trend">Complete coverage</span>
-            </div>
-            <div class="stat-card">
-                <h3 id="key-concepts-count">{{ metric_types|length }}</h3>
-                <p>CONCEPTS</p>
-                <span class="stat-trend">Behavioral, Operational, Neuroscience</span>
-            </div>
-            <div class="stat-card" id="frameworks-count-card">
-                <h3 id="key-frameworks-count">0</h3>
-                <p>FRAMEWORKS</p>
-                <span class="stat-trend">Available</span>
-            </div>
-            <div class="stat-card">
-                <h3 id="key-kpis-count">{{ (outcomes|length * metric_types|length) }}</h3>
-                <p>KPIs</p>
-                <span class="stat-trend">Full matrix</span>
-            </div>
-        </div>
+  <div class="container">
+    <div class="section-header">
+      <h2 class="section-title">Key Numbers</h2>
+      <p class="section-subtitle">A quick snapshot of the Human Performance Navigator knowledge base.</p>
     </div>
+
+    {% if stats.error %}
+    <div role="alert" style="background:#fff5d1;border:1px solid #f6c867;padding:12px 16px;border-radius:12px;margin-bottom:20px;">
+      <strong>Note:</strong> Live counts are temporarily unavailable. Displaying defaults.
+    </div>
+    {% endif %}
+
+    <div class="summary-stats">
+      <div class="stat-card" id="metrics-count-card">
+        <h3>{{ stats.metrics|default(0) }}</h3>
+        <p>Metrics catalogued</p>
+      </div>
+      <div class="stat-card">
+        <h3>{{ stats.outcomes|default(0) }}</h3>
+        <p>L&amp;D outcomes tracked</p>
+      </div>
+      <div class="stat-card">
+        <h3>{{ stats.types|default(0) }}</h3>
+        <p>Metric categories</p>
+      </div>
+      <div class="stat-card" id="frameworks-count-card">
+        <h3>{{ stats.frameworks|default(0) }}</h3>
+        <p>Frameworks supported</p>
+      </div>
+      <div class="stat-card">
+        <h3>{{ stats.combinations|default(0) }}</h3>
+        <p>Potential metric combinations</p>
+      </div>
+    </div>
+  </div>
 </section>
-<script>
-  (function(){
-    async function fetchDriverCards(pageSize=5000){
-      try{
-        const url = `/api/driver-cards?kind=driver&page_size=${pageSize}`;
-        const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
-        if(!res.ok) return [];
-        const data = await res.json();
-        return Array.isArray(data.items) ? data.items : [];
-      }catch{ return []; }
-    }
-
-    function updateConceptsAndKpis(cards){
-      let concepts = 0, kpis = 0;
-      for(const c of cards){
-        const t = (c && c.identifier_type ? String(c.identifier_type) : '').toUpperCase();
-        if(t === 'CONCEPT') concepts++;
-        else if(t === 'KPI') kpis++;
-      }
-      const conceptEl = document.getElementById('key-concepts-count');
-      const kpiEl = document.getElementById('key-kpis-count');
-      if(conceptEl) conceptEl.textContent = String(concepts);
-      if(kpiEl) kpiEl.textContent = String(kpis);
-    }
-
-    async function fetchJson(url){
-      try{
-        const res = await fetch(url, { headers: { 'Accept': 'application/json' }});
-        if(!res.ok) return null;
-        return await res.json();
-      }catch{ return null; }
-    }
-
-    function resolveArray(data, preferredKey){
-      if(Array.isArray(data)) return data;
-      if(data && Array.isArray(data.items)) return data.items;
-      if(preferredKey && data && Array.isArray(data[preferredKey])) return data[preferredKey];
-      const fallbackKeys = ['results', 'data', 'records', 'entries'];
-      if(data && typeof data === 'object'){
-        for(const key of fallbackKeys){
-          if(Array.isArray(data[key])) return data[key];
-        }
-      }
-      return [];
-    }
-
-    function resolveCount(data, preferredKey){
-      if(Array.isArray(data)) return data.length;
-      if(data && typeof data.count === 'number') return data.count;
-      const arr = resolveArray(data, preferredKey);
-      if(arr.length) return arr.length;
-      if(preferredKey && data && typeof data[preferredKey] === 'number') return data[preferredKey];
-      return 0;
-    }
-
-    async function updateFrameworks(){
-      const data = await fetchJson('/api/frameworks');
-      const count = resolveCount(data, 'frameworks');
-      const el = document.getElementById('key-frameworks-count');
-      if(el) el.textContent = String(count);
-    }
-
-    async function updateMetrics(){
-      const data = await fetchJson('/api/metrics');
-      const items = resolveArray(data, 'metrics');
-      const el = document.getElementById('key-metrics-count');
-      if(el) el.textContent = String(items.length || 0);
-    }
-
-    async function updateOutcomes(){
-      const data = await fetchJson('/api/outcomes');
-      const items = resolveArray(data, 'outcomes');
-      const el = document.getElementById('key-outcomes-count');
-      if(el) el.textContent = String(items.length || 0);
-    }
-
-    async function initKeyNumbers(){
-      // Update Concepts & KPIs from Driver Cards
-      const cards = await fetchDriverCards();
-      updateConceptsAndKpis(cards);
-      // Update Frameworks, Metrics, Outcomes from their APIs
-      await Promise.all([updateFrameworks(), updateMetrics(), updateOutcomes()]);
-    }
-
-    if(document.readyState === 'loading'){
-      document.addEventListener('DOMContentLoaded', initKeyNumbers);
-    } else { initKeyNumbers(); }
-  })();
-</script>
-
-<!-- Main Application Tabs -->
-<section id="app-tabs" class="page-section tabs-section">
-    <div class="container">
-
-        <div class="tabs-panels">
-            <div id="tab-panel-dashboard" class="tab-panel" role="tabpanel">
-                <div class="dashboard-landing">
-                    <div class="dashboard-header">
-                    </div>
-                    
-                    <div class="hero-cards">
-                        <a class="hero-card hero-diagnostics" href="{{ url_for('main.diagnostics') }}">
-                            <span class="icon">🧪</span>
-                            <div class="title">Diagnose a Challenge</div>
-                            <div class="desc">Explore Driver Cards including Biases and Heuristics to diagnose what drives outcomes.</div>
-                        </a>
-                        <a class="hero-card hero-plan" href="{{ url_for('main.plan_builder') }}">
-                            <span class="icon">🧭</span>
-                            <div class="title">Build a Development Plan</div>
-                            <div class="desc">Select drivers and biases, then generate a tailored report for your organization.</div>
-                        </a>
-                        <a class="hero-card hero-playbook" href="{{ url_for('main.playbook') }}">
-                            <span class="icon">📚</span>
-                            <div class="title">Explore the Playbook</div>
-                            <div class="desc">Browse the library of Drivers, Biases, Heuristics, and Nudges with powerful filters.</div>
-                        </a>
-                    </div>
-                    
-                    <div class="dashboard-quick-stats">
-                        <div class="quick-stat">
-                            <span class="stat-number" id="dashboard-frameworks-count">0</span>
-                            <span class="stat-label">Frameworks</span>
-                        </div>
-                        <div class="quick-stat">
-                            <span class="stat-number">{{ metrics|length }}</span>
-                            <span class="stat-label">Metrics</span>
-                        </div>
-                        <div class="quick-stat">
-                            <span class="stat-number">{{ outcomes|length }}</span>
-                            <span class="stat-label">Outcomes</span>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            <div id="tab-panel-plan" class="tab-panel" role="tabpanel" hidden>
-                <div class="plan-workspace">
-                    <div class="workspace-main">
-                        <div class="workspace-header">
-                            <h2>Plan & Measure</h2>
-                            <p>Build your development plan by selecting frameworks, competencies, and metrics</p>
-                        </div>
-                        
-                        <!-- Framework Selection -->
-                        <div class="frameworks-section" id="plan-frameworks-section">
-                            <!-- Framework dropdown will be inserted here by context-aware-workflow.js -->
-                            <div id="framework-selection-container"></div>
-                            
-                            <!-- Selected framework competencies will appear here -->
-                            <div id="selected-framework-competencies" style="display: none;">
-                                <div id="competencies-list"></div>
-                            </div>
-                        </div>
-                        
-                        <!-- Search and Filter Section -->
-                        <div class="filter-section" id="plan-filter-section">
-                            <div class="filter-header">
-                                <h3 class="filter-title">🔍 Search and Filter</h3>
-                                <p class="filter-subtitle">Refine your search by category and outcome</p>
-                            </div>
-                            
-                            <!-- Search Bar -->
-                            <div class="search-box">
-                                <input type="text" id="plan-search-input" class="search-input" 
-                                       placeholder="Search metrics..." 
-                                       aria-label="Search metrics" 
-                                       autocomplete="off"
-                                       role="combobox"
-                                       aria-expanded="false"
-                                       aria-haspopup="listbox"
-                                       aria-autocomplete="list">
-                                <button id="plan-clear-search" class="clear-search" aria-label="Clear search" style="display: none;">
-                                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                        <line x1="18" y1="6" x2="6" y2="18"></line>
-                                        <line x1="6" y1="6" x2="18" y2="18"></line>
-                                    </svg>
-                                </button>
-                                <!-- Autocomplete dropdown -->
-                                <div id="plan-autocomplete-dropdown" class="autocomplete-dropdown" 
-                                     role="listbox" 
-                                     aria-label="Search suggestions"
-                                     style="display: none;">
-                                    <div class="autocomplete-loading" id="plan-autocomplete-loading" style="display: none;">
-                                        <div class="loading-spinner-small"></div>
-                                        <span>Searching...</span>
-                                    </div>
-                                    <div class="autocomplete-results" id="plan-autocomplete-results"></div>
-                                    <div class="autocomplete-footer" id="plan-autocomplete-footer" style="display: none;">
-                                        <span class="autocomplete-hint">Press Enter to search all results</span>
-                                    </div>
-                                </div>
-                            </div>
-                            
-                            <div class="filter-controls">
-                                <!-- Quick Filter Presets -->
-                                <div class="filter-presets">
-                                    <button class="preset-btn active" data-preset="all" onclick="applyPreset('all')">
-                                        <span class="preset-icon">📊</span>
-                                        All Categories
-                                    </button>
-                                </div>
-                                
-                                <!-- Advanced Filters -->
-                                <div class="advanced-filters">
-                                    <div class="filter-group">
-                                        <label class="filter-label label--outcomes">I Want More... [L & D Outcomes]</label>
-                                        <div class="filter-options" id="plan-outcome-filters">
-                                            {% for outcome in outcomes %}
-                                            <button class="filter-tag" 
-                                                    data-type="outcome" 
-                                                    data-id="{{ outcome.id }}"
-                                                    data-tooltip="{{ outcome.description if outcome.description else 'Click to filter by ' + outcome.name + ' outcome metrics' }}"
-                                                    onclick="toggleFilter('outcome', '{{ outcome.id }}', '{{ outcome.name }}')">
-                                                {{ outcome.name }}
-                                            </button>
-                                            {% endfor %}
-                                        </div>
-                                    </div>
-                                    
-                                    <div class="filter-group">
-                                        <label class="filter-label label--categories">As Measured By... [Metric Categories]</label>
-                                        <div class="filter-options" id="plan-category-filters">
-                                            {% for metric_type in metric_types %}
-                                            <button class="filter-tag" 
-                                                    data-type="category" 
-                                                    data-id="{{ metric_type.id }}"
-                                                    data-tooltip="{{ metric_type.description if metric_type.description else 'Click to filter by ' + metric_type.name + ' metrics' }}"
-                                                    onclick="toggleFilter('category', '{{ metric_type.id }}', '{{ metric_type.name }}')">
-                                                {{ metric_type.name }}
-                                            </button>
-                                            {% endfor %}
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                            
-                            <!-- Active Filters Display -->
-                            <div class="active-filters" id="plan-active-filters" style="display: none;">
-                                <div class="active-filters-header">
-                                    <span class="active-filters-label">Active Filters:</span>
-                                    <button class="clear-all-btn" onclick="clearAllFilters()">
-                                        Clear All
-                                    </button>
-                                </div>
-                                <div class="active-filters-list" id="plan-active-filters-list">
-                                    <!-- Active filter tags will be populated here -->
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- Search Results Display -->
-                        <div id="plan-search-results" class="search-results" style="display: none;">
-                            <div class="search-results-header">
-                                <h4>Search Results</h4>
-                                <button id="plan-clear-search-results" class="btn btn-sm btn-secondary">Clear Results</button>
-                            </div>
-                            <div id="plan-search-results-list" class="search-results-list"></div>
-                        </div>
-
-                        <!-- Metrics Grid -->
-                        <div class="metrics-section" id="plan-metrics-section">
-                            <div class="section-header">
-                                <h3>📊 Available Metrics</h3>
-                                <p id="metrics-section-description">Select a framework and competency above to see relevant metrics</p>
-                            </div>
-                            <div class="metrics-empty-state" id="metrics-empty-state">
-                                <div class="empty-state-icon">🎯</div>
-                                <h4>Ready to explore metrics?</h4>
-                                <p>Choose a framework and click on a competency to see relevant metrics for your development plan.</p>
-                            </div>
-                            <div class="metrics-container" id="plan-metrics-container" style="display: none;">
-                                <div class="metrics-grid view-grid" id="plan-metrics-grid">
-                                    {% for metric in metrics %}
-                                    <div class="metric-card" 
-                                         data-id="{{ metric.id }}"
-                                         data-outcome="{{ metric.outcome_id }}" 
-                                         data-type="{{ metric.metric_type_id }}"
-                                         data-outcome-name="{{ metric.outcome.name if metric.outcome else 'Unknown' }}"
-                                         data-type-name="{{ metric.metric_type.name if metric.metric_type else 'Unknown' }}"
-                                         data-name="{{ metric.name }}">
-                                        <div class="metric-header">
-                                            <h3 class="metric-title">{{ metric.name }}</h3>
-                                            <div class="metric-badges">
-                                                <span class="badge badge-outcome">{{ metric.outcome.name if metric.outcome else 'Unknown' }}</span>
-                                                <span class="badge badge-type">{{ metric.metric_type.name if metric.metric_type else 'Unknown' }}</span>
-                                            </div>
-                                        </div>
-                                        <div class="metric-content">
-                                            <p class="metric-description">{{ metric.description }}</p>
-                                            {% if metric.example %}
-                                            <div class="metric-example">
-                                                <strong>Example:</strong> {{ metric.example }}
-                                            </div>
-                                            {% endif %}
-                                            {% if metric.neuroscience_concept %}
-                                            <div class="metric-neuroscience">
-                                                <strong>🧠 Neuroscience:</strong> {{ metric.neuroscience_concept }}
-                                            </div>
-                                            {% endif %}
-                                        </div>
-                                        <div class="metric-actions">
-                                            <button class="btn btn-sm btn-outline" onclick="viewMetricDetails('{{ metric.id|tojson|safe }}')">
-                                                View Details
-                                            </button>
-                                            <button class="btn btn-sm btn-primary" onclick="addToReport('{{ metric.id|tojson|safe }}')">
-                                                Add to Plan
-                                            </button>
-                                        </div>
-                                    </div>
-                                    {% endfor %}
-                                </div>
-
-                                {% if not metrics %}
-                                <div class="no-data-message">
-                                    <div class="no-data-icon">📈</div>
-                                    <h3>No metrics found</h3>
-                                    <p>Try adjusting your search criteria or filters.</p>
-                                    <button id="plan-reset-all-filters" class="btn btn-primary">Reset All Filters</button>
-                                </div>
-                                {% endif %}
-                            </div>
-                        </div>
-                        
-                        <!-- Smart AI Recommendations -->
-                        <div class="ai-recommendations-section" id="plan-ai-recommendations">
-                            <div class="section-header">
-                                <h4>
-                                    <i class="fas fa-brain"></i>
-                                    Smart AI Recommendations
-                                </h4>
-                                <p class="section-description">
-                                    Based on your selected metrics, here are related concepts not in our database that could enhance your L&D measurement strategy:
-                                </p>
-                            </div>
-
-                            <!-- Selection Status and Submit -->
-                            <div class="selection-status">
-                                <div class="selected-count">
-                                    <span id="plan-selected-metrics-count">0</span> metrics selected
-                                </div>
-                                <button id="plan-get-recommendations-btn" class="btn btn-primary btn-lg" disabled>
-                                    <i class="fas fa-magic"></i>
-                                    Get AI Recommendations
-                                </button>
-                            </div>
-
-                            <!-- Recommendations Container -->
-                            <div id="plan-smart-recommendations-container" class="recommendations-container" style="display: none;">
-                                <div class="recommendations-header">
-                                    <h4>🎯 Recommended Concepts</h4>
-                                    <p>AI-generated suggestions to complement your selected metrics</p>
-                                </div>
-                                
-                                <div id="plan-recommendations-loading" class="recommendations-loading" style="display: none;">
-                                    <div class="loading-spinner"></div>
-                                    <p>Generating personalized recommendations...</p>
-                                </div>
-                                
-                                <div id="plan-recommendations-content" class="recommendations-content">
-                                    <!-- Recommendations will be populated here -->
-                                </div>
-                                
-                                <div id="plan-recommendations-error" class="recommendations-error" style="display: none;">
-                                    <div class="error-icon">⚠️</div>
-                                    <p>Unable to generate recommendations. Please try again.</p>
-                                    <button class="btn btn-secondary" onclick="retryRecommendations()">Retry</button>
-                                </div>
-                                
-                                <div class="recommendations-actions">
-                                    <button id="plan-save-recommendations" class="btn btn-outline" style="display: none;">
-                                        <i class="fas fa-save"></i>
-                                        Save Recommendations
-                                    </button>
-                                    <button id="plan-share-recommendations" class="btn btn-outline" style="display: none;">
-                                        <i class="fas fa-share"></i>
-                                        Share
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <!-- Streamlined Right Sidebar -->
-                    <div class="workspace-sidebar">
-                        <div class="plan-sidebar-content">
-                            <div class="sidebar-section">
-                                <h4>📊 Current Selections</h4>
-                                <div class="selection-summary" id="plan-selection-summary">
-                                    <div class="selection-stats">
-                                        <div class="selection-stat">
-                                            <span class="stat-number" id="plan-frameworks-count">0</span>
-                                            <span class="stat-label">Frameworks</span>
-                                        </div>
-                                        <div class="selection-stat">
-                                            <span class="stat-number" id="plan-metrics-count">0</span>
-                                            <span class="stat-label">Metrics</span>
-                                        </div>
-                                        <div class="selection-stat">
-                                            <span class="stat-number" id="plan-outcomes-count">0</span>
-                                            <span class="stat-label">Outcomes</span>
-                                        </div>
-                                    </div>
-                                    <div class="selection-details">
-                                        <div id="plan-selected-items" class="selected-items">
-                                            <p class="no-selection">No items selected yet</p>
-                                        </div>
-                                    </div>
-                                </div>
-                                
-                                <!-- Selection Actions -->
-                                <div class="selection-actions">
-                                    <button id="plan-clear-selections" class="btn btn-outline btn-sm" style="display: none;">
-                                        <span class="btn-icon">🗑️</span>
-                                        Clear All
-                                    </button>
-                                    <button id="plan-save-selections" class="btn btn-secondary btn-sm" style="display: none;">
-                                        <span class="btn-icon">💾</span>
-                                        Save Selection
-                                    </button>
-                                </div>
-                            </div>
-                            
-                            <!-- Next Step Section -->
-                            <div class="sidebar-section next-step-section">
-                                <div class="next-step-content" id="plan-next-step">
-                                    <div class="next-step-empty">
-                                        <div class="empty-icon">📋</div>
-                                        <h5>Ready to Generate Report?</h5>
-                                        <p>Select metrics above to proceed to report configuration</p>
-                                    </div>
-                                </div>
-                                
-                                <div class="next-step-actions" id="plan-next-step-actions" style="display: none;">
-                                    <button id="plan-proceed-to-report" class="btn btn-primary btn-lg btn-block">
-                                        <span class="btn-icon">⚡</span>
-                                        Next: Configure Report
-                                    </button>
-                                    <div class="next-step-preview">
-                                        <small class="text-muted">
-                                            <span id="plan-selection-preview">0 metrics selected</span> • 
-                                            <span id="plan-estimated-time">~5 min setup</span>
-                                        </small>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            <div id="tab-panel-library" class="tab-panel" role="tabpanel" hidden>
-                <div class="library-workspace">
-                    <div class="library-header">
-                        <h2>📚 Metrics Library</h2>
-                        <p>Explore all available metrics with comprehensive search and filtering</p>
-                    </div>
-                    
-                    <div class="library-search-section">
-                        <div class="search-controls">
-                            <input type="text" id="library-search" class="library-search-input" placeholder="Search metrics by name, description, or keywords...">
-                            <div class="library-filters">
-                                <select id="framework-filter" class="library-filter-select">
-                                    <option value="">All Frameworks</option>
-                                </select>
-                                <select id="category-filter" class="library-filter-select">
-                                    <option value="">All Categories</option>
-                                    <option value="Engagement">Engagement</option>
-                                    <option value="Productivity">Productivity</option>
-                                    <option value="Behavioral">Behavioral</option>
-                                    <option value="Operational">Operational</option>
-                                    <option value="Neuroscience">Neuroscience</option>
-                                </select>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <div class="library-results">
-                        <div class="library-stats">
-                            <span id="library-results-count">Loading metrics...</span>
-                        </div>
-                        <div id="library-metrics-grid" class="library-metrics-grid">
-                            <!-- Metrics will be populated here -->
-                        </div>
-                    </div>
-                </div>
-            </div>
-            <div id="tab-panel-analysis" class="tab-panel" role="tabpanel" hidden>
-                <div class="analysis-workspace">
-                    <div class="analysis-header">
-                        <h2>🧠 AI Event Analysis</h2>
-                        <p>Describe workplace events or challenges and get AI-powered L&D recommendations</p>
-                    </div>
-                    
-                    <div class="event-analysis-container">
-                        <!-- Login Prompt for Anonymous Users -->
-                        <div id="analysis-login-prompt" class="login-prompt" style="display: none;">
-                            <div class="login-prompt-content">
-                                <div class="login-prompt-icon">👤</div>
-                                <div class="login-prompt-text">
-                                    <h4>Login to use AI Event Analysis</h4>
-                                    <p>Get personalized recommendations and access your past analyses</p>
-                                </div>
-                                <div class="login-prompt-actions">
-                                    <a href="/admin/login" class="btn btn-primary">
-                                        <i class="fas fa-sign-in-alt"></i> Log In
-                                    </a>
-                                </div>
-                            </div>
-                        </div>
-                        
-                        <!-- Context Controls -->
-                        <div class="context-controls">
-                            <button class="context-btn" onclick="window.contextExportImport?.showExportModal()" title="Export Context Data">
-                                <span class="context-icon">📤</span>
-                                <span class="context-text">Export</span>
-                            </button>
-                            <button class="context-btn" onclick="window.contextExportImport?.showImportModal()" title="Import Context Data">
-                                <span class="context-icon">📥</span>
-                                <span class="context-text">Import</span>
-                            </button>
-                        </div>
-                        
-                        <div class="event-input-container">
-                            <div class="event-input-header">
-                                <textarea id="analysis-event-description" 
-                                         class="event-input" 
-                                         placeholder="Describe a workplace event or situation... (e.g., 'Our team struggled with project deadlines due to communication issues')"
-                                         rows="4"
-                                         maxlength="500"></textarea>
-                                <div class="character-counter">
-                                    <span id="analysis-char-count">0</span>/500
-                                </div>
-                            </div>
-                            
-                            <!-- Smart Suggestions -->
-                            <div id="analysis-event-suggestions" class="event-suggestions" style="display: none;">
-                                <div class="suggestions-header">
-                                    <span class="suggestions-icon">💡</span>
-                                    <span class="suggestions-text">Quick Examples:</span>
-                                </div>
-                                <div class="suggestions-list">
-                                    <button class="suggestion-item" data-suggestion="Our team completed a leadership development program but engagement scores dropped by 15% afterward">
-                                        Leadership program impact on engagement
-                                    </button>
-                                    <button class="suggestion-item" data-suggestion="New employees are taking 3 months longer than expected to reach full productivity">
-                                        Onboarding effectiveness issues
-                                    </button>
-                                    <button class="suggestion-item" data-suggestion="Remote workers report feeling disconnected from company culture and values">
-                                        Remote work culture challenges
-                                    </button>
-                                    <button class="suggestion-item" data-suggestion="High-performing employees are leaving within 18 months despite competitive compensation">
-                                        Retention challenges for top talent
-                                    </button>
-                                    <button class="suggestion-item" data-suggestion="Training completion rates are high but knowledge retention tests show poor results">
-                                        Training effectiveness vs retention
-                                    </button>
-                                </div>
-                            </div>
-                            
-                            <div class="event-input-actions">
-                                <button id="analysis-analyze-btn" class="btn btn-primary btn-lg">
-                                    <span class="btn-icon">🧠</span>
-                                    Analyze Event
-                                </button>
-                                <button id="analysis-show-examples" class="btn btn-secondary">
-                                    <span class="btn-icon">💡</span>
-                                    Show Examples
-                                </button>
-                            </div>
-                        </div>
-
-                        <!-- Analysis Results -->
-                        <div id="analysis-results-container" class="analysis-results" style="display: none;">
-                            <div class="results-header">
-                                <h3>🎯 AI Analysis Results</h3>
-                                <button id="analysis-clear-results" class="btn btn-sm btn-outline">Clear Results</button>
-                            </div>
-                            <div id="analysis-results-content" class="analysis-content">
-                                <!-- Results will be populated here -->
-                            </div>
-                        </div>
-                        
-                        <!-- Loading State -->
-                        <div id="analysis-loading" class="analysis-loading" style="display: none;">
-                            <div class="loading-spinner"></div>
-                            <p>Analyzing your event and finding relevant metrics...</p>
-                        </div>
-                        
-                        <!-- Past Searches -->
-                        <div id="analysis-past-searches-container" class="past-searches-container" style="display: none;">
-                            <div class="past-searches-header">
-                                <h4 class="past-searches-title">📋 Your Recent Analyses</h4>
-                                <p class="past-searches-subtitle">Click on any previous search to reuse it</p>
-                                <div class="past-searches-actions">
-                                    <button id="analysis-clear-history-btn" class="btn btn-sm btn-outline" style="display: none;">
-                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                            <polyline points="3,6 5,6 21,6"></polyline>
-                                            <path d="M19,6v14a2,2 0 0,1-2,2H7a2,2 0 0,1-2-2V6m3,0V4a2,2 0 0,1,2-2h4a2,2 0 0,1,2,2v2"></path>
-                                        </svg>
-                                        Clear History
-                                    </button>
-                                </div>
-                            </div>
-                            <div id="analysis-past-searches-list" class="past-searches-list">
-                                <!-- Past searches will be populated here -->
-                            </div>
-                            <div id="analysis-past-searches-empty" class="past-searches-empty" style="display: none;">
-                                <div class="empty-state-icon">📝</div>
-                                <p>No previous analyses found</p>
-                                <small>Your analysis history will appear here after you analyze events</small>
-                            </div>
-                        </div>
-                        
-                        <!-- Login Modal -->
-                        <div id="analysis-login-modal" class="modal" style="display: none;">
-                            <div class="modal-content">
-                                <div class="modal-header">
-                                    <h3>Login Required</h3>
-                                    <span class="close-modal">&times;</span>
-                                </div>
-                                <div class="modal-body">
-                                    <form id="analysis-login-form">
-                                        <div class="form-group">
-                                            <label for="analysis-username">Username</label>
-                                            <input type="text" id="analysis-username" name="username" required class="form-control">
-                                        </div>
-                                        <div class="form-group">
-                                            <label for="analysis-password">Password</label>
-                                            <input type="password" id="analysis-password" name="password" required class="form-control">
-                                        </div>
-                                        <div class="form-actions">
-                                            <button type="submit" class="btn btn-primary">
-                                                <i class="fas fa-sign-in-alt"></i> Log In
-                                            </button>
-                                            <button type="button" class="btn btn-secondary close-modal">
-                                                Cancel
-                                            </button>
-                                        </div>
-                                    </form>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Tabs Utilities -->
-        <div class="tabs-controls" style="margin-top: 8px; display: flex; gap: 8px;">
-            <button id="toggle-scroll-sync" class="btn btn-sm btn-secondary" aria-pressed="true" type="button">Scroll Sync: On</button>
-            <button id="clear-last-tab" class="btn btn-sm btn-outline" type="button">Clear Last Tab</button>
-        </div>
-
-        <!-- Debug box for tabs (shown only when debug active) -->
-        <div id="tabs-debug" class="tabs-debug" style="display:none;" aria-live="polite"></div>
-    </div>
-</section>
-
-
-
-
-
-<!-- Admin Section (Collapsible Footer) -->
-<div class="admin-overlay" id="admin-overlay" style="display: none;">
-    <div class="admin-panel">
-        <div class="admin-header">
-            <h2 class="admin-title">⚙️ Administration Panel</h2>
-            <p class="admin-subtitle">Manage your L & D metrics and outcomes</p>
-            <button class="admin-close" id="admin-close">&times;</button>
-        </div>
-        
-        <div class="admin-tabs">
-            <button class="admin-tab active" data-tab="find-metrics-tab">Add Metrics</button>
-            <button class="admin-tab" data-tab="explore-categories-tab">Add Concepts</button>
-            <button class="admin-tab" data-tab="manage-tab">Manage</button>
-        </div>
-        
-        <div class="admin-content">
-            <!-- Admin forms and content will be populated here -->
-            <div class="admin-placeholder">
-                <p>Admin panel content loading...</p>
-            </div>
-        </div>
-    </div>
-</div>
-
-<!-- Loading and Error States -->
-<div class="loading" id="loading" style="display: none;">
-    <div class="loading-spinner"></div>
-    <p class="loading-text">Loading metrics...</p>
-</div>
-
-<div class="error-message" id="error-message" style="display: none;">
-    <div class="error-icon">⚠️</div>
-    <h3>Something went wrong</h3>
-    <p class="error-text"></p>
-    <button class="btn btn-primary" onclick="location.reload()">Retry</button>
-</div>
-
-<!-- Core Application Scripts -->
-<script src="{{ url_for('static', filename='js/script.js') }}?v={{ range(10000, 99999) | random }}"></script>
-<script src="{{ url_for('static', filename='js/simple-search.js') }}?v={{ range(10000, 99999) | random }}"></script>
-<script src="{{ url_for('static', filename='js/enhanced-filters.js') }}?v={{ range(10000, 99999) | random }}"></script>
-
-<!-- Context-Aware UI Components -->
-<script src="{{ url_for('static', filename='js/context-status-indicator.js') }}?v={{ range(10000, 99999) | random }}"></script>
-<script src="{{ url_for('static', filename='js/session-restore.js') }}?v={{ range(10000, 99999) | random }}"></script>
-<script src="{{ url_for('static', filename='js/context-summary.js') }}?v={{ range(10000, 99999) | random }}"></script>
-<script src="{{ url_for('static', filename='js/context-export-import.js') }}?v={{ range(10000, 99999) | random }}"></script>
-<script src="{{ url_for('static', filename='js/section-navigation.js') }}"></script>
-
-<!-- Smart AI Recommendations and Dynamic Report scripts -->
-<script src="{{ url_for('static', filename='js/smart-recommendations.js') }}?v={{ range(10000, 99999) | random }}"></script>
-<script src="{{ url_for('static', filename='js/dynamic-report-generator.js') }}?v={{ range(10000, 99999) | random }}"></script>
-
-<!-- Context-Aware Workflow -->
-<script src="{{ url_for('static', filename='js/context-aware-workflow.js') }}?v={{ range(10000, 99999) | random }}"></script>
-
-<!-- Streamlined Sidebar -->
-<script src="{{ url_for('static', filename='js/streamlined-sidebar.js') }}?v={{ range(10000, 99999) | random }}"></script>
-
-<!-- Interactive Competency Filters -->
-<script src="{{ url_for('static', filename='js/interactive-competency-filters.js') }}?v={{ range(10000, 99999) | random }}"></script>
-
-<!-- Metrics Library -->
-<script src="{{ url_for('static', filename='js/metrics-library.js') }}?v={{ range(10000, 99999) | random }}"></script>
-
-<!-- Report Configuration Presets -->
-<script src="{{ url_for('static', filename='js/report-config-presets.js') }}?v={{ range(10000, 99999) | random }}"></script>
 {% endblock %}
