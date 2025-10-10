@@ -194,6 +194,23 @@
 .tag-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .tag-chip { background: #f3f4f6; border: 1px solid #e5e7eb; color: #374151; border-radius: 999px; padding: 2px 8px; font-size: 12px; }
 
+/* Role Architect: Review wizard styling enhancements */
+.review-card .chip-driver { background: #eef2ff; color: #3730a3; border-radius: 999px; padding: 2px 8px; font-size: 12px; font-weight: 600; display: inline-flex; align-items: center; gap: 4px; }
+.review-card .chip-target { background: #ecfdf5; color: #047857; border-radius: 999px; padding: 2px 8px; font-size: 12px; font-weight: 600; }
+.review-card .chip-unlinked { background: #f9fafb; border: 1px dashed #d1d5db; color: #6b7280; }
+.review-card .chip-unlinked .chip-label { color: inherit; }
+.review-card .chip-unlinked::before { content: 'Unlinked'; font-size: 11px; text-transform: uppercase; letter-spacing: .3px; color: #9ca3af; border: 1px solid #d1d5db; border-radius: 6px; padding: 2px 6px; margin-right: 6px; }
+.review-card .chip-unlinked .chip-driver,
+.review-card .chip-unlinked .chip-target { display: none; }
+.review-card .chip { border: 1px solid #e5e7eb; background: #fff; }
+.review-card .chip .chip-label { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.review-card .chip + .chip { margin-top: 6px; }
+.review-subtype { display: inline-block; background: #eef2ff; color: #3730a3; border-radius: 999px; padding: 1px 6px; font-size: 11px; margin-left: 6px; }
+.target-row .t-driver { display: inline-flex; flex-wrap: wrap; gap: 6px; }
+.target-row .t-driver::before { content: '\f5a2'; font-family: 'Font Awesome 6 Free'; font-weight: 900; color: #3f6fe0; margin-right: 6px; }
+.target-row .t-driver span { display: inline-flex; align-items: center; gap: 4px; }
+
+
 /* Segmented control for kind filters (All/Drivers/Biases/Heuristics) */
 .segmented { display: inline-flex; gap: 6px; padding: 6px; background: rgba(255,255,255,0.85); border: 1px solid var(--border, #e5e7eb); border-radius: 999px; box-shadow: 0 8px 24px rgba(0,0,0,0.05); flex-wrap: wrap; }
 .segmented .seg-btn { appearance: none; border: 1px solid transparent; background: transparent; color: #374151; padding: 8px 14px; border-radius: 999px; font-weight: 600; font-size: 14px; line-height: 1; cursor: pointer; transition: background-color .2s ease, color .2s ease, box-shadow .2s ease; }

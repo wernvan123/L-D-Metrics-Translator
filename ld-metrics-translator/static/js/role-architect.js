@@ -3,13 +3,28 @@
 const RoleArchitect = (() => {
   async function fetchJSON(url, opts = {}) {
     const base = { headers: { 'Accept': 'application/json' }, credentials: 'same-origin' };
-    // If sending a body and no explicit content-type set, default to JSON
     if (opts && opts.body && (!opts.headers || !opts.headers['Content-Type'])) {
       base.headers['Content-Type'] = 'application/json';
     }
     const res = await fetch(url, Object.assign(base, opts));
-    if (!res.ok) throw new Error(`Request failed: ${res.status}`);
-    return await res.json();
+    const raw = await res.text();
+    let data = null;
+    if (raw) {
+      try { data = JSON.parse(raw); }
+      catch { /* leave data null */ }
+    }
+    if (!res.ok) {
+      const details = data && typeof data === 'object' ? (data.error || data.message || data.detail) : null;
+      const err = new Error(details || raw || `Request failed: ${res.status}`);
+      err.status = res.status;
+      err.payload = data;
+      throw err;
+    }
+    if (data === null && raw) {
+      try { data = JSON.parse(raw); }
+      catch { data = raw; }
+    }
+    return data ?? {};
   }
 
   // List page
@@ -140,7 +155,12 @@ const RoleArchitect = (() => {
       try {
         const data = await fetchJSON('/api/driver-cards?kind=driver&per_page=250');
         const items = Array.isArray(data.items) ? data.items : [];
-        _driverCardCache = items.map(card => ({ id: Number(card.id), name: card.name || `Card #${card.id}` }));
+        _driverCardCache = items.map(card => ({
+          id: Number(card.id),
+          name: card.name || `Card #${card.id}`,
+          identifier_type: card.identifier_type || null,
+          metric_type: card.metric_type?.name || null,
+        }));
         _driverCardMap = new Map(_driverCardCache.map(card => [card.id, card]));
         return _driverCardCache;
       } catch (err) {
@@ -183,6 +203,27 @@ const RoleArchitect = (() => {
     return _driverCardMap.get(num) || null;
   }
 
+  function driverCardLabels(cardMeta) {
+    if (!cardMeta) return { subtype: '', metric: '' };
+    const subtype = cardMeta.identifier_type ? `(${formatIdentifier(cardMeta.identifier_type)})` : '';
+    const metric = cardMeta.metric_type || '';
+    return { subtype, metric };
+  }
+
+  function formatIdentifier(identifier) {
+    if (!identifier) return '';
+    const map = {
+      trait_attribute: 'Trait/Attribute',
+      behavior: 'Behavior',
+      behaviour: 'Behavior',
+      skill: 'Skill',
+      concept: 'Concept',
+      competency: 'Competency',
+    };
+    const key = String(identifier).toLowerCase();
+    return map[key] || key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+  }
+
   function renderKsaoChip(kind, item, idx) {
     const parts = [escapeHtml(item.name || '')];
     let cardName = item.driver_card_name;
@@ -191,7 +232,11 @@ const RoleArchitect = (() => {
       cardName = card.name;
       item.driver_card_name = cardName;
     }
-    if (cardName) parts.push(`<span class="chip-driver">@ ${escapeHtml(cardName)}</span>`);
+    if (cardName) {
+      const { subtype } = driverCardLabels(card);
+      const details = subtype ? ` ${escapeHtml(subtype)}` : '';
+      parts.push(`<span class="chip-driver">@ ${escapeHtml(cardName)}${details}</span>`);
+    }
     if (['knowledge','skills','abilities','outcomes'].includes(kind) && typeof item.target_level === 'number') {
       parts.push(`<span class="chip-target">Target ${escapeHtml(String(item.target_level))} (${escapeHtml(levelLabel(item.target_level))})</span>`);
     }
@@ -205,15 +250,21 @@ const RoleArchitect = (() => {
     }
     const includeTarget = ['knowledge','skills','abilities','outcomes'].includes(kind);
     return `<ul class="chips">${items.map((item) => {
-      const parts = [escapeHtml(item.name || '')];
       const driverId = item.driver_card_id || (item.driver_card && item.driver_card.id);
-      const driverName = item.driver_card_name || (driverCardMeta(driverId)?.name) || '';
-      if (driverName) parts.push(`<span class="chip-driver">@ ${escapeHtml(driverName)}</span>`);
+      const driverMeta = driverCardMeta(driverId);
+      const driverName = item.driver_card_name || driverMeta?.name || '';
+      const { subtype } = driverCardLabels(driverMeta);
+      const showUnlinked = includeTarget && !driverName;
+      const parts = [escapeHtml(item.name || '')];
+      if (driverName) {
+        const details = subtype ? ` ${escapeHtml(subtype)}` : '';
+        parts.push(`<span class="chip-driver">@ ${escapeHtml(driverName)}${details}</span>`);
+      }
       if (includeTarget && typeof item.target_level === 'number') {
         parts.push(`<span class="chip-target">Target ${escapeHtml(String(item.target_level))} (${escapeHtml(levelLabel(item.target_level))})</span>`);
       }
       if (item.description) parts.push(`— ${escapeHtml(item.description)}`);
-      return `<li class="chip"><span class="chip-label">${parts.join(' ')}</span></li>`;
+      return `<li class="chip${showUnlinked ? ' chip-unlinked' : ''}"><span class="chip-label">${parts.join(' ')}</span></li>`;
     }).join('')}</ul>`;
   }
 
@@ -247,18 +298,21 @@ const RoleArchitect = (() => {
     const defaultVal = Number(state.targetDefaults?.target || 3);
     return `
       <table class="review-table">
-        <thead><tr><th>Driver card</th><th>Linked item</th><th>Type</th><th>Target</th></tr></thead>
+        <thead><tr><th>Driver card</th><th>Linked item</th><th>KSAO Category</th><th>Target</th><th>Measurement</th></tr></thead>
         <tbody>
           ${entries.map(({ kind, item, driver_card_id }) => {
             const driver = driverCardMeta(driver_card_id);
             const driverName = driver?.name || item.driver_card_name || `Driver card #${driver_card_id}`;
             const targetVal = normalizeTargetLevel(item.target_level, defaultVal);
             const isDefault = !(Number.isInteger(item.target_level));
+            const { subtype, metric } = driverCardLabels(driver);
+            const kindLabel = kind.charAt(0).toUpperCase() + kind.slice(1);
             return `<tr>
-              <td>${escapeHtml(driverName)}</td>
+              <td>${escapeHtml(driverName)}${subtype ? ` <span class="review-subtype">${escapeHtml(subtype)}</span>` : ''}</td>
               <td>${escapeHtml(item.name || '')}</td>
-              <td>${escapeHtml(kind.charAt(0).toUpperCase() + kind.slice(1))}</td>
+              <td>${escapeHtml(kindLabel)}</td>
               <td>${targetVal}: ${escapeHtml(levelLabel(targetVal))}${isDefault ? ' <span class="hint">(default)</span>' : ''}</td>
+              <td>${metric ? escapeHtml(metric) : '—'}</td>
             </tr>`;
           }).join('')}
         </tbody>
@@ -270,6 +324,7 @@ const RoleArchitect = (() => {
     const { kind, index, item, driver_card_id } = entry;
     const driver = driverCardMeta(driver_card_id);
     const driverName = driver?.name || item.driver_card_name || `Driver card #${driver_card_id}`;
+    const { subtype, metric } = driverCardLabels(driver);
     const sliderValue = normalizeTargetLevel(item.target_level, defaultLevel);
     const sliderId = `target-${kind}-${index}`;
     const usingDefault = !Number.isInteger(item.target_level);
@@ -282,7 +337,7 @@ const RoleArchitect = (() => {
         <div class="t-head">
           <div>
             <div class="t-name">${escapeHtml(item.name || '')}</div>
-            <div class="t-driver hint">${escapeHtml(driverName)}</div>
+            <div class="t-driver hint">${escapeHtml(driverName)}${subtype ? ` · ${escapeHtml(subtype)}` : ''}${metric ? ` · ${escapeHtml(metric)}` : ''}</div>
           </div>
           ${control}
         </div>
@@ -951,31 +1006,67 @@ const RoleArchitect = (() => {
       renderStep();
     });
     save?.addEventListener('click', async () => {
+      setSaving(true);
       try {
         // 1) Create role (or update if editing)
         let roleId = state.roleId;
+        let createdNewRole = false;
         if (!roleId) {
-          const created = await fetchJSON('/api/roles', { method: 'POST', body: JSON.stringify({
-            name: state.name,
-            description: state.description,
-            department: state.department,
-          })});
-          roleId = created.role?.id;
-          state.roleId = roleId;
-        } else {
-          await fetchJSON(`/api/roles/${roleId}`, { method: 'PATCH', body: JSON.stringify({
-            name: state.name,
-            description: state.description,
-            department: state.department,
-          })});
+          try {
+            const created = await fetchJSON('/api/roles', { method: 'POST', body: JSON.stringify({
+              name: state.name,
+              description: state.description,
+              department: state.department,
+            }) });
+            roleId = created.role?.id;
+            state.roleId = roleId;
+            createdNewRole = true;
+          } catch (err) {
+            if (err.status === 400 && (err?.message || '').toLowerCase().includes('already exists')) {
+              const existingId = await findRoleIdByName(state.name);
+              if (existingId) {
+                roleId = existingId;
+                state.roleId = roleId;
+                showAlert('warning', `Role "${escapeHtml(state.name)}" already exists. Updating that profile instead.`);
+              } else {
+                showAlert('danger', escapeHtml(err.message || 'Role name already exists.'));
+                setSaving(false);
+                return;
+              }
+            } else {
+              throw err;
+            }
+          }
+        }
+
+        if (!roleId) {
+          showAlert('danger', 'Unable to determine role ID.');
+          setSaving(false);
+          return;
+        }
+
+        if (!createdNewRole) {
+          try {
+            await fetchJSON(`/api/roles/${roleId}`, { method: 'PATCH', body: JSON.stringify({
+              name: state.name,
+              description: state.description,
+              department: state.department,
+              is_active: true,
+            }) });
+          } catch (err) {
+            if (err.status === 400 && (err?.message || '').toLowerCase().includes('already exists')) {
+              showAlert('warning', `Using existing role "${escapeHtml(state.name)}".`);
+            } else {
+              throw err;
+            }
+          }
         }
         if (!roleId) throw new Error('Missing role id after create');
-        // 2) Upsert KSAOs
+        // 2) upsert KSAOs
         await fetchJSON(`/api/roles/${roleId}/ksaos`, { method: 'POST', body: JSON.stringify({
           knowledge: serializeKsaoItems(state.knowledge),
           skills: serializeKsaoItems(state.skills),
           abilities: serializeKsaoItems(state.abilities),
-          others: serializeKsaoItems(state.others, { includeTarget: false }),
           outcomes: serializeKsaoItems(state.outcomes),
         })});
         // 3) Targets are implied by KSAO target levels; no separate endpoint
@@ -984,7 +1075,9 @@ const RoleArchitect = (() => {
         window.location.href = fromAdmin ? '/admin/roles?saved=1' : '/roles';
       } catch (e) {
         console.error(e);
-        alert('Failed to save role profile.');
+        const message = e?.message || 'Failed to save role profile.';
+        showAlert('danger', message);
+        setSaving(false);
       }
     });
   }
@@ -1044,6 +1137,52 @@ const RoleArchitect = (() => {
   }
   function escapeAttr(s) {
     return escapeHtml(s).replace(/"/g, '&quot;');
+  }
+  async function findRoleIdByName(name) {
+    const query = (name || '').trim();
+    if (!query) return null;
+    try {
+      const data = await fetchJSON(`/api/roles?q=${encodeURIComponent(query)}`);
+      const match = (data.roles || []).find(role => (role.name || '').trim().toLowerCase() === query.toLowerCase());
+      return match?.id || null;
+    } catch {
+      return null;
+    }
+  }
+  function setSaving(isSaving) {
+    const save = document.getElementById('wiz-save');
+    const next = document.getElementById('wiz-next');
+    const prev = document.getElementById('wiz-prev');
+    [save, next, prev].forEach(btn => {
+      if (!btn) return;
+      btn.disabled = !!isSaving;
+      btn.classList.toggle('is-loading', !!isSaving);
+    });
+    if (save) {
+      if (isSaving) {
+        if (!save.dataset.originalLabel) {
+          save.dataset.originalLabel = save.textContent;
+        }
+        save.textContent = 'Saving…';
+      } else if (save.dataset.originalLabel) {
+        save.textContent = save.dataset.originalLabel;
+      }
+    }
+  }
+  function showAlert(level, message) {
+    const container = document.getElementById('global-alerts') || document.querySelector('.flash-messages');
+    if (container) {
+      const alert = document.createElement('div');
+      alert.className = `alert alert-${escapeAttr(level || 'info')}`;
+      alert.innerHTML = `<span>${escapeHtml(message || '')}</span>`;
+      container.append(alert);
+      setTimeout(() => {
+        alert.classList.add('alert-dismiss');
+        setTimeout(() => alert.remove(), 400);
+      }, 4000);
+    } else {
+      window.alert(message || 'Notification');
+    }
   }
   function levelLabel(n){
     switch(Number(n)){

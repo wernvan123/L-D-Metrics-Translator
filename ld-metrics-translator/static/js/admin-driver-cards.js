@@ -205,6 +205,27 @@
     els.chainOutcomes = document.getElementById('dc-chain-outcomes');
     els.dataCollection = document.getElementById('dc-data-collection');
     els.frequency = document.getElementById('dc-frequency');
+    updateIdentifierAvailability();
+  }
+
+  function updateIdentifierAvailability(){
+    if(!els.identifier) return;
+    const kindValue = (els.kind?.value || '').toLowerCase();
+    const isDriver = kindValue === 'driver';
+    els.identifier.disabled = !isDriver;
+    if(!isDriver){
+      els.identifier.value = '';
+      els.identifier.classList.add('form-select-disabled');
+    } else {
+      if(!els.identifier.value){
+        els.identifier.value = 'concept';
+      }
+      els.identifier.classList.remove('form-select-disabled');
+    }
+    const label = els.identifier?.closest('.col-md-6')?.querySelector('label');
+    if(label){
+      label.classList.toggle('text-muted', !isDriver);
+    }
   }
 
   function initChoices(){
@@ -290,6 +311,11 @@
     }
     if(els.modalElement){
       els.modalElement.addEventListener('hidden.bs.modal', resetForm);
+    }
+    if(els.kind){
+      els.kind.addEventListener('change', () => {
+        updateIdentifierAvailability();
+      });
     }
   }
 

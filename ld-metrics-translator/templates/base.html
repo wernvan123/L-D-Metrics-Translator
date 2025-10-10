@@ -27,7 +27,9 @@
                         <a href="{{ url_for('main.dashboard') }}" class="nav-link{% if request.path == url_for('main.dashboard') %} active{% endif %}">Dashboard</a>
                         <a href="{{ url_for('main.diagnostics') }}" class="nav-link{% if request.path.startswith(url_for('main.diagnostics')) %} active{% endif %}">Diagnostics</a>
                         <a href="{{ url_for('main.reports') }}" class="nav-link{% if request.path.startswith('/reports') %} active{% endif %}">Reports</a>
+                        {% if is_admin %}
                         <a href="{{ url_for('main.roles') }}" class="nav-link{% if request.path.startswith('/roles') or request.path.startswith('/admin/roles') %} active{% endif %}">Role Manager</a>
+                        {% endif %}
                         <a href="{{ url_for('main.playbook') }}" class="nav-link{% if request.path.startswith(url_for('main.playbook')) %} active{% endif %}">Playbook</a>
                         <a href="{{ url_for('main.plan_builder') }}" class="nav-link{% if request.path.startswith(url_for('main.plan_builder')) %} active{% endif %}">Plan Builder</a>
                     </div>
@@ -36,7 +38,9 @@
                         <li><a href="{{ url_for('main.dashboard') }}" class="nav-link{% if request.path == url_for('main.dashboard') %} active{% endif %}">Dashboard</a></li>
                         <li><a href="{{ url_for('main.diagnostics') }}" class="nav-link{% if request.path.startswith(url_for('main.diagnostics')) %} active{% endif %}">Diagnostics</a></li>
                         <li><a href="{{ url_for('main.reports') }}" class="nav-link{% if request.path.startswith('/reports') %} active{% endif %}">Reports</a></li>
+                        {% if is_admin %}
                         <li><a href="{{ url_for('main.roles') }}" class="nav-link{% if request.path.startswith('/roles') or request.path.startswith('/admin/roles') %} active{% endif %}">Role Manager</a></li>
+                        {% endif %}
                         <li><a href="{{ url_for('main.playbook') }}" class="nav-link{% if request.path.startswith(url_for('main.playbook')) %} active{% endif %}">Playbook</a></li>
                         <li><a href="{{ url_for('main.plan_builder') }}" class="nav-link{% if request.path.startswith(url_for('main.plan_builder')) %} active{% endif %}">Plan Builder</a></li>
                     </ul>
