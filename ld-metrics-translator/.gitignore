@@ -38,7 +38,6 @@ instance/
 *.sqlite3
 
 # Environment variables
-.env
 .flaskenv
 
 # IDE

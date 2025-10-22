@@ -13,6 +13,7 @@ from app.models import (
 )
 from app import db
 from app.ollama_integration import recommendation_engine, report_generator, event_analyzer
+from app.services import knowledge_base
 from app.database import create_event_analysis, get_recent_event_analyses
 from sqlalchemy import or_, func, text
 from sqlalchemy.orm import aliased
@@ -3256,24 +3257,57 @@ def analyze_event():
             # Pass selected metrics context to the analyzer
             analysis = event_analyzer.analyze_event(event_description, selected_metrics=selected_metrics)
             generated_by = 'ai' if event_analyzer.ollama.available else 'rules'
-            
-            # Store successful analysis in database
-            stored_analysis = create_event_analysis(
-                event_description=event_description,
-                analysis_result=str(analysis),  # Convert to string for storage
-                generated_by=generated_by,
-                success=True,
-                ip_address=client_ip
-            )
-            
-            return jsonify({
+
+            kb_payload = {'strong': [], 'related': [], 'biases': []}
+            if current_app.config.get('ENABLE_EVENT_KB'):
+                kb_context = data.get('kb_context')
+                kb_tier_limit = int(data.get('kb_tier_limit', 5))
+                kb_related_limit = int(data.get('kb_related_limit', 10))
+
+                kb_payload['strong'] = knowledge_base.serialize_resources(
+                    knowledge_base.get_resources_by_tier('t1t2', limit=kb_tier_limit)
+                )
+                kb_payload['related'] = knowledge_base.serialize_resources(
+                    knowledge_base.get_resources_for_context(kb_context, max_results=kb_related_limit)
+                )
+                bias_query_parts = []
+                if event_description:
+                    bias_query_parts.append(event_description)
+                if selected_metrics:
+                    bias_query_parts.extend(
+                        m.get('name')
+                        for m in selected_metrics
+                        if isinstance(m, dict) and m.get('name')
+                    )
+                bias_query = " ".join(part for part in bias_query_parts if part).strip()
+                bias_resources = []
+                if bias_query:
+                    bias_resources = knowledge_base.search_bias_resources(bias_query, limit=kb_related_limit)
+                if not bias_resources:
+                    bias_resources = knowledge_base.get_random_bias_resources(limit=kb_related_limit)
+                kb_payload['biases'] = knowledge_base.serialize_resources(bias_resources)
+
+            response_payload = {
                 'success': True,
                 'analysis': analysis,
                 'generated_by': generated_by,
                 'ollama_status': 'available' if event_analyzer.ollama.available else 'unavailable',
                 'timestamp': time.time(),
-                'analysis_id': stored_analysis.id
-            })
+                'kb': kb_payload
+            }
+
+            # Store successful analysis in database
+            stored_analysis = create_event_analysis(
+                event_description=event_description,
+                analysis_result=str(response_payload['analysis']),
+                generated_by=generated_by,
+                success=True,
+                ip_address=client_ip
+            )
+
+            response_payload['analysis_id'] = stored_analysis.id
+
+            return jsonify(response_payload)
             
         except Exception as analysis_error:
             # Store failed analysis in database
@@ -3301,6 +3335,38 @@ def analyze_event():
             },
             'generated_by': 'rules'
         }), 200
+@api.route('/knowledge/biases', methods=['GET'])
+def get_bias_knowledge():
+    if not current_app.config.get('ENABLE_EVENT_KB'):
+        return jsonify({
+            'success': True,
+            'items': [],
+            'total': 0
+        })
+
+    query = (request.args.get('q') or '').strip()
+    limit = max(1, min(request.args.get('limit', 10, type=int), 25))
+
+    try:
+        if query:
+            resources = knowledge_base.search_bias_resources(query, limit=limit)
+        else:
+            resources = knowledge_base.get_bias_resources(limit=limit)
+
+        items = knowledge_base.serialize_resources(resources)
+
+        return jsonify({
+            'success': True,
+            'items': items,
+            'total': len(items)
+        })
+
+    except Exception as e:
+        logger.error(f"Error retrieving bias knowledge: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': 'Failed to retrieve bias knowledge'
+        }), 500
 
 
 @api.route('/ollama-status', methods=['GET'])
