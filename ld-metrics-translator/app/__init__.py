@@ -106,6 +106,7 @@ def create_app(config_name='default'):
             'UI_TABS_V2': bool(cfg.get('UI_TABS_V2')),
             'HOME_HERO_V2': bool(cfg.get('HOME_HERO_V2')),
             'DRIVER_CARDS_V1': bool(cfg.get('DRIVER_CARDS_V1')),
+            'ENABLE_EVENT_KB': bool(cfg.get('ENABLE_EVENT_KB')),
             'is_admin': bool(session.get('admin_user_id')),
         }
     

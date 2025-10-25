@@ -288,7 +288,7 @@ class ContextManager:
             if not kind or not label:
                 raise ValueError("kind and label are required")
             kind_l = str(kind).lower()
-            allowed = {"driver", "bias", "metric", "outcome", "competency"}
+            allowed = {"driver", "bias", "metric", "outcome", "competency", "kpi", "nudge", "gap"}
             if kind_l not in allowed:
                 raise ValueError(f"Invalid kind '{kind}'. Must be one of {sorted(allowed)}")
 

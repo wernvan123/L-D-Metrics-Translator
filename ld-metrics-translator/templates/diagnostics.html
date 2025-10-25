@@ -18,6 +18,11 @@
   </div>
 </section>
 
+<script>
+  window.APP_FLAGS = window.APP_FLAGS || {};
+  window.APP_FLAGS.ENABLE_EVENT_KB = {{ 'true' if ENABLE_EVENT_KB else 'false' }};
+</script>
+
 <!-- Panel: AI Event Analysis (hooks for event-analysis.js) -->
 <section id="diag-ai" class="page-section diag-panel" role="tabpanel">
   <div class="container">

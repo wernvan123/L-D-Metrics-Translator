@@ -49,10 +49,16 @@ class Config:
     SENTRY_DSN = os.environ.get('SENTRY_DSN')
     ENABLE_METRICS = os.environ.get('ENABLE_METRICS', 'False').lower() == 'true'
 
+    # Ollama integration
+    OLLAMA_TIMEOUT = int(os.environ.get('OLLAMA_TIMEOUT', 120))
+    OLLAMA_MAX_RETRIES = int(os.environ.get('OLLAMA_MAX_RETRIES', 1))
+    OLLAMA_RETRY_BACKOFF = float(os.environ.get('OLLAMA_RETRY_BACKOFF', 2.0))
+
     # Feature Flags (non-invasive, default off)
     UI_TABS_V2 = os.environ.get('UI_TABS_V2', 'False').lower() == 'true'
     HOME_HERO_V2 = os.environ.get('HOME_HERO_V2', 'False').lower() == 'true'
     DRIVER_CARDS_V1 = os.environ.get('DRIVER_CARDS_V1', 'False').lower() == 'true'
+    ENABLE_EVENT_KB = os.environ.get('ENABLE_EVENT_KB', 'False').lower() == 'true'
     
     @staticmethod
     def init_app(app):

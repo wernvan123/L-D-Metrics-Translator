@@ -332,6 +332,60 @@ class AuditLog(db.Model):
         }
 
 
+class KnowledgeCategory(db.Model):
+    __tablename__ = 'knowledge_categories'
+
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(200), nullable=False, unique=True)
+    description = db.Column(db.Text)
+    created_date = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+
+    resources = db.relationship('KnowledgeResource', backref='category', cascade='all, delete-orphan')
+
+    def __repr__(self):
+        return f'<KnowledgeCategory {self.name}>'
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'name': self.name,
+            'description': self.description,
+            'created_date': self.created_date.isoformat() if self.created_date else None,
+        }
+
+
+class KnowledgeResource(db.Model):
+    __tablename__ = 'knowledge_resources'
+
+    id = db.Column(db.Integer, primary_key=True)
+    heading = db.Column(db.String(255))
+    content = db.Column(db.Text, nullable=False)
+    tier = db.Column(db.String(10), nullable=False)
+    tags = db.Column(db.String(255))
+    reference = db.Column(db.String(255))
+    context = db.Column(db.String(100))
+    seq_id = db.Column(db.Integer)
+    category_id = db.Column(db.Integer, db.ForeignKey('knowledge_categories.id'), index=True)
+    created_date = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+
+    def __repr__(self):
+        return f'<KnowledgeResource {self.id} tier={self.tier}>'
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'heading': self.heading,
+            'content': self.content,
+            'tier': self.tier,
+            'tags': self.tags.split(',') if self.tags else [],
+            'reference': self.reference,
+            'context': self.context,
+            'seq_id': self.seq_id,
+            'category': self.category.to_dict() if self.category else None,
+            'created_date': self.created_date.isoformat() if self.created_date else None,
+        }
+
+
 class EventAnalysis(db.Model):
     """Store AI event analyses for audit and retrieval."""
     __tablename__ = 'event_analyses'

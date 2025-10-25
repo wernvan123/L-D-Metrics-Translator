@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 
 {% block content %}
+{% set stats = stats if stats is defined else {} %}
 <section class="page-section home-hero">
   <div class="container text-on-hero">
     <h1>Human Performance Navigator</h1>

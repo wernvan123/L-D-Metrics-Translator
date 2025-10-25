@@ -47,6 +47,85 @@
     els.status.style.display = 'block';
   }
 
+  function getSessionId(){
+    try{
+      if(window.currentSession && window.currentSession.id){ return String(window.currentSession.id); }
+    }catch{}
+    try{
+      const stored = sessionStorage.getItem('context:session_id');
+      if(stored) return String(stored);
+    }catch{}
+    try{
+      let sid = localStorage.getItem('sessionId');
+      if(!sid){ sid = String(Math.floor(Date.now()/1000)); localStorage.setItem('sessionId', sid); }
+      return sid;
+    }catch{}
+    return String(Date.now());
+  }
+
+  function loadMiniSelections(){
+    try{
+      const raw = sessionStorage.getItem('plan:selections');
+      if(!raw) return [];
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
+    }catch{return [];}
+  }
+
+  async function buildReportPayload(title){
+    const miniSelections = loadMiniSelections();
+    const payload = {
+      title,
+      template_type: 'comprehensive',
+      selected_outcomes: [],
+      selected_metrics: [],
+      selected_concepts: [],
+      ai_recommendations: [],
+      session_id: getSessionId(),
+      generation_context: { source: 'plan_builder', mode: state.startMode || null }
+    };
+
+    const driverItems = [];
+    try{
+      const res = await fetch('/api/context/plan/items', { headers:{'Accept':'application/json'} });
+      if(res.ok){
+        const data = await res.json();
+        if(Array.isArray(data.items)) driverItems.push(...data.items);
+      }
+    }catch{}
+
+    const all = [...driverItems];
+    const existingKeys = new Set(all.map(it=>`${it.kind||''}:${(it.label||'').toLowerCase()}`));
+    for(const sel of miniSelections){
+      const key = `${sel.kind||''}:${(sel.label||'').toLowerCase()}`;
+      if(existingKeys.has(key)) continue;
+      all.push({ kind: sel.kind, label: sel.label, meta: sel.meta || {} });
+    }
+
+    for(const item of all){
+      const kind = (item.kind || '').toLowerCase();
+      const label = item.label || '';
+      if(kind === 'metric' || kind === 'kpi'){
+        if(item.source_id != null){
+          payload.selected_metrics.push(Number(item.source_id));
+        } else if(label){
+          payload.selected_metrics.push(label);
+        }
+      } else if(kind === 'outcome'){
+        if(item.source_id != null){ payload.selected_outcomes.push(Number(item.source_id)); }
+        else if(label){ payload.selected_outcomes.push(label); }
+      } else if(kind === 'driver' || kind === 'nudge' || kind === 'bias' || kind === 'gap'){
+        payload.selected_concepts.push({ kind, label });
+      }
+    }
+
+    payload.selected_outcomes = Array.from(new Set(payload.selected_outcomes)).filter(Boolean);
+    payload.selected_metrics = Array.from(new Set(payload.selected_metrics)).filter(Boolean);
+    payload.selected_concepts = payload.selected_concepts.filter(x=>x && x.label);
+
+    return payload;
+  }
+
   async function loadOutcomePanels(){
     try{
       // Ensure visibility state matches
@@ -661,9 +740,35 @@
       btn.disabled = true; btn.textContent = 'Adding…';
       addToPlan(kind, label, id, {}, btn);
     }); }
-    if(els.btnGenerate){ els.btnGenerate.addEventListener('click', ()=>{
-      try{ window.location.assign('/plan/report'); }
-      catch(e){ setStatus('info', 'Opening report page…'); }
+    if(els.btnGenerate){ els.btnGenerate.addEventListener('click', async ()=>{
+      try{
+        setStatus('', '');
+        const title = prompt('Name your plan report', 'Development Plan');
+        if(title === null) return;
+        const trimmed = (title || '').trim();
+        if(!trimmed){ setStatus('warning','Report title is required.'); return; }
+        const payload = await buildReportPayload(trimmed);
+        if(!payload.selected_metrics.length && !payload.selected_outcomes.length && !payload.selected_concepts.length){
+          setStatus('warning','Add at least one item to the plan before generating a report.');
+          return;
+        }
+        setStatus('', 'Starting report…');
+        const res = await fetch('/api/dynamic-reports', {
+          method:'POST',
+          headers:{ 'Content-Type':'application/json' },
+          body: JSON.stringify(payload)
+        });
+        if(!res.ok){
+          let msg = `Failed to start report (${res.status})`;
+          try{ const err = await res.json(); if(err && err.error){ msg += `: ${err.error}`; if(err.missing_fields) msg += ` — missing ${err.missing_fields.join(', ')}`; } }
+          catch{}
+          throw new Error(msg);
+        }
+        setStatus('success','Report requested. Redirecting to progress view…');
+        window.location.assign('/plan/report');
+      }catch(err){
+        setStatus('warning', err.message || 'Unable to generate report');
+      }
     }); }
     if(els.btnStartNew){ els.btnStartNew.addEventListener('click', async ()=>{
       // Clear plan items

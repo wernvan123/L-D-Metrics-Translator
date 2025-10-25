@@ -3,7 +3,14 @@ import logging
 import json
 from datetime import datetime, timezone
 from flask import Blueprint, render_template, jsonify, request, redirect, url_for, flash, session, current_app, abort, send_from_directory
-from app.models import Metric, LDOutcome, MetricType, AdminUser, Framework, Competency
+from app.models import (
+    Metric,
+    LDOutcome,
+    MetricType,
+    AdminUser,
+    Framework,
+    Competency,
+)
 from app import db
 from markupsafe import Markup
 
@@ -643,26 +650,28 @@ def api_search():
     format_type = request.args.get('format', 'json')
     
     try:
+        from sqlalchemy import and_
+
         # Build base query with joins
         query = Metric.query.join(LDOutcome).join(MetricType)
-        
+
         # Apply outcome filter
         if outcome_filter:
             outcome_ids = [int(id.strip()) for id in outcome_filter.split(',') if id.strip().isdigit()]
             if outcome_ids:
                 query = query.filter(LDOutcome.id.in_(outcome_ids))
-        
+
         # Apply type filter
         if type_filter:
             type_ids = [int(id.strip()) for id in type_filter.split(',') if id.strip().isdigit()]
             if type_ids:
                 query = query.filter(MetricType.id.in_(type_ids))
-        
+
         # Apply search query with advanced matching
         if search_query:
             search_terms = search_query.lower().split()
             search_conditions = []
-            
+
             for term in search_terms:
                 # Search across name, description, and example fields
                 term_condition = (
@@ -673,23 +682,22 @@ def api_search():
                     MetricType.name.ilike(f'%{term}%')
                 )
                 search_conditions.append(term_condition)
-            
+
             # Combine all search conditions with AND logic
             if search_conditions:
-                from sqlalchemy import and_
                 query = query.filter(and_(*search_conditions))
-        
+
         # Get total count before pagination
         total_count = query.count()
-        
+
         # Apply pagination
         metrics_pagination = query.paginate(
             page=page, per_page=per_page, error_out=False
         )
-        
+
         # Calculate search time
         search_time = round((time.time() - start_time) * 1000, 2)
-        
+
         # Prepare response data
         metrics_data = []
         for metric in metrics_pagination.items:
@@ -709,18 +717,18 @@ def api_search():
                     'description': metric.metric_type.description
                 }
             }
-            
+
             # Add search relevance score if searching
             if search_query:
                 score = calculate_relevance_score(metric, search_query)
                 metric_data['relevance_score'] = score
-            
+
             metrics_data.append(metric_data)
-        
+
         # Sort by relevance if searching
         if search_query:
             metrics_data.sort(key=lambda x: x.get('relevance_score', 0), reverse=True)
-        
+
         response_data = {
             'metrics': metrics_data,
             'pagination': {
@@ -739,9 +747,9 @@ def api_search():
                 'types': type_filter
             }
         }
-        
+
         return jsonify(response_data)
-        
+
     except Exception as e:
         return jsonify({
             'error': 'Search failed',

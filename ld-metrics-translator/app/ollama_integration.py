@@ -7,6 +7,7 @@ import requests
 import json
 import logging
 import uuid
+import time
 from typing import Dict, List, Optional, Any
 from datetime import datetime
 from flask import current_app
@@ -88,53 +89,70 @@ class OllamaClient:
         if not self.available:
             logger.warning("Ollama not available, falling back to rules-based system")
             return None
-        
-        try:
-            payload = {
-                "model": model,
-                "prompt": prompt,
-                "stream": False,
-                **kwargs
-            }
-            
-            if system_prompt:
-                payload["system"] = system_prompt
-                
-            if format:
-                payload["format"] = format
-            
-            logger.info(f"Sending request to Ollama with payload: {json.dumps({k: v for k, v in payload.items() if k != 'prompt'})}")
-            
-            response = requests.post(
-                f"{self.base_url}/api/generate",
-                json=payload,
-                timeout=120  # Increased timeout for complex prompts
-            )
-            
-            if response.status_code == 200:
-                data = response.json()
-                response_text = data.get('response', '').strip()
-                logger.info(f"Received response from Ollama (first 200 chars): {response_text[:200]}...")
-                return response_text
-            else:
+
+        payload = {
+            "model": model,
+            "prompt": prompt,
+            "stream": False,
+            **kwargs
+        }
+
+        if system_prompt:
+            payload["system"] = system_prompt
+
+        if format:
+            payload["format"] = format
+
+        timeout = current_app.config.get('OLLAMA_TIMEOUT', 120)
+        max_retries = max(1, current_app.config.get('OLLAMA_MAX_RETRIES', 1))
+        backoff = max(0.5, current_app.config.get('OLLAMA_RETRY_BACKOFF', 2.0))
+
+        filtered_payload = {k: v for k, v in payload.items() if k != 'prompt'}
+        logger.info(
+            f"Sending request to Ollama with payload: {json.dumps(filtered_payload)} | timeout={timeout}s retries={max_retries}"
+        )
+
+        last_error = None
+
+        for attempt in range(1, max_retries + 1):
+            try:
+                response = requests.post(
+                    f"{self.base_url}/api/generate",
+                    json=payload,
+                    timeout=timeout
+                )
+
+                if response.status_code == 200:
+                    data = response.json()
+                    response_text = data.get('response', '').strip()
+                    logger.info(
+                        f"Received response from Ollama (attempt {attempt}, first 200 chars): {response_text[:200]}..."
+                    )
+                    return response_text
+
                 error_msg = f"Ollama API error: {response.status_code} - {response.text}"
-                logger.error(error_msg)
                 raise Exception(error_msg)
-                
-        except requests.exceptions.Timeout:
-            error_msg = "Ollama API request timed out. The model might be taking too long to respond."
-            logger.error(error_msg)
-            raise Exception(error_msg)
-            
-        except requests.exceptions.RequestException as e:
-            error_msg = f"Error communicating with Ollama: {str(e)}"
-            logger.error(error_msg, exc_info=True)
-            raise Exception(error_msg)
-            
-        except Exception as e:
-            error_msg = f"Unexpected error in Ollama.generate: {str(e)}"
-            logger.error(error_msg, exc_info=True)
-            raise Exception(error_msg)
+
+            except (requests.exceptions.Timeout, requests.exceptions.RequestException) as e:
+                last_error = str(e)
+                logger.warning(
+                    f"Ollama request attempt {attempt} failed: {last_error}"
+                )
+                if attempt < max_retries:
+                    sleep_time = backoff ** (attempt - 1)
+                    logger.info(f"Retrying in {sleep_time:.2f}s")
+                    time.sleep(sleep_time)
+            except Exception as e:
+                last_error = str(e)
+                logger.error(
+                    f"Unexpected error in Ollama.generate on attempt {attempt}: {last_error}",
+                    exc_info=True
+                )
+                break
+
+        error_msg = f"Ollama request failed after {max_retries} attempt(s): {last_error}"
+        logger.error(error_msg)
+        raise Exception(error_msg)
 
 
 class LDRecommendationEngine:
@@ -427,18 +445,19 @@ class EventAnalyzer:
                 raise ValueError("Empty response from Ollama")
                 
             try:
-                analysis = json.loads(response)
-                
+                analysis_raw = json.loads(response)
+
                 # Validate response structure
                 required_keys = ["learning_needs", "recommended_metrics", "interventions", "success_measures"]
                 for key in required_keys:
-                    if key not in analysis:
+                    if key not in analysis_raw:
                         raise ValueError(f"Missing required key in response: {key}")
-                    if not isinstance(analysis[key], list):
-                        raise ValueError(f"Expected list for key '{key}', got {type(analysis[key])}")
-                
+                    if not isinstance(analysis_raw[key], list):
+                        raise ValueError(f"Expected list for key '{key}', got {type(analysis_raw[key])}")
+
+                normalized = self._normalize_analysis(analysis_raw, selected_metrics)
                 logger.info(f"[{req_id}] Analysis completed successfully")
-                return analysis
+                return normalized
                 
             except json.JSONDecodeError as e:
                 raise ValueError(f"Invalid JSON response from Ollama: {str(e)}")
@@ -448,7 +467,7 @@ class EventAnalyzer:
         except Exception as e:
             logger.error(f"[{req_id}] Analysis failed: {str(e)}", exc_info=True)
             # Return a more detailed fallback response
-            return {
+            fallback_raw = {
                 "learning_needs": [
                     "Error handling and troubleshooting",
                     "System and process analysis",
@@ -468,10 +487,92 @@ class EventAnalyzer:
                     "Reduction in recurring errors",
                     "Improved system stability metrics",
                     "Increased user satisfaction scores"
-                ],
-                "_error": str(e),
-                "_source": "fallback_due_to_error"
+                ]
             }
+            normalized_fallback = self._normalize_analysis(fallback_raw, selected_metrics, source_override="fallback_due_to_error", error=str(e))
+            return normalized_fallback
+
+    def _normalize_analysis(self, analysis_raw: Dict[str, Any], selected_metrics: Optional[List[Dict[str, Any]]] = None, source_override: Optional[str] = None, error: Optional[str] = None) -> Dict[str, Any]:
+        """Coerce LLM analysis into structured objects for consistent rendering."""
+
+        def _normalize_list(items: Any, section: str) -> List[Dict[str, Any]]:
+            normalized: List[Dict[str, Any]] = []
+            if not isinstance(items, list):
+                return normalized
+
+            for entry in items:
+                if entry is None:
+                    continue
+
+                original = entry
+                item: Dict[str, Any] = {
+                    "name": None,
+                    "summary": None,
+                    "details": None,
+                    "success_measure": None,
+                    "confidence": None,
+                    "category": None,
+                    "raw": original
+                }
+
+                if isinstance(entry, dict):
+                    # Prefer common keys first
+                    item["name"] = entry.get("name") or entry.get("title") or entry.get("metric") or entry.get("need") or entry.get("topic") or entry.get("intervention")
+                    item["summary"] = entry.get("summary") or entry.get("description") or entry.get("why") or entry.get("benefit")
+                    item["details"] = entry.get("details") or entry.get("context") or entry.get("notes")
+                    item["success_measure"] = entry.get("success_measure") or entry.get("measure") or entry.get("target")
+                    item["confidence"] = entry.get("confidence")
+                    item["category"] = entry.get("category") or entry.get("type") or entry.get("kind")
+                else:
+                    value = str(entry).strip()
+                    # Attempt to split on colon or hyphen to separate name and summary
+                    delimiter = ":" if ":" in value else " - " if " - " in value else None
+                    if delimiter:
+                        parts = [part.strip() for part in value.split(delimiter, 1)]
+                        if len(parts) == 2:
+                            item["name"], item["summary"] = parts[0], parts[1]
+                        else:
+                            item["name"] = value
+                    else:
+                        item["name"] = value
+
+                # Final fallbacks
+                if not item["name"] and item["summary"]:
+                    item["name"] = item["summary"]
+                    item["summary"] = None
+
+                if not item["name"]:
+                    continue
+
+                # Section-specific hints
+                if section == "recommended_metrics" and not item["category"] and selected_metrics:
+                    categories = {
+                        str(m.get("name")).strip().lower(): m.get("category")
+                        for m in selected_metrics if isinstance(m, dict)
+                    }
+                    key = item["name"].strip().lower()
+                    if key in categories:
+                        item["category"] = categories[key]
+
+                item["section"] = section
+                normalized.append(item)
+
+            return normalized
+
+        normalized_payload = {
+            "learning_needs": _normalize_list(analysis_raw.get("learning_needs", []), "learning_needs"),
+            "recommended_metrics": _normalize_list(analysis_raw.get("recommended_metrics", []), "recommended_metrics"),
+            "interventions": _normalize_list(analysis_raw.get("interventions", []), "interventions"),
+            "success_measures": _normalize_list(analysis_raw.get("success_measures", []), "success_measures"),
+            "_meta": {
+                "source": source_override or "ai",
+                "normalized_at": datetime.utcnow().isoformat() + "Z",
+                "error": error,
+                "raw_response": analysis_raw
+            }
+        }
+
+        return normalized_payload
 
 
 # Initialize global instances

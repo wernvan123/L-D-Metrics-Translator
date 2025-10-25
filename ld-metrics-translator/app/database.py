@@ -2,7 +2,7 @@
 
 from app import db
 from flask import current_app
-from app.models import LDOutcome, MetricType, Metric
+from app.models import LDOutcome, MetricType, Metric, EventAnalysis
 from datetime import datetime
 
 

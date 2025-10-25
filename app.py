@@ -148,7 +148,38 @@ def inject_csrf_token():
 # --------- Page Routes ---------
 @app.route("/")
 def dashboard():
-    return render_template("index.html")
+    stats = {
+        'metrics': 0,
+        'outcomes': 0,
+        'types': 0,
+        'frameworks': 0,
+        'combinations': 0,
+    }
+    if BACKEND_AVAILABLE and backend_app is not None and backend_models is not None:
+        try:
+            with backend_app.app_context():
+                Metric = getattr(backend_models, 'Metric', None)
+                Outcome = getattr(backend_models, 'LDOutcome', None)
+                MetricType = getattr(backend_models, 'MetricType', None)
+                Framework = getattr(backend_models, 'Framework', None)
+                if all((Metric, Outcome, MetricType, Framework)):
+                    metrics_count = Metric.query.count()
+                    outcomes_count = Outcome.query.count()
+                    types_count = MetricType.query.count()
+                    frameworks_count = Framework.query.count()
+                    combinations = outcomes_count * types_count if outcomes_count and types_count else 0
+                    stats.update({
+                        'metrics': metrics_count,
+                        'outcomes': outcomes_count,
+                        'types': types_count,
+                        'frameworks': frameworks_count,
+                        'combinations': combinations,
+                    })
+        except Exception as e:
+            stats['error'] = str(e)
+    else:
+        stats['error'] = 'Live counts unavailable in dev mode'
+    return render_template("index.html", stats=stats)
 
 
 @app.route("/diagnostics")
