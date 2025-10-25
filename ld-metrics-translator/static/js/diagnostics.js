@@ -22,51 +22,14 @@
           p.setAttribute('hidden', '');
         }
 
-  // Intercept analyze-event responses to keep GAP_lastAnalysis in sync
-  let fetchPatched = false;
-  function setupAnalyzeInterceptor(){
-    if(fetchPatched || typeof window === 'undefined' || !window.fetch) return;
-    const origFetch = window.fetch.bind(window);
-    window.fetch = async function(input, init){
-      const url = typeof input === 'string' ? input : (input && input.url);
-      const isAnalyze = url && url.includes('/analyze-event') && (init?.method === 'POST' || (input && input.method === 'POST'));
-      const res = await origFetch(input, init);
-      try{
-        if(isAnalyze){
-          const clone = res.clone();
-          const data = await clone.json().catch(()=>null);
-          if(data && data.analysis){
-            GAP_lastAnalysis = data.analysis;
-            const ta = document.getElementById('event-description');
-            GAP_lastInput = ta ? ta.value : (GAP_lastInput || '');
-            // Render and toggle visibility based on role
-            renderGapReport();
-            let hasRole = !!(GAP_selectedRole && GAP_selectedRole.id);
-            if(!hasRole){
-              const selEl = document.getElementById('diag-role-select');
-              const val = selEl && selEl.value ? String(selEl.value).trim() : '';
-              hasRole = !!val;
-            }
-            const results = document.getElementById('analysis-results');
-            const gapCard = document.getElementById('gap-report-card');
-            if(hasRole){
-              try{ document.body.setAttribute('data-gap-active','1'); }catch{}
-              if(gapCard) gapCard.style.display='';
-              if(results) results.style.display='none';
-            } else {
-              try{ document.body.setAttribute('data-gap-active','0'); }catch{}
-              if(gapCard) gapCard.style.display='none';
-              if(results) results.style.display='block';
-            }
-            // sync states
-            try { syncPlanButtonsState(); } catch {}
-            try { renderPlanMiniSidebar(); } catch {}
-          }
-        }
-      }catch(_){ /* ignore */ }
-      return res;
-    };
-    fetchPatched = true;
+  // Store the last AI analysis without intercepting fetch (frontend listens for custom events instead)
+  function cacheLastAnalysis(payload){
+    if(!payload || typeof payload !== 'object') return;
+    if(payload.analysis){
+      GAP_lastAnalysis = payload.analysis;
+      const ta = document.getElementById('event-description');
+      GAP_lastInput = ta ? ta.value : (GAP_lastInput || '');
+    }
   }
   function syncPlanButtonsState(root){
     const scope = root || document;
@@ -341,8 +304,8 @@
     `;
 
     // Recommendations: KPIs and Nudges
-    const kpis = (GAP_lastAnalysis && Array.isArray(GAP_lastAnalysis.recommended_metrics)) ? GAP_lastAnalysis.recommended_metrics : [];
-    const nudges = (GAP_lastAnalysis && Array.isArray(GAP_lastAnalysis.interventions)) ? GAP_lastAnalysis.interventions : [];
+    const kpis = (GAP_lastAnalysis && Array.isArray(GAP_lastAnalysis.recommended_metrics)) ? GAP_lastAnalysis.recommended_metrics.slice(0,5) : [];
+    const nudges = (GAP_lastAnalysis && Array.isArray(GAP_lastAnalysis.interventions)) ? GAP_lastAnalysis.interventions.slice(0,5) : [];
     recsEl.innerHTML = `
       <div class="section">
         <h4>Key Performance Indicators (KPIs) for ${roleName ? esc(roleName)+"'s" : 'Role'} Growth</h4>
@@ -512,7 +475,7 @@
       return `/playbook?kind=bias&q=${q}&filter=${filter}`;
     }
 
-    function render(text, result){
+    function render(text, result, kbItems){
       const intro = `You described: “${escapeHtml(text.trim())}”. The context suggests potential cognitive patterns to consider:`;
       const idList = result.found.map(b => {
         const icon = b.key === 'authority' ? '🧑‍💼' : b.key === 'bandwagon' ? '👥' : b.key === 'status-quo' ? '🧱' : b.key === 'time-pressure' ? '⏱️' : b.key === 'limited-info' ? '📉' : b.key === 'framing' ? '🖼️' : '🧠';
@@ -536,6 +499,26 @@
         return m ? `<a href="${playbookLink(m.title)}" class="badge">${escapeHtml(m.title)}</a>` : '';
       }).join(' ');
 
+      const kbSection = Array.isArray(kbItems) && kbItems.length ? `
+        <div class="analysis-card">
+          <h4>Knowledge Base Biases</h4>
+          <ul class="analysis-list">
+            ${kbItems.map(item => `
+              <li class="bias-card">
+                <div class="bias-card-header">
+                  <div class="bias-title">${escapeHtml(item.heading || 'Bias Insight')}</div>
+                </div>
+                <p class="bias-desc">${escapeHtml(item.content || '')}</p>
+                ${Array.isArray(item.tags) && item.tags.length ? `<div class="bias-tags">${item.tags.map(tag => `<span class="badge">${escapeHtml(tag)}</span>`).join(' ')}</div>` : ''}
+                <div class="bias-actions">
+                  <button class="btn btn-sm btn-secondary" data-action="add-plan" data-kind="bias" data-label="${escapeHtml(item.heading || 'Bias Insight')}">Copy to Plan</button>
+                </div>
+              </li>
+            `).join('')}
+          </ul>
+        </div>
+      ` : '';
+
       output.innerHTML = `
         <div class="analysis-card">
           <h4>Introduction</h4>
@@ -549,6 +532,7 @@
           <h4>Other Biases to Watch</h4>
           ${also || '<p>None suggested.</p>'}
         </div>
+        ${kbSection}
       `;
       output.style.display = 'block';
     }
@@ -557,7 +541,12 @@
       const text = textarea.value.trim();
       if(!text){ textarea.focus(); return; }
       const res = analyze(text);
-      render(text, res);
+      let kbItems = null;
+      if(window.APP_FLAGS?.ENABLE_EVENT_KB === 'true'){
+        const kb = await fetchBiasKnowledge(text);
+        if(kb?.success) kbItems = kb.items;
+      }
+      render(text, res, kbItems);
     });
 
     // Inline login prompt dismiss
@@ -598,79 +587,7 @@
     initBSD();
     initDriverCardDemo();
     initRoleTargetsFraming();
-    // Safety net: wire Analyze button if EventAnalyzer didn't initialize for any reason
-    try{
-      const btn = document.getElementById('analyze-event-btn');
-      const input = document.getElementById('event-description');
-      const results = document.getElementById('analysis-results');
-      const content = document.getElementById('analysis-content');
-      const loading = document.getElementById('analysis-loading');
-      if(btn && input && !btn.dataset.fallbackWired){
-        btn.dataset.fallbackWired = '1';
-        btn.addEventListener('click', async (e) => {
-          // Always handle here to guarantee a POST
-          e.preventDefault();
-          e.stopPropagation();
-          const text = (input.value || '').trim();
-          if(!text){ input.focus(); return; }
-          // minimal UI feedback
-          if (loading) loading.style.display = 'block';
-          if (results) results.style.display = 'none';
-          try {
-            const r = await fetch('/api/analyze-event', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-              body: JSON.stringify({ event_description: text, selected_metrics: [] })
-            });
-            const d = await r.json();
-            const analysis = d && d.analysis ? d.analysis : null;
-            if (!analysis) throw new Error('No analysis returned');
-            // Persist for GAP report and re-render
-            GAP_lastAnalysis = analysis;
-            GAP_lastInput = text;
-            // Render a simple view
-            const section = (title, items) => items && items.length ? `<div class="analysis-section"><h4>${title}</h4><ul class="analysis-list">${items.map(i => `<li>${(i||'').toString()}</li>`).join('')}</ul></div>` : '';
-            if (content) {
-              content.innerHTML = `
-                <div class="analysis-toolbar" style="display:flex;justify-content:flex-end;margin-bottom:8px;gap:8px;">
-                  <button id="ai-copy-all" class="btn btn-sm btn-secondary">Copy all to Plan</button>
-                </div>
-                ${section('🎯 Key Learning Needs Identified', analysis.learning_needs || [])}
-                ${section('📊 Recommended Metrics', analysis.recommended_metrics || [])}
-                ${section('🛠️ Suggested Interventions', analysis.interventions || [])}
-                ${section('✅ Success Measures', analysis.success_measures || [])}
-              `;
-            }
-            const sourceElement = document.querySelector('.analysis-source');
-            if (sourceElement && d && d.generated_by) {
-              sourceElement.textContent = `Generated by: ${d.generated_by}`;
-            }
-            // Update GAP report footer/source and sections
-            renderGapReport();
-            // Decide which report to show based on role presence
-            const hasRole = !!(GAP_selectedRole && GAP_selectedRole.id);
-            const gapCard = document.getElementById('gap-report-card');
-            if (hasRole) {
-              try { document.body.setAttribute('data-gap-active','1'); } catch {}
-              if (gapCard) gapCard.style.display = '';
-              if (results) results.style.display = 'none';
-            } else {
-              try { document.body.setAttribute('data-gap-active','0'); } catch {}
-              if (gapCard) gapCard.style.display = 'none';
-              if (results) results.style.display = 'block';
-            }
-            // Also ensure plan button states reflect saved selections
-            try { syncPlanButtonsState(); } catch {}
-            try { renderPlanMiniSidebar(); } catch {}
-          } catch (err) {
-            if (content) content.innerHTML = `<div class="alert alert-warning">Unable to analyze event: ${err.message || err}</div>`;
-            if (results) results.style.display = 'block';
-          } finally {
-            if (loading) loading.style.display = 'none';
-          }
-        });
-      }
-    }catch(e){ /* ignore */ }
+    // EventAnalyzer is responsible for wiring Analyze button; no fallback handler to avoid duplicate submissions
   }
 
   // ----------------------------

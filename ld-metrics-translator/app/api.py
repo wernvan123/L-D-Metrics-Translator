@@ -3258,11 +3258,17 @@ def analyze_event():
             analysis = event_analyzer.analyze_event(event_description, selected_metrics=selected_metrics)
             generated_by = 'ai' if event_analyzer.ollama.available else 'rules'
 
+            try:
+                logger.debug("Raw analysis payload: %s", json.dumps(analysis, indent=2, ensure_ascii=False))
+            except Exception as payload_log_error:
+                logger.debug("Raw analysis payload (repr fallback due to %s): %r", payload_log_error, analysis)
+
             kb_payload = {'strong': [], 'related': [], 'biases': []}
             if current_app.config.get('ENABLE_EVENT_KB'):
                 kb_context = data.get('kb_context')
                 kb_tier_limit = int(data.get('kb_tier_limit', 5))
                 kb_related_limit = int(data.get('kb_related_limit', 10))
+                kb_bias_limit = min(5, kb_related_limit)
 
                 kb_payload['strong'] = knowledge_base.serialize_resources(
                     knowledge_base.get_resources_by_tier('t1t2', limit=kb_tier_limit)
@@ -3282,10 +3288,10 @@ def analyze_event():
                 bias_query = " ".join(part for part in bias_query_parts if part).strip()
                 bias_resources = []
                 if bias_query:
-                    bias_resources = knowledge_base.search_bias_resources(bias_query, limit=kb_related_limit)
+                    bias_resources = knowledge_base.search_bias_resources(bias_query, limit=kb_bias_limit)
                 if not bias_resources:
-                    bias_resources = knowledge_base.get_random_bias_resources(limit=kb_related_limit)
-                kb_payload['biases'] = knowledge_base.serialize_resources(bias_resources)
+                    bias_resources = knowledge_base.get_random_bias_resources(limit=kb_bias_limit)
+                kb_payload['biases'] = knowledge_base.serialize_resources(bias_resources[:kb_bias_limit])
 
             response_payload = {
                 'success': True,
