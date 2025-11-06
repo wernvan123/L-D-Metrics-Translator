@@ -148,26 +148,48 @@
 .analysis-card h4 { margin: 0 0 8px 0; font-size: 16px; color: #111827; }
 .analysis-card p { margin: 0; color: #374151; }
 
+.
 .analysis-list { margin: 0; padding-left: 18px; display: grid; gap: 10px; }
 .analysis-list li { list-style: none; }
 
-/* Visual bias cards */
-.bias-card { background: #fafbff; border: 1px solid #e8eaf7; border-radius: 12px; padding: 12px; box-shadow: 0 6px 18px rgba(31, 41, 55, 0.06); }
-.bias-card-header { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
-.bias-icon { font-size: 22px; width: 32px; height: 32px; display: inline-flex; align-items: center; justify-content: center; border-radius: 8px; background: #eef3ff; }
-.bias-title { font-weight: 800; color: #111827; }
-.bias-desc { margin: 0 0 8px 0; color: #4b5563; }
-.bias-actions { display: inline-flex; gap: 8px; margin-bottom: 8px; }
-.bias-recs .recs-title { font-weight: 700; color: #374151; margin-bottom: 6px; }
-.bias-recs ul { margin: 0; padding-left: 18px; color: #374151; }
+/* AI analysis section layout */
+.analysis-section { margin-top: 20px; padding: 18px; border: 1px solid #e5e7eb; border-radius: 14px; background: #ffffff; box-shadow: 0 10px 30px rgba(15, 23, 42, 0.05); }
+.analysis-section:first-child { margin-top: 0; }
+.analysis-section h3 { margin: 0 0 6px 0; font-size: 20px; color: #0f172a; }
+.analysis-section .meta { margin: 0 0 14px 0; color: #6b7280; font-size: 0.9rem; }
+.analysis-section--issues { border-left: 4px solid #2563eb; }
+.analysis-section--biases { border-left: 4px solid #7c3aed; background: linear-gradient(135deg, rgba(124, 58, 237, 0.08), rgba(14, 116, 144, 0.05)); }
+.analysis-section--kpis { border-left: 4px solid #0ea5e9; }
+.analysis-section--interventions { border-left: 4px solid #16a34a; }
 
-/* Accent per type */
-.bias-status-quo .bias-icon { background: #f3f0ff; color: #6b4eff; }
-.bias-authority .bias-icon { background: #fff3f0; color: #f97316; }
-.bias-bandwagon .bias-icon { background: #ecfdf5; color: #059669; }
-.bias-time-pressure .bias-icon { background: #fef3c7; color: #d97706; }
-.bias-limited-info .bias-icon { background: #eff6ff; color: #2563eb; }
-.bias-framing .bias-icon { background: #f5f3ff; color: #7c3aed; }
+.ai-card-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
+.ai-card-grid--single { grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+
+.ai-card { background: #ffffff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 14px; box-shadow: 0 6px 20px rgba(15, 23, 42, 0.08); display: flex; flex-direction: column; gap: 10px; transition: transform .15s ease, box-shadow .15s ease; }
+.ai-card:hover { transform: translateY(-3px); box-shadow: 0 12px 26px rgba(30, 64, 175, 0.18); }
+.ai-card-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.ai-card-header h4 { margin: 0; font-size: 1.05rem; color: #0f172a; }
+.ai-card-summary { margin: 0; color: #374151; line-height: 1.45; }
+.ai-card-actions { display: inline-flex; gap: 8px; flex-wrap: wrap; }
+.ai-card-countermeasures ul { margin: 6px 0 0; padding-left: 18px; color: #374151; }
+.ai-card-countermeasures li { margin-bottom: 4px; }
+.ai-card-impact { margin: 0; color: #1e3a8a; font-weight: 500; }
+.ai-card--bias { background: rgba(255,255,255,0.92); border: 1px solid rgba(124, 58, 237, 0.25); box-shadow: 0 12px 32px rgba(124, 58, 237, 0.18); }
+.ai-card--kpi { border: 1px solid rgba(14, 165, 233, 0.35); }
+.ai-card--intervention { border: 1px solid rgba(22, 163, 74, 0.35); }
+.ai-card--issue { border: 1px solid rgba(37, 99, 235, 0.35); }
+.ai-card--bias .ai-card-header h4 { color: #4c1d95; }
+.ai-card--kpi .ai-card-header h4 { color: #0f172a; }
+.ai-card--intervention .ai-card-header h4 { color: #14532d; }
+
+.analysis-cta { margin-top: 14px; display: flex; flex-wrap: wrap; gap: 10px; }
+.tag-chip--nudge { background: rgba(37, 99, 235, 0.08); color: #1d4ed8; border: 1px solid rgba(37, 99, 235, 0.2); transition: background .15s ease, color .15s ease; }
+.tag-chip--nudge:hover { background: rgba(37, 99, 235, 0.18); color: #1e40af; }
+
+@media (max-width: 720px) {
+  .analysis-section { padding: 14px; }
+  .ai-card-grid { grid-template-columns: 1fr; }
+}
 
 /* Playbook card polish */
 .metric-card { background: #fff; border: 1px solid var(--border, #e5e7eb); border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.05); padding: 14px; }

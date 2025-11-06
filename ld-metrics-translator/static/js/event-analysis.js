@@ -749,12 +749,7 @@ class EventAnalyzer {
                     <button id="ai-copy-all" class="btn btn-sm btn-secondary">Copy all to Plan</button>
                 </div>
             `;
-            resultHTML += this.formatDiagnosisAnalysis(analysis);
-
-            const kbBlocks = this.renderKnowledgeBaseSections(knowledgeBase);
-            if (kbBlocks) {
-                resultHTML += kbBlocks;
-            }
+            resultHTML += this.formatDiagnosisAnalysis(analysis, knowledgeBase?.biases || []);
             
             this.analysisContent.innerHTML = resultHTML;
             this.analysisContent.dataset.rendered = 'true';
@@ -784,87 +779,6 @@ class EventAnalyzer {
         }
     }
 
-    renderKnowledgeBaseSections(knowledgeBase) {
-        if (!knowledgeBase || typeof knowledgeBase !== 'object') {
-            return '';
-        }
-
-        const { strong = [], related = [], biases = [] } = knowledgeBase;
-        const sections = [];
-
-        const renderCard = (item) => {
-            const heading = item.heading ? `<h6>${this.escapeHtml(item.heading)}</h6>` : '';
-            const content = item.content ? `<div class="kb-content">${item.content}</div>` : '';
-            const tags = Array.isArray(item.tags) && item.tags.length
-                ? `<div class="kb-tags">${item.tags.map(tag => `<span class="badge badge-secondary">${this.escapeHtml(tag)}</span>`).join(' ')}</div>`
-                : '';
-            const label = item.category ? `<div class="kb-category">${this.escapeHtml(item.category)}</div>` : '';
-            return `<article class="kb-card">${label}${heading}${content}${tags}</article>`;
-        };
-
-        const renderSection = (title, description, items, emptyMessage) => {
-            if (!Array.isArray(items) || !items.length) {
-                return `<section class="kb-section kb-empty"><h5>${title}</h5><p>${emptyMessage}</p></section>`;
-            }
-            return `
-                <section class="kb-section">
-                    <header>
-                        <h5>${title}</h5>
-                        <p>${description}</p>
-                    </header>
-                    <div class="kb-grid">
-                        ${items.map(renderCard).join('')}
-                    </div>
-                </section>
-            `;
-        };
-
-        const NON_BIAS_CATEGORY = 'biases & heuristics';
-        const normalizeCategory = (value) => (value || '').toString().trim().toLowerCase();
-
-        const filteredStrong = Array.isArray(strong)
-            ? strong.filter(item => normalizeCategory(item?.category) !== NON_BIAS_CATEGORY).slice(0, 5)
-            : [];
-        const filteredRelated = Array.isArray(related)
-            ? related.filter(item => normalizeCategory(item?.category) !== NON_BIAS_CATEGORY).slice(0, 5)
-            : [];
-
-        sections.push(
-            renderSection(
-                'Tier 1 & 2 Anchors',
-                'High confidence insights closely tied to this scenario.',
-                filteredStrong,
-                'No Tier 1 or Tier 2 resources available yet.'
-            )
-        );
-
-        sections.push(
-            renderSection(
-                'Related Knowledge',
-                'Additional context, heuristics, and applied examples the AI considered relevant.',
-                filteredRelated,
-                'No related resources found for this context.'
-            )
-        );
-
-        const limitedBiases = Array.isArray(biases) ? biases.slice(0, 5) : [];
-        sections.push(
-            renderSection(
-                'Biases & Heuristics',
-                'Potential cognitive pitfalls to monitor.',
-                limitedBiases,
-                'No bias or heuristic resources surfaced this time.'
-            )
-        );
-
-        return `
-            <section class="kb-wrapper">
-                <h4>Knowledge Base Insights</h4>
-                ${sections.join('')}
-            </section>
-        `;
-    }
-    
     formatStructuredAnalysis(analysis) {
         console.log('Formatting structured analysis:', analysis);
         if (!analysis || typeof analysis !== 'object') {
@@ -947,12 +861,11 @@ class EventAnalyzer {
         return html || '<p>Analysis completed, but no specific insights were generated.</p>';
     }
     
-    formatDiagnosisAnalysis(analysis){
+    formatDiagnosisAnalysis(analysis, knowledgeBaseBiases = []){
         const a = analysis || {};
         const needs = Array.isArray(a.learning_needs) ? a.learning_needs : [];
         const metrics = Array.isArray(a.recommended_metrics) ? a.recommended_metrics : [];
         const intervs = Array.isArray(a.interventions) ? a.interventions : [];
-
         const htmlParts = [];
 
         // The Diagnosis header
@@ -960,16 +873,18 @@ class EventAnalyzer {
 
         // Identified Core Issues
         if(needs.length){
-            htmlParts.push('<div class="analysis-section"><h3>Identified Core Issues:</h3>');
-            htmlParts.push('<div class="card-list">');
+            htmlParts.push('<div class="analysis-section analysis-section--issues">');
+            htmlParts.push('<h3>🎯 Identified Core Issues</h3>');
+            htmlParts.push('<p class="meta">Themes the AI highlighted as underlying blockers that deserve immediate focus.</p>');
+            htmlParts.push('<div class="ai-card-grid">');
             needs.forEach((n)=>{
                 const name = this.escapeHtml(typeof n === 'string' ? n : (n?.name || n?.title || 'Core Issue'));
                 const summary = this.escapeHtml(n?.summary || n?.description || `AI analysis suggests this is a contributing factor.`);
                 const playbookUrl = `/playbook?kind=driver&q=${encodeURIComponent(name)}&filter=${encodeURIComponent('kind:driver;name:'+name)}`;
                 htmlParts.push(`
-                    <div class="ai-card">
+                    <div class="ai-card ai-card--issue">
                         <div class="ai-card-header">
-                            <h4>🧠 ${name}</h4>
+                            <h4>🎯 ${name}</h4>
                             <div class="ai-card-actions">
                                 <a class="btn btn-sm btn-primary" href="${playbookUrl}">Open in Playbook</a>
                                 <button class="btn btn-sm btn-secondary" data-action="add-plan" data-kind="driver" data-label="${name}">Add to Plan</button>
@@ -983,31 +898,59 @@ class EventAnalyzer {
         }
 
         // Potential Root Causes (biases)
-        const biases = this.deriveBiasesFromText(this.eventInput?.value || '', a.biases).slice(0, 5);
+        const biases = this.deriveBiasesFromText(
+            this.eventInput?.value || '',
+            Array.isArray(a.behavioral_biases) ? a.behavioral_biases : (Array.isArray(a.biases) ? a.biases : []),
+            Array.isArray(knowledgeBaseBiases) ? knowledgeBaseBiases : [],
+        ).slice(0, 5);
+        htmlParts.push('<div class="analysis-section analysis-section--biases">');
+        htmlParts.push('<h3>🧠 Potential Root Causes (Behavioral Biases)</h3>');
+        htmlParts.push('<p class="meta">These patterns may be amplifying the issues surfaced above. Address them with targeted nudges and safeguards.</p>');
         if(biases.length){
-            htmlParts.push('<div class="analysis-section"><h3>Potential Root Causes (Behavioral Biases):</h3>');
+            htmlParts.push('<div class="ai-card-grid ai-card-grid--single">');
             biases.forEach((b)=>{
                 const name = this.escapeHtml(b.name);
-                const summary = this.escapeHtml(b.summary || 'This bias may be influencing the situation.');
+                const description = this.escapeHtml(b.description || 'This bias may be influencing the situation.');
+                const impact = b.impact ? `<p class="ai-card-impact"><strong>Impact:</strong> ${this.escapeHtml(b.impact)}</p>` : '';
+                const counter = Array.isArray(b.countermeasures) && b.countermeasures.length
+                    ? `<div class="ai-card-countermeasures"><strong>Countermeasures:</strong><ul>${b.countermeasures.map(cm => `<li>${this.escapeHtml(cm)}</li>`).join('')}</ul></div>`
+                    : '';
+                const framework = b.related_framework ? `<p class="meta">Framework: ${this.escapeHtml(b.related_framework)}</p>` : '';
                 const url = `/playbook?kind=bias&q=${encodeURIComponent(name)}&filter=${encodeURIComponent('kind:bias;name:'+name)}`;
                 htmlParts.push(`
-                    <div class="ai-card">
+                    <div class="ai-card ai-card--bias">
                         <div class="ai-card-header">
-                            <h4>${b.icon||'⚠️'} ${name}</h4>
+                            <h4>${b.icon || '🧠'} ${name}</h4>
                             <div class="ai-card-actions">
-                                <a class="btn btn-sm btn-primary" href="${url}">Explore Nudges to Counteract ${name}</a>
+                                <a class="btn btn-sm btn-primary" href="${url}">Explore Nudges to Counteract Bias</a>
                             </div>
                         </div>
-                        <p class="ai-card-summary"><strong>AI Analysis:</strong> ${summary}</p>
+                        <p class="ai-card-summary">${description}</p>
+                        ${impact}
+                        ${counter}
+                        ${framework}
                     </div>
                 `);
             });
             htmlParts.push('</div>');
+        } else {
+            htmlParts.push(`
+                <div class="ai-card ai-card--bias ai-card--empty">
+                    <div class="ai-card-header">
+                        <h4>🧠 No Bias Signals Detected Yet</h4>
+                    </div>
+                    <p class="ai-card-summary">The AI couldnt confidently surface behavioral biases from this description. Try adding more context on decision dynamics, dissent, or pressures, or explore the Playbook for common bias patterns.</p>
+                </div>
+            `);
         }
+        htmlParts.push('</div>');
 
         // KPIs for Impact
         if(metrics.length){
-            htmlParts.push('<div class="analysis-section"><h3>Key Performance Indicators (KPIs) for Impact:</h3>');
+            htmlParts.push('<div class="analysis-section analysis-section--kpis">');
+            htmlParts.push('<h3>📊 Key Performance Indicators (KPIs) for Impact</h3>');
+            htmlParts.push('<p class="meta">Track these signals to understand whether interventions are improving outcomes.</p>');
+            htmlParts.push('<div class="ai-card-grid">');
             metrics.forEach((m)=>{
                 const isObj = m && typeof m === 'object';
                 const name = this.escapeHtml(isObj ? (m.name || m.metric || 'KPI') : String(m));
@@ -1015,7 +958,7 @@ class EventAnalyzer {
                 const target = isObj ? (m.success_measure || m.target) : null;
                 const url = `/playbook?kind=driver&q=${encodeURIComponent(name)}&filter=${encodeURIComponent('kind:kpi;name:'+name)}`;
                 htmlParts.push(`
-                    <div class="ai-card">
+                    <div class="ai-card ai-card--kpi">
                         <div class="ai-card-header">
                             <h4>📊 ${name}</h4>
                             <div class="ai-card-actions">
@@ -1027,21 +970,24 @@ class EventAnalyzer {
                     </div>
                 `);
             });
-            htmlParts.push('</div>');
+            htmlParts.push('</div></div>');
         }
 
         // Actionable Interventions & Nudges
         if(intervs.length){
-            htmlParts.push('<div class="analysis-section"><h3>Actionable Interventions & Nudges</h3>');
+            htmlParts.push('<div class="analysis-section analysis-section--interventions">');
+            htmlParts.push('<h3>🛠️ Actionable Interventions & Nudges</h3>');
+            htmlParts.push('<p class="meta">Deploy these actions to counter the biases and reinforce desired behaviors.</p>');
+            htmlParts.push('<div class="ai-card-grid">');
             intervs.forEach((it)=>{
                 const isObj = it && typeof it === 'object';
                 const name = this.escapeHtml(isObj ? (it.name || it.title || 'Intervention') : String(it));
                 const summary = this.escapeHtml(isObj ? (it.summary || it.details || 'Use this to influence behavior change and decision quality.') : 'Use this to influence behavior change and decision quality.');
                 const url = `/playbook?kind=nudge&q=${encodeURIComponent(name)}`;
                 htmlParts.push(`
-                    <div class="ai-card">
+                    <div class="ai-card ai-card--intervention">
                         <div class="ai-card-header">
-                            <h4>🚀 ${name}</h4>
+                            <h4>🛠️ ${name}</h4>
                             <div class="ai-card-actions">
                                 <a class="btn btn-sm btn-primary" href="${url}">Open in Playbook</a>
                                 <button class="btn btn-sm btn-secondary" data-action="add-plan" data-kind="nudge" data-label="${name}">Add to Plan</button>
@@ -1060,36 +1006,123 @@ class EventAnalyzer {
                     const href = `/playbook?kind=bias&q=${encodeURIComponent(b.name)}&filter=${encodeURIComponent('kind:bias;name:'+b.name)}`;
                     return `<a class="tag-chip tag-chip--nudge" href="${href}">Explore Nudges to Counteract ${title}</a>`;
                   }).join(' ');
-                htmlParts.push(`<div class="analysis-cta" style="margin-top:10px;">${chips}</div>`);
+                htmlParts.push(`<div class="analysis-cta">${chips}</div>`);
             }
-            htmlParts.push('</div>');
+            htmlParts.push('</div></div>');
         }
         // Ensure we always return assembled HTML so callers don't render 'undefined'
         return htmlParts.join('') || '<p>No analysis available.</p>';
     }
 
-    deriveBiasesFromText(text, provided){
-        if(Array.isArray(provided) && provided.length){
-            return provided
-              .map(x=>{
-                if(x == null) return null;
-                const name = typeof x === 'string' ? x : (typeof x.name === 'string' ? x.name : 'Bias');
-                const summary = (x && typeof x.summary === 'string') ? x.summary : '';
-                const icon = (x && x.icon) ? x.icon : '🧠';
-                return { name, summary, icon };
-              })
-              .filter(Boolean);
+    deriveBiasesFromText(text, provided, knowledgeBaseBiases = []){
+        const normalizeBias = (entry) => {
+            if (entry == null) return null;
+            if (typeof entry === 'string') {
+                return {
+                    name: entry,
+                    description: '',
+                    impact: '',
+                    countermeasures: [],
+                    related_framework: null,
+                    icon: '🧠'
+                };
+            }
+            const name = typeof entry.name === 'string'
+                ? entry.name
+                : (typeof entry.heading === 'string' ? entry.heading : (typeof entry.title === 'string' ? entry.title : 'Bias'));
+            const description = entry.description || entry.short_description || entry.summary || entry.detailed_description || '';
+            const impact = entry.impact || entry.effect || '';
+            const counter = Array.isArray(entry.countermeasures)
+                ? entry.countermeasures.filter(Boolean).map(String)
+                : Array.isArray(entry.actions)
+                    ? entry.actions.filter(Boolean).map(String)
+                    : [];
+            const framework = entry.related_framework || entry.framework || entry.model_framework || entry.model || null;
+            const icon = entry.icon || '🧠';
+            return {
+                name,
+                description,
+                impact,
+                countermeasures: counter,
+                related_framework: framework,
+                icon
+            };
+        };
+
+        const direct = Array.isArray(provided) && provided.length
+            ? provided.map(normalizeBias).filter(Boolean)
+            : [];
+
+        const kbDerived = Array.isArray(knowledgeBaseBiases) && knowledgeBaseBiases.length
+            ? knowledgeBaseBiases.map(normalizeBias).filter(Boolean)
+            : [];
+
+        const combined = [...direct, ...kbDerived].filter(Boolean);
+        if (combined.length) {
+            return combined;
         }
-        const t = (text||'').toLowerCase();
+
+        const t = (text || '').toLowerCase();
         const out = [];
-        if(/consensus|everyone|no one objected|silence/.test(t)){
-            out.push({ name: 'Groupthink', summary: 'Conformity pressures may be suppressing dissent and critical evaluation.', icon: '🚫' });
+        if (/consensus|everyone|no one objected|silence|unanimous/.test(t)) {
+            out.push({
+                name: 'Groupthink',
+                description: 'Pressure for harmony encourages members to suppress warning signals or dissent.',
+                impact: 'Critical feedback is withheld, reducing decision quality and risk detection.',
+                countermeasures: ['Assign a devil\'s advocate each review', 'Run rapid pre-mortems before key decisions'],
+                related_framework: null,
+                icon: '🚫'
+            });
         }
-        if(/first idea|initial suggestion|anchored|stuck on|initial estimate|first estimate/.test(t)){
-            out.push({ name: 'Anchoring Bias', summary: 'Early information may be overly influencing subsequent judgments.', icon: '⚓️' });
+        if (/first idea|initial suggestion|anchored|stuck on|initial estimate|first estimate/.test(t)) {
+            out.push({
+                name: 'Anchoring Bias',
+                description: 'The team may be over-weighting the earliest information shared.',
+                impact: 'Later evidence is undervalued, leading to narrow solution exploration.',
+                countermeasures: ['Collect independent estimates before discussion', 'Reveal data ranges before debating solutions'],
+                related_framework: null,
+                icon: '⚓️'
+            });
         }
-        if(/status quo|as usual|keep doing|we always/.test(t)){
-            out.push({ name: 'Status Quo Bias', summary: 'Preference for existing practices can block needed change.', icon: '🧱' });
+        if (/status quo|as usual|keep doing|we always/.test(t)) {
+            out.push({
+                name: 'Status Quo Bias',
+                description: 'Defaulting to existing practices despite signals that change is needed.',
+                impact: 'Opportunities for improvement or risk mitigation are delayed.',
+                countermeasures: ['Highlight switching benefits versus staying put', 'Pilot a time-boxed experiment with review checkpoints'],
+                related_framework: null,
+                icon: '🧱'
+            });
+        }
+        if (/(senior|executive|leader|leadership|manager|director).*(said|told|insist|decided|must do|demanded)/.test(t) || /(because leadership already decided)/.test(t)) {
+            out.push({
+                name: 'Authority Bias',
+                description: 'Team members defer to the view of an authority figure even when evidence points elsewhere.',
+                impact: 'Risks or defects raised by subject matter experts are dismissed without evaluation.',
+                countermeasures: ['Collect anonymous input before leaders speak', 'Ask for evidence-based rationale from decision makers', 'Rotate facilitation duties so no single leader dominates'],
+                related_framework: 'Decision Quality Safeguards',
+                icon: '👔'
+            });
+        }
+        if (/(hesitant|stopped speaking up|won\'t speak up|afraid to speak|fear retaliation|stay silent)/.test(t)) {
+            out.push({
+                name: 'Spiral of Silence',
+                description: 'Perceived social pressure or fear of backlash shuts down constructive dissent.',
+                impact: 'Important risks remain hidden because contributors no longer feel psychologically safe.',
+                countermeasures: ['Set explicit norms for dissent-friendly discussions', 'Use round-robin sharing or anonymous inputs', 'Leaders model curiosity by asking follow-up questions'],
+                related_framework: 'Psychological Safety',
+                icon: '🔇'
+            });
+        }
+        if (/interrupt|talked over|cut off|dismissing concerns/.test(t)) {
+            out.push({
+                name: 'Dominance Bias',
+                description: 'A forceful communicator overrides others, skewing how information is weighted.',
+                impact: 'Critical insights from quieter contributors never reach the decision table.',
+                countermeasures: ['Use facilitation that enforces speaking order', 'Summarize and reflect each contribution before moving on'],
+                related_framework: null,
+                icon: '🗣️'
+            });
         }
         return out;
     }
