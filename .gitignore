@@ -15,3 +15,5 @@ htmlcov/
 .mypy_cache/
 .ruff_cache/
 .ipynb_checkpoints/
+wernerva_kb.sql
+ld-metrics-translator/static/reports/*.pdf
