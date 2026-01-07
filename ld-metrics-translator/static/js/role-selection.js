@@ -15,6 +15,7 @@ const RoleSelection = (() => {
   }
 
   let _rolesCache = [];
+  let _currentSelection = null;
 
   async function loadRoles() {
     console.debug('[RoleSelection] fetching roles ...');
@@ -41,14 +42,24 @@ const RoleSelection = (() => {
         const r = (_rolesCache || []).find(x => String(x.id) === String(roleId));
         return r ? { id: r.id, name: r.name, department: r.department } : { id: roleId };
       })();
-      await fetch('/api/context/system', {
+      _currentSelection = rec;
+      const contextPayload = {
+        context_type: 'system',
+        context_key: 'selected_role_profile',
+        context_data: rec ? rec : { id: null },
+        expires_in_hours: 24
+      };
+      await fetch('/api/context/store', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ key: 'selected_role_profile', value: rec })
+        body: JSON.stringify(contextPayload)
       });
       // Notify listeners that role context changed
       window.dispatchEvent(new CustomEvent('role:selected', { detail: rec }));
     } catch (e) {
+      if (!roleId) {
+        _currentSelection = null;
+      }
       console.warn('[RoleSelection] failed to persist selected_role_profile', e);
     }
   }
@@ -78,6 +89,9 @@ const RoleSelection = (() => {
       // If there is a previously selected role in session, clear it on Diagnostics to force explicit selection
       if (selectId === 'diag-role-select' && selectedId) {
         try { await setSelected(null); } catch (e) { console.warn('[RoleSelection] unable to clear previous selection', e); }
+      } else if (selectedId) {
+        const r = roles.find(x => String(x.id) === String(selectedId));
+        _currentSelection = r ? { id: r.id, name: r.name, department: r.department } : { id: selectedId };
       }
     } catch (e) {
       console.error('RoleSelection init failed', e);
@@ -92,7 +106,11 @@ const RoleSelection = (() => {
     });
   }
 
-  return { init };
+  function getCurrentSelection(){
+    return _currentSelection;
+  }
+
+  return { init, getCurrentSelection };
 })();
 
 // Auto-initialize on common pages with a resilient retry to avoid race conditions

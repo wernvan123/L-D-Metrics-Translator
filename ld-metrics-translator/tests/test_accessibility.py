@@ -6,7 +6,14 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
-from axe_selenium_python import Axe
+try:
+    from axe_selenium_python import Axe
+    AXE_AVAILABLE = True
+except ImportError:  # pragma: no cover - optional dependency
+    Axe = None
+    AXE_AVAILABLE = False
+
+pytestmark = pytest.mark.skipif(not AXE_AVAILABLE, reason="axe-selenium-python not installed")
 
 from app.models import LDOutcome, MetricType, Metric
 from app import db

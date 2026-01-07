@@ -52,3 +52,45 @@ Debugging:
 - A lightweight debug box (`#tabs-debug`) is present; `tabs.js` sets DEBUG=true and writes events there and to the console.
 - Unknown tabs fall back to `dashboard` with a debug message.
 - If nav/panels are missing, initialization logs a non-fatal message and exits.
+
+## Testing & Tooling
+
+### Python dependencies for local tests
+
+The following packages are required when running the Python test suite locally (in addition to project requirements):
+
+- `pytest`
+- `SQLAlchemy`
+- `Flask`
+- `Flask-SQLAlchemy`
+- `Flask-Migrate`
+- `Flask-WTF`
+- `Flask-Cors`
+- `python-dotenv`
+- `requests`
+- `reportlab`
+- `selenium`
+
+Install with:
+
+```powershell
+py -3 -m pip install pytest SQLAlchemy Flask Flask-SQLAlchemy Flask-Migrate Flask-WTF Flask-Cors python-dotenv requests reportlab selenium
+```
+
+### Running targeted tests
+
+Run the behavioral bias regression tests:
+
+```powershell
+py -3 -m pytest tests/test_behavioral_biases.py
+```
+
+### Running the full suite
+
+Some tests (e.g., accessibility/performance) require selenium and scraping tools. After installing the dependencies above, execute:
+
+```powershell
+py -3 -m pytest
+```
+
+> **Note:** The full suite currently emits warnings for custom pytest marks (e.g., `@pytest.mark.unit`, `@pytest.mark.security`). Register these marks in `pytest.ini` if you want to silence the warnings.

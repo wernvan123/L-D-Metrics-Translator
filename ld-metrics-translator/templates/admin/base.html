@@ -178,6 +178,12 @@
                             </a>
                         </li>
                         <li class="nav-item">
+                            <a class="nav-link {% if 'behavioral_bias' in request.endpoint %}active{% endif %}"
+                               href="{{ url_for('admin.behavioral_biases') }}">
+                                <i class="bi bi-lightbulb"></i>Behavioral Biases
+                            </a>
+                        </li>
+                        <li class="nav-item">
                             <a class="nav-link {% if 'import' in request.endpoint %}active{% endif %}" 
                                href="{{ url_for('admin.bulk_import') }}">
                                 <i class="bi bi-upload"></i>Import Data

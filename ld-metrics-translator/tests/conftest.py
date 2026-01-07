@@ -5,8 +5,15 @@ import os
 import tempfile
 import pytest
 from unittest.mock import patch
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
+
+try:
+    from selenium import webdriver
+    from selenium.webdriver.chrome.options import Options
+    SELENIUM_AVAILABLE = True
+except ImportError:  # pragma: no cover - optional dependency
+    webdriver = None
+    Options = None
+    SELENIUM_AVAILABLE = False
 
 # Add project root to path
 import sys
@@ -145,14 +152,21 @@ def regular_user(app_context):
 @pytest.fixture(scope="session")
 def chrome_driver():
     """Create Chrome WebDriver for Selenium tests."""
+    if not SELENIUM_AVAILABLE:
+        pytest.skip("Selenium not installed; skipping browser-based tests")
+
     options = Options()
     options.add_argument("--headless")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-gpu")
     options.add_argument("--window-size=1920,1080")
-    
-    driver = webdriver.Chrome(options=options)
+
+    try:
+        driver = webdriver.Chrome(options=options)
+    except Exception as exc:  # pragma: no cover - environment specific
+        pytest.skip(f"Chrome WebDriver unavailable: {exc}")
+
     yield driver
     driver.quit()
 
@@ -167,7 +181,10 @@ def mock_email():
 @pytest.fixture
 def performance_monitor():
     """Monitor performance metrics during tests."""
-    import psutil
+    try:
+        import psutil
+    except ImportError:  # pragma: no cover - optional dependency
+        pytest.skip("psutil not installed; skipping performance monitoring")
     import time
     
     process = psutil.Process()

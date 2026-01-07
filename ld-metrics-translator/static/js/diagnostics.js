@@ -21,25 +21,6 @@
           p.classList.remove('active');
           p.setAttribute('hidden', '');
         }
-
-  // Store the last AI analysis without intercepting fetch (frontend listens for custom events instead)
-  function cacheLastAnalysis(payload){
-    if(!payload || typeof payload !== 'object') return;
-    if(payload.analysis){
-      GAP_lastAnalysis = payload.analysis;
-      const ta = document.getElementById('event-description');
-      GAP_lastInput = ta ? ta.value : (GAP_lastInput || '');
-    }
-  }
-  function syncPlanButtonsState(root){
-    const scope = root || document;
-    const btns = scope.querySelectorAll('button[data-action="add-plan"]');
-    for(const btn of btns){
-      const kind = (btn.getAttribute('data-kind')||'').toLowerCase();
-      const label = btn.getAttribute('data-label')||'';
-      togglePlanButtonState(btn, hasSelection(kind,label));
-    }
-  }
       });
       // persist selection in URL hash and sessionStorage
       if(pushState){
@@ -74,22 +55,14 @@
     }
   }
 
-  // ----------------------------
-  // Role Profile targets framing (callouts on diagnostics)
-  // ----------------------------
-  async function fetchJSON(url){ const r = await fetch(url, { headers: { 'Accept':'application/json' } }); if(!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); }
-  function esc(s){ return (s||'').toString().replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c])); }
   const PROFICIENCY_NAMES = { 1: 'Foundational', 2: 'Basic', 3: 'Proficient', 4: 'Advanced', 5: 'Expert' };
   function proficiencyName(level){ const n = Number(level); return PROFICIENCY_NAMES[n] || String(level); }
-  // Gap report state
+
   let GAP_selectedRole = null; // { id, name, department }
   let GAP_roleTargets = [];    // [ { competency_name, target_level, ... } ]
-  let GAP_lastAnalysis = null; // { learning_needs, recommended_metrics, interventions, success_measures }
+  let GAP_lastAnalysis = null; // enriched analysis object from event analyzer
   let GAP_lastInput = '';
 
-  // ----------------------------
-  // Plan selections (session-scoped)
-  // ----------------------------
   const PLAN_SS_KEY = 'plan:selections';
   const PLAN_SHOW_KEY = 'plan:showMini';
   function planKey(kind,label){ return `${(kind||'').toLowerCase()}:${(label||'').toLowerCase()}`; }
@@ -143,6 +116,162 @@
       btn.removeAttribute('aria-pressed');
     }
   }
+
+  function escapeHtml(s){ return (s||'').replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c])); }
+
+  function esc(s){
+    return escapeHtml(s == null ? '' : String(s));
+  }
+
+  function toText(value){
+    if(value == null) return '';
+    if(typeof value === 'string') return value;
+    if(typeof value === 'number' || typeof value === 'boolean') return String(value);
+    if(Array.isArray(value)) return value.map(toText).filter(Boolean).join('; ');
+    if(typeof value === 'object'){
+      if(typeof value.summary === 'string') return value.summary;
+      if(typeof value.description === 'string') return value.description;
+      if(typeof value.text === 'string') return value.text;
+      try{ return JSON.stringify(value); }catch{ return String(value); }
+    }
+    return String(value);
+  }
+
+  function renderRoleGaps(){
+    const roleGapEntries = Array.isArray(GAP_lastAnalysis?.role_gap_analysis)
+      ? GAP_lastAnalysis.role_gap_analysis
+      : [];
+    const roleTargets = GAP_roleTargets || [];
+    const targetById = {};
+    roleTargets.forEach(t => {
+      const tid = t && t.target_id ? String(t.target_id).trim() : '';
+      if(!tid) return;
+      targetById[tid.toLowerCase()] = t;
+    });
+    const metrics = (GAP_lastAnalysis?.recommended_metrics || []).map(x => typeof x === 'string' ? { name: x } : x);
+    const interventions = (GAP_lastAnalysis?.interventions || []).map(x => typeof x === 'string' ? { name: x } : x);
+
+    const items = roleGapEntries.length ? roleGapEntries : roleTargets.slice(0, 2).map(t => ({
+      competency: `${t.kind || 'Target'} — ${t.name || 'KSAO'}`,
+      target_expectation: t.target_level ? `Target level ${t.target_level} (${proficiencyName(t.target_level)})` : 'Target expectation',
+      observation: 'Event indicates a potential deviation from this benchmark.',
+      recommended_action: 'Discuss expectations and provide coaching.',
+      linked_target_id: t.target_id
+    }));
+
+    if (!items.length) {
+      return '<div class="meta">No role targets available. Select a role to contextualize.</div>';
+    }
+
+    return items.map(entry => {
+      const linkedId = entry && entry.linked_target_id ? String(entry.linked_target_id).trim() : '';
+      const linkedTarget = linkedId ? targetById[linkedId.toLowerCase()] : null;
+
+      const displayName = linkedTarget
+        ? `${linkedTarget.kind || 'Target'} — ${linkedTarget.name || 'KSAO'}`
+        : (entry.competency || 'Competency');
+      const cname = esc(displayName);
+
+      const targetText = linkedTarget && linkedTarget.target_level != null
+        ? `Target level ${linkedTarget.target_level} (${proficiencyName(linkedTarget.target_level)})`
+        : (entry.target_expectation || 'Role benchmark');
+      const observationText = toText(entry.observation || 'Event insight related to this benchmark.');
+      const actionText = toText(entry.recommended_action || 'Align on expectations and provide targeted coaching.');
+
+      const evidence = Array.isArray(entry?.evidence) ? entry.evidence : [];
+      const evidenceHtml = evidence.length
+        ? `<div class="meta" style="margin-top:8px;"><strong>Evidence:</strong></div>`
+          + `<ul class="list-disc" style="margin-top:4px;">`
+          + evidence.slice(0, 2).map(ev => {
+            const snip = esc(toText(ev?.snippet || ''));
+            const why = esc(toText(ev?.rationale || ''));
+            const whyHtml = why ? `<div class="meta">${why}</div>` : '';
+            return `<li><div>“${snip}”</div>${whyHtml}</li>`;
+          }).join('')
+          + `</ul>`
+        : '';
+
+      const lc = cname.toLowerCase();
+      const relKpis = metrics.filter(m => (m.name || '').toLowerCase().includes(lc)).slice(0,2);
+      const relNudges = interventions.filter(n => (n.name || '').toLowerCase().includes(lc)).slice(0,2);
+      const fallbackKpis = relKpis.length ? relKpis : metrics.slice(0,1);
+      const fallbackNudges = relNudges.length ? relNudges : interventions.slice(0,1);
+      const kpiHtml = fallbackKpis.map(item => {
+        const nm = esc(item.name || item.metric || 'KPI');
+        return `<div class="kpi-item"><h3 style="margin:0 0 4px">📊 ${nm}</h3><div class="meta">Measures progress on ${cname}.</div><div style="margin-top:6px"><a class="btn btn-sm btn-secondary" href="/playbook?kind=kpi&q=${encodeURIComponent(nm)}">Open KPIs in Playbook</a><button class="btn btn-sm btn-primary" data-action="add-plan" data-kind="kpi" data-label="${nm}" style="margin-left:8px">Add to Plan</button></div></div>`;
+      }).join('');
+      const nudgeHtml = fallbackNudges.map(item => {
+        const nm = esc(item.name || item.description || 'Intervention');
+        return `<div class="nudge-item"><h4 style="margin:0 0 4px">💡 ${nm}</h4><div class="meta">Supports ${cname} development.</div><div style="margin-top:6px"><a class="btn btn-sm btn-secondary" href="/playbook?kind=nudge&q=${encodeURIComponent(nm)}">Open in Playbook</a><button class="btn btn-sm btn-primary" data-action="add-plan" data-kind="nudge" data-label="${nm}" style="margin-left:8px">Add to Plan</button></div></div>`;
+      }).join('');
+
+      return `
+        <div class="issue-card">
+          <h3>🔎 ${cname}</h3>
+          <div class="issue-body">
+            <div class="gap-scale gap-scale--single">
+              <div class="meta"><strong>Benchmark:</strong> ${esc(targetText)}</div>
+              <div class="meta"><strong>Observation:</strong> ${esc(observationText)}</div>
+              <div class="meta"><strong>Action:</strong> ${esc(actionText)}</div>
+              ${evidenceHtml}
+            </div>
+            <div class="section"><h5>Related KPIs</h5><div class="kpi-list">${kpiHtml || '<div class="meta">KPIs will appear after analysis.</div>'}</div></div>
+            <div class="section"><h5>Related Interventions</h5><div class="nudge-list">${nudgeHtml || '<div class="meta">Interventions will appear after analysis.</div>'}</div></div>
+          </div>
+          <div class="issue-actions"><button class="btn btn-sm btn-secondary" data-action="open-playbook" data-label="${cname}">Open in Playbook</button><button class="btn btn-sm btn-primary" data-action="add-plan" data-kind="gap" data-label="${cname}" style="margin-left:8px">Add to Plan</button></div>
+        </div>`;
+    }).join('');
+  }
+
+  // ----------------------------
+  // Role Profile targets framing (callouts on diagnostics)
+  // ----------------------------
+  async function fetchJSON(url){ const r = await fetch(url, { headers: { 'Accept':'application/json' } }); if(!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); }
+
+  function captureAnalysis(detail){
+    if(!detail || typeof detail !== 'object') return;
+    GAP_lastAnalysis = detail.analysis || null;
+    GAP_lastInput = detail.input || '';
+    if(detail.role_context_summary){
+      GAP_selectedRole = Object.assign({}, GAP_selectedRole || {}, detail.role_context_summary);
+    }
+    renderGapReport();
+  }
+
+  async function callBsdEndpoint(text){
+    try{
+      const res = await fetch('/api/analyze-event', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        body: JSON.stringify({ event_description: text })
+      });
+      if(!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      if(data?.success) {
+        try { await refreshRoleTargets(); } catch (err) { console.warn('refreshRoleTargets failed after analysis', err); }
+        return data;
+      }
+      throw new Error(data?.error || 'Unexpected response');
+    }catch(err){
+      return { success:false, error: err.message || String(err) };
+    }
+  }
+
+  function normaliseBiasEntry(entry){
+    if(!entry) return null;
+    const name = toText(entry.name || entry.heading || entry.title || 'Bias');
+    const description = toText(entry.description ?? entry.short_description ?? entry.summary ?? entry.detailed_description ?? '');
+    const impact = toText(entry.impact ?? entry.effect ?? '');
+    return {
+      id: entry.id,
+      name,
+      description,
+      impact,
+      countermeasures: Array.isArray(entry.countermeasures) ? entry.countermeasures.map(toText).filter(Boolean) : [],
+      model_framework: entry.model_framework || entry.related_framework || entry.framework || entry.collection || null,
+    };
+  }
+
   async function refreshRoleTargets(){
     try{
       const box = document.getElementById('diag-role-targets');
@@ -162,14 +291,15 @@
         const roleRes = await fetchJSON(`/api/roles/${rid}`);
         GAP_selectedRole = roleRes.role || roleRes || { id: rid };
       } catch { GAP_selectedRole = { id: rid }; }
-      const data = await fetchJSON(`/api/roles/${rid}/targets`);
+      const data = await fetchJSON(`/api/roles/${rid}/ksao-targets`);
       const tgts = Array.isArray(data.targets) ? data.targets : [];
       GAP_roleTargets = tgts;
       if(!tgts.length){ box.style.display='none'; box.innerHTML=''; return; }
       const lines = tgts.slice(0,6).map(t => {
-        const cname = esc(t.competency?.name || t.competency_name || ('#'+t.competency_id));
+        const kind = esc(t.kind || 'Target');
+        const name = esc(t.name || 'KSAO');
         const lvl = t.target_level;
-        return `• ${cname}: Target ${lvl} (${proficiencyName(lvl)})`;
+        return `• ${kind} — ${name}: Target ${lvl} (${proficiencyName(lvl)})`;
       });
       const more = tgts.length>6 ? ` +${tgts.length-6} more` : '';
       box.innerHTML = `<strong>Role Targets</strong><br>${lines.join('<br>')}${more}`;
@@ -230,7 +360,7 @@
       if(results) results.style.display = 'none';
     }catch{}
 
-    const roleName = GAP_selectedRole?.name || null;
+    const roleName = GAP_selectedRole?.name || GAP_lastAnalysis?._meta?.role_context_summary?.name || null;
     const dateStr = new Date().toLocaleDateString();
     const hasAnalysis2 = true; // by this point, we've already validated hasAnalysis
 
@@ -255,49 +385,29 @@
         <p>${summary}</p>
         <h5>Identified Core Issues: Key Gaps${roleName? ` for ${esc(roleName)}`:''}</h5>
         <div class="issue-list">
-          ${(GAP_roleTargets||[]).slice(0,2).map(t => {
-            const cname = esc(t.competency?.name || t.competency_name || 'Competency');
-            const tgt = Number(t.target_level);
-            const current = null; // unknown estimate; could be filled by model later
-            const ticks = [1,2,3,4,5].map(n => `<div class="tick" data-label="${n}">${[n===tgt?'<span class=\"marker target\"></span>':'', current===n?'<span class=\"marker current\"></span>':''].join('')}</div>`).join('');
-            // Heuristic grouping: match KPI/Nudge names containing the competency name (case-insensitive)
-            const lc = cname.toLowerCase();
-            const kpis = (GAP_lastAnalysis?.recommended_metrics||[]).map(x=>typeof x==='string'?x:(x.name||x.metric||'KPI'));
-            const nudges = (GAP_lastAnalysis?.interventions||[]).map(x=>typeof x==='string'?x:(x.name||x.description||'Intervention'));
-            const relKpis = kpis.filter(k => String(k).toLowerCase().includes(lc)).slice(0,2);
-            const relNudges = nudges.filter(n => String(n).toLowerCase().includes(lc)).slice(0,2);
-            const fallbackKpis = relKpis.length ? relKpis : kpis.slice(0,1);
-            const fallbackNudges = relNudges.length ? relNudges : nudges.slice(0,1);
-            const kpiHtml = fallbackKpis.map(name => `<div class=\"kpi-item\"><h3 style=\"margin:0 0 4px\">📊 ${esc(name)}</h3><div class=\"meta\">Relevance: Measures improvement in ${cname}.</div><div style=\"margin-top:6px\"><a class=\"btn btn-sm btn-secondary\" href=\"/playbook?kind=kpi&q=${encodeURIComponent(name)}\">Open KPIs in Playbook</a><button class=\"btn btn-sm btn-primary\" data-action=\"add-plan\" data-kind=\"kpi\" data-label=\"${esc(name)}\" style=\"margin-left:8px\">Add to Plan</button></div></div>`).join('');
-            const nudgeHtml = fallbackNudges.map(name => `<div class=\"nudge-item\"><h4 style=\"margin:0 0 4px\">💡 ${esc(name)}</h4><div class=\"meta\">Role Benefit: Supports ${cname} development.</div><div style=\"margin-top:6px\"><a class=\"btn btn-sm btn-secondary\" href=\"/playbook?kind=nudge&q=${encodeURIComponent(name)}\">Open in Playbook</a><button class=\"btn btn-sm btn-primary\" data-action=\"add-plan\" data-kind=\"nudge\" data-label=\"${esc(name)}\" style=\"margin-left:8px\">Add to Plan</button></div></div>`).join('');
-            return `
-              <div class="issue-card">
-                <h3>🔎 ${cname}</h3>
-                <div class="issue-body">
-                  <div class="gap-scale">${ticks}</div>
-                  <div class="gap-legend"><span class="dot target"></span> Target: ${tgt} (${proficiencyName(tgt)}) ${current? `<span style=\"margin-left:12px\" class=\"gap-current\"><span class=\"dot current\"></span> Estimated Current: ${current} (${proficiencyName(current)})</span>` : `<span style=\"margin-left:12px\" class=\"gap-current\"><span class=\"dot current\"></span> Estimated Current: —</span>`}
-                  </div>
-                  <div class=\"section\"><h5>Related KPIs</h5><div class=\"kpi-list\">${kpiHtml||'<div class=\"meta\">KPIs will appear after analysis.</div>'}</div></div>
-                  <div class=\"section\"><h5>Related Interventions</h5><div class=\"nudge-list\">${nudgeHtml||'<div class=\"meta\">Interventions will appear after analysis.</div>'}</div></div>
-                </div>
-                <div class="issue-actions"><button class="btn btn-sm btn-secondary" data-action="open-playbook" data-label="${cname}">Open in Playbook</button><button class="btn btn-sm btn-primary" data-action="add-plan" data-kind="gap" data-label="${cname}" style="margin-left:8px">Add to Plan</button></div>
-              </div>`;
-          }).join('') || '<div class="meta">No role targets available. Select a role to contextualize.</div>'}
+          ${renderRoleGaps()}
         </div>
       </div>
     `;
 
     // Root Causes (simple placeholders; can be enriched later)
-    const biases = (GAP_lastAnalysis && Array.isArray(GAP_lastAnalysis.learning_needs)) ? GAP_lastAnalysis.learning_needs.slice(0,2) : [];
+    const biasesRaw = Array.isArray(GAP_lastAnalysis?.behavioral_biases)
+      ? GAP_lastAnalysis.behavioral_biases
+      : (Array.isArray(GAP_lastAnalysis?.biases) ? GAP_lastAnalysis.biases : []);
+    const biases = Array.isArray(biasesRaw)
+      ? biasesRaw.map(normaliseBiasEntry).filter(Boolean).slice(0,2)
+      : [];
     causesEl.innerHTML = `
       <div class="section">
         <h4>Potential Root Causes (Behavioral Biases): Impact on Role Performance</h4>
         ${biases.length ? biases.map(b => `
           <div class="bias-card">
-            <h4>🚫 ${esc(b)}</h4>
-            <p><strong>Impact Summary:</strong> Directly impedes ${roleName? esc(roleName)+"'s" : 'the role\'s'} effective performance.</p>
-            <p class="meta">This bias may hinder conflict resolution and timely performance feedback, leading to unresolved team issues.</p>
-            <div><a class="btn btn-sm btn-primary" href="/playbook?kind=bias&q=${encodeURIComponent(b)}">Explore Nudges to Counteract Bias</a></div>
+            <h4>🚫 ${esc(b.name || 'Bias')}</h4>
+            ${b.description ? `<p>${esc(b.description)}</p>` : ''}
+            ${b.impact ? `<p><strong>Impact:</strong> ${esc(b.impact)}</p>` : `<p><strong>Impact Summary:</strong> Directly impedes ${roleName? esc(roleName)+"'s" : 'the role\'s'} effective performance.</p>`}
+            ${Array.isArray(b.countermeasures) && b.countermeasures.length ? `<div class="bias-recs"><div class="recs-title">Countermeasures</div><ul class="list-disc"><li>${b.countermeasures.map(escapeHtml).join('</li><li>')}</li></ul></div>` : ''}
+            ${b.model_framework ? `<p class="meta">Framework: ${esc(b.model_framework)}</p>` : ''}
+            <div><a class="btn btn-sm btn-primary" href="/playbook?kind=bias&q=${encodeURIComponent(b.name || '')}">Explore Nudges to Counteract Bias</a></div>
           </div>
         `).join('') : '<div class="meta">Bias drivers will appear after analysis.</div>'}
       </div>
@@ -360,15 +470,77 @@
   // ----------------------------
   // Behavioral Science Diagnostic (free-text analyzer)
   // ----------------------------
-  const BIAS_MAP = {
-    // key -> { terms: [query terms/keywords], title, description, recs: [actions], related: [keys] }
-    'status-quo': { terms: ['status quo','stick with','business as usual','as usual','keep doing','resistance to change'], title: 'Status Quo Bias', description: 'Preference for existing practices, even when suboptimal.', recs: ['Surface switching costs explicitly','Run small safe-to-try experiments','Time-box a trial period with success criteria'], related: ['bandwagon','authority'] },
-    'authority': { terms: ['authority','executive said','boss said','senior leader','because manager','leadership insisted'], title: 'Authority Bias', description: 'Overweighting opinions from authority figures.', recs: ['Invite dissenting views first (pre-mortem)','Use anonymous voting before discussion','Ask for evidence rather than rank-based claims'], related: ['bandwagon','framing'] },
-    'bandwagon': { terms: ['bandwagon','everyone thinks','popular','consensus','most people'], title: 'Bandwagon Effect', description: 'Adopting beliefs because many others hold them.', recs: ['Seek counter-examples and base rates','Split group to argue alternatives','Use written rationale before group talk'], related: ['status-quo','authority'] },
-    'time-pressure': { terms: ['time pressure','tight deadline','urgent','rush','last minute','pressure'], title: 'Pressure Heuristic', description: 'Rushed decisions under time or stress constraints.', recs: ['Pause with a 10-minute cooling-off','Define a minimum viable decision','Clarify reversible vs irreversible decisions'], related: ['limited-info','framing'] },
-    'limited-info': { terms: ['limited information','incomplete data','don\'t have data','lack of data','gut feel','intuition only'], title: 'Availability Heuristic', description: 'Judging by information that comes easily to mind.', recs: ['Collect a small but representative sample','Use a decision checklist','Seek an external benchmark'], related: ['framing','bandwagon'] },
-    'framing': { terms: ['framing','framed as','presented as','loss vs gain','wording changed'], title: 'Framing Effect', description: 'Choices influenced by how options are presented.', recs: ['Reframe options in neutral language','Show both loss and gain perspectives','Compare equal baselines and units'], related: ['authority','limited-info'] }
-  };
+  const FALLBACK_BIASES = [
+    {
+      name: 'Status Quo Bias',
+      description: 'Preference for existing practices, even when suboptimal.',
+      trigger_keywords: ['status quo','stick with','business as usual','keep doing','resistance to change','same way','always the same','never changes'],
+      countermeasures: ['Surface switching costs explicitly','Run small safe-to-try experiments','Time-box a trial period with success criteria'],
+    },
+    {
+      name: 'Authority Bias',
+      description: 'Overweighting opinions from authority figures.',
+      trigger_keywords: ['authority','executive said','boss said','senior leader','leadership insisted','leaders say'],
+      countermeasures: ['Invite dissenting views first (pre-mortem)','Use anonymous voting before discussion','Ask for evidence rather than rank-based claims'],
+    },
+    {
+      name: 'Bandwagon Effect',
+      description: 'Adopting beliefs because many others hold them.',
+      trigger_keywords: ['bandwagon','everyone thinks','popular','consensus','most people'],
+      countermeasures: ['Seek counter-examples and base rates','Split group to argue alternatives','Use written rationale before group talk'],
+    },
+    {
+      name: 'Halo Effect',
+      description: 'Letting a single positive trait sway overall judgment.',
+      trigger_keywords: ['leadership presence','communicates well','obvious choice','natural leader','charismatic','strong presence','well-liked'],
+      countermeasures: ['List explicit evaluation criteria','Have independent reviewers score candidates','Separate style cues from competency evidence'],
+    },
+    {
+      name: 'Pressure Heuristic',
+      description: 'Rushed decisions under time or stress constraints.',
+      trigger_keywords: ['time pressure','tight deadline','urgent','rush','last minute','pressure'],
+      countermeasures: ['Pause with a 10-minute cooling-off','Define a minimum viable decision','Clarify reversible vs irreversible decisions'],
+    },
+    {
+      name: 'Availability Heuristic',
+      description: 'Judging by information that comes easily to mind.',
+      trigger_keywords: ['limited information','incomplete data','lack of data','gut feel','intuition only'],
+      countermeasures: ['Collect a small but representative sample','Use a decision checklist','Seek an external benchmark'],
+    },
+    {
+      name: 'Framing Effect',
+      description: 'Choices influenced by how options are presented.',
+      trigger_keywords: ['framing','framed as','presented as','loss vs gain','wording changed'],
+      countermeasures: ['Reframe options in neutral language','Show both loss and gain perspectives','Compare equal baselines and units'],
+    }
+  ];
+
+  let biasCatalog = [...FALLBACK_BIASES];
+
+  async function loadBiasCatalog(){
+    if(biasCatalog.length) return biasCatalog;
+    try{
+      const res = await fetch('/api/knowledge/biases?limit=200', { headers: { 'Accept': 'application/json' } });
+      if(!res.ok) throw new Error('Failed to load biases');
+      const data = await res.json();
+      if(Array.isArray(data.items) && data.items.length){
+        biasCatalog = data.items.map(item => ({
+          id: item.id,
+          name: item.heading || item.name || 'Bias',
+          description: item.content || item.short_description || '',
+          tags: Array.isArray(item.tags) ? item.tags : [],
+          trigger_keywords: Array.isArray(item.trigger_keywords) ? item.trigger_keywords : [],
+          countermeasures: Array.isArray(item.countermeasures) ? item.countermeasures : [],
+        }));
+      } else {
+        biasCatalog = [...FALLBACK_BIASES];
+      }
+    }catch(err){
+      console.warn('Unable to load bias catalog, fallback to static heuristics', err);
+      biasCatalog = [...FALLBACK_BIASES];
+    }
+    return biasCatalog;
+  }
 
   function uniqueById(arr){
     const seen = new Set();
@@ -437,8 +609,6 @@
     }, { once: true });
   }
 
-  function escapeHtml(s){ return (s||'').replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c])); }
-
   function initBSD(){
     const btn = $('#bsd-analyze');
     const output = $('#bsd-output');
@@ -456,17 +626,14 @@
 
     function analyze(text){
       const t = (text || '').toLowerCase();
-      // Find matching bias keys by keyword presence
-      const found = [];
-      Object.entries(BIAS_MAP).forEach(([key, meta]) => {
-        if(meta.terms.some(term => t.includes(term))){ found.push({ key, ...meta }); }
+      const matches = [];
+      biasCatalog.forEach((bias) => {
+        const keywords = Array.isArray(bias.trigger_keywords) ? bias.trigger_keywords : [];
+        if(keywords.some(term => t.includes(term.toLowerCase()))){
+          matches.push(bias);
+        }
       });
-      // Prepare related suggestions (not already found)
-      const foundKeys = new Set(found.map(f => f.key));
-      const alsoConsider = [];
-      found.forEach(f => (f.related||[]).forEach(r => { if(!foundKeys.has(r) && !alsoConsider.includes(r)) alsoConsider.push(r); }));
-
-      return { found, alsoConsider };
+      return matches;
     }
 
     function playbookLink(name){
@@ -475,29 +642,26 @@
       return `/playbook?kind=bias&q=${q}&filter=${filter}`;
     }
 
-    function render(text, result, kbItems){
+    function render(text, result, kbItems, meta){
       const intro = `You described: “${escapeHtml(text.trim())}”. The context suggests potential cognitive patterns to consider:`;
-      const idList = result.found.map(b => {
-        const icon = b.key === 'authority' ? '🧑‍💼' : b.key === 'bandwagon' ? '👥' : b.key === 'status-quo' ? '🧱' : b.key === 'time-pressure' ? '⏱️' : b.key === 'limited-info' ? '📉' : b.key === 'framing' ? '🖼️' : '🧠';
+      const idList = result.map(b => {
+        const icon = '🧠';
+        const framework = b.model_framework ? `<span class="bias-framework">Framework: ${escapeHtml(b.model_framework)}</span>` : '';
         return `
-        <li class="bias-card bias-${escapeHtml(b.key)}">
+        <li class="bias-card">
           <div class="bias-card-header">
             <span class="bias-icon">${icon}</span>
-            <div class="bias-title">${escapeHtml(b.title)}</div>
+            <div class="bias-title">${escapeHtml(b.name)}</div>
           </div>
-          <p class="bias-desc">${escapeHtml(b.description)}</p>
+          <p class="bias-desc">${escapeHtml(b.description || '')}</p>
+          ${framework}
           <div class="bias-actions">
-            <button class="btn btn-sm btn-secondary" data-action="add-plan" data-kind="bias" data-label="${escapeHtml(b.title)}">Copy to Plan</button>
-            <a class="btn btn-sm btn-primary" href="${playbookLink(b.title)}">Open Bias Card</a>
+            <button class="btn btn-sm btn-secondary" data-action="add-plan" data-kind="bias" data-label="${escapeHtml(b.name)}">Copy to Plan</button>
+            <a class="btn btn-sm btn-primary" href="${playbookLink(b.name)}">Open Bias Card</a>
           </div>
-          ${b.recs?.length ? `<div class="bias-recs"><div class="recs-title">Counter-bias recommendations</div><ul class="list-disc"><li>${b.recs.map(escapeHtml).join('</li><li>')}</li></ul></div>` : ''}
+          ${Array.isArray(b.countermeasures) && b.countermeasures.length ? `<div class="bias-recs"><div class="recs-title">Countermeasures</div><ul class="list-disc"><li>${b.countermeasures.map(escapeHtml).join('</li><li>')}</li></ul></div>` : ''}
         </li>`;
       }).join('');
-
-      const also = result.alsoConsider.map(k => {
-        const m = BIAS_MAP[k];
-        return m ? `<a href="${playbookLink(m.title)}" class="badge">${escapeHtml(m.title)}</a>` : '';
-      }).join(' ');
 
       const kbSection = Array.isArray(kbItems) && kbItems.length ? `
         <div class="analysis-card">
@@ -519,6 +683,17 @@
         </div>
       ` : '';
 
+      const metaSection = meta ? `
+        <div class="analysis-card">
+          <h4>Analysis Details</h4>
+          <ul class="analysis-list meta-list">
+            ${meta.generated_by ? `<li><strong>Generated by:</strong> ${escapeHtml(meta.generated_by)}</li>` : ''}
+            ${meta.ollama_status ? `<li><strong>LLM status:</strong> ${escapeHtml(meta.ollama_status)}</li>` : ''}
+            ${meta.error ? `<li class="text-danger"><strong>Note:</strong> ${escapeHtml(meta.error)}</li>` : ''}
+          </ul>
+        </div>
+      ` : '';
+
       output.innerHTML = `
         <div class="analysis-card">
           <h4>Introduction</h4>
@@ -526,13 +701,10 @@
         </div>
         <div class="analysis-card">
           <h4>Identified Biases, Heuristics, and Fallacies</h4>
-          ${result.found.length ? `<ol class="analysis-list">${idList}</ol>` : '<p>No specific biases detected from keywords; consider trying the AI Event Analysis tab for a deeper read.</p>'}
-        </div>
-        <div class="analysis-card">
-          <h4>Other Biases to Watch</h4>
-          ${also || '<p>None suggested.</p>'}
+          ${result.length ? `<ol class="analysis-list">${idList}</ol>` : '<p>No specific biases detected from keywords; consider trying the AI Event Analysis tab for a deeper read.</p>'}
         </div>
         ${kbSection}
+        ${metaSection}
       `;
       output.style.display = 'block';
     }
@@ -540,13 +712,37 @@
     btn.addEventListener('click', async () => {
       const text = textarea.value.trim();
       if(!text){ textarea.focus(); return; }
-      const res = analyze(text);
+      output.innerHTML = '<div class="analysis-card"><p>Analyzing event…</p></div>';
+      output.style.display = 'block';
+
+      const apiResult = await callBsdEndpoint(text);
+
+      let biases = [];
       let kbItems = null;
-      if(window.APP_FLAGS?.ENABLE_EVENT_KB === 'true'){
-        const kb = await fetchBiasKnowledge(text);
-        if(kb?.success) kbItems = kb.items;
+      let meta = null;
+
+      if(apiResult.success){
+        const kbPayload = apiResult.kb || {};
+        kbItems = Array.isArray(kbPayload.biases) ? kbPayload.biases : null;
+        const providedBiases = Array.isArray(apiResult.analysis?.biases) ? apiResult.analysis.biases : [];
+        biases = providedBiases.map(normaliseBiasEntry).filter(Boolean);
+        if(!biases.length && kbItems){
+          biases = kbItems.map(normaliseBiasEntry).filter(Boolean);
+        }
+        meta = {
+          generated_by: apiResult.generated_by,
+          ollama_status: apiResult.ollama_status,
+        };
+      }else{
+        meta = { error: apiResult.error };
       }
-      render(text, res, kbItems);
+
+      if(!biases.length){
+        await loadBiasCatalog();
+        biases = analyze(text);
+      }
+
+      render(text, biases, kbItems, meta);
     });
 
     // Inline login prompt dismiss
@@ -633,7 +829,9 @@
 
   // Ensure default state for gap-active on load and set up fetch interceptor
   try { document.body.setAttribute('data-gap-active','0'); } catch {}
-  try { setupAnalyzeInterceptor(); } catch {}
+  window.addEventListener('analysis:completed', (evt) => {
+    captureAnalysis(evt.detail || {});
+  });
 
   if(document.readyState === 'loading'){
     document.addEventListener('DOMContentLoaded', init);

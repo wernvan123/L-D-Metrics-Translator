@@ -3,10 +3,23 @@ Performance tests for L&D Metrics Translator application.
 """
 import pytest
 import time
-import psutil
 import json
 import threading
-from memory_profiler import profile
+
+try:
+    import psutil  # pragma: no cover - optional dependency
+    PSUTIL_AVAILABLE = True
+except ImportError:  # pragma: no cover - optional dependency
+    psutil = None
+    PSUTIL_AVAILABLE = False
+
+try:
+    from memory_profiler import profile  # pragma: no cover - optional dependency
+except ImportError:  # pragma: no cover - optional dependency
+    def profile(func):
+        return func
+
+pytestmark = pytest.mark.skipif(not PSUTIL_AVAILABLE, reason="psutil not installed")
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from app.models import LDOutcome, MetricType, Metric

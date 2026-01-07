@@ -54,8 +54,8 @@
 
       <div class="event-input-container">
         <div class="event-input-header">
-          <textarea id="event-description" class="event-input" placeholder="Describe a workplace event or situation..." rows="4" maxlength="500"></textarea>
-          <div class="character-counter"><span id="analysis-char-count">0</span>/500</div>
+          <textarea id="event-description" class="event-input" placeholder="Describe a workplace event or situation..." rows="4" maxlength="1000"></textarea>
+          <div class="character-counter"><span id="analysis-char-count">0</span>/1000</div>
         </div>
 
         <div id="event-suggestions" class="event-suggestions" style="display: none;"></div>
@@ -271,7 +271,7 @@
   <script src="{{ url_for('static', filename='js/driver-card-demo.js') }}?v=20250924"></script>
 </section>
 
-<script src="{{ url_for('static', filename='js/diagnostics.js') }}?v=20250920-1"></script>
+<script src="{{ url_for('static', filename='js/diagnostics.js') }}?v=20260104-1"></script>
 <script src="{{ url_for('static', filename='js/role-selection.js') }}?v=20250920-1"></script>
 <script>
   document.addEventListener('DOMContentLoaded', function(){

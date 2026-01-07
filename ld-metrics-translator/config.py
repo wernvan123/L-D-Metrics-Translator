@@ -57,7 +57,7 @@ class Config:
     # Feature Flags (non-invasive, default off)
     UI_TABS_V2 = os.environ.get('UI_TABS_V2', 'False').lower() == 'true'
     HOME_HERO_V2 = os.environ.get('HOME_HERO_V2', 'False').lower() == 'true'
-    DRIVER_CARDS_V1 = os.environ.get('DRIVER_CARDS_V1', 'False').lower() == 'true'
+    DRIVER_CARDS_V1 = os.environ.get('DRIVER_CARDS_V1', 'True').lower() == 'true'
     ENABLE_EVENT_KB = os.environ.get('ENABLE_EVENT_KB', 'False').lower() == 'true'
     
     @staticmethod

@@ -34,6 +34,7 @@ from wtforms import ValidationError
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 from app.models import Metric, LDOutcome, MetricType, AdminUser, AuditLog, Framework, Competency
+from app.models_behavioral_bias import BehavioralBias
 from app import db
 import csv
 import json
@@ -85,6 +86,45 @@ def unique_competency_slug(framework_id: int, base: str) -> str:
             return candidate
         i += 1
 
+
+def unique_bias_slug(base: str, bias_id: int | None = None) -> str:
+    """Ensure slug uniqueness for behavioral biases."""
+    slug = slugify(base)
+    if not slug:
+        slug = 'bias'
+
+    query = BehavioralBias.query.filter_by(slug=slug)
+    if bias_id:
+        query = query.filter(BehavioralBias.id != bias_id)
+    if not query.first():
+        return slug
+
+    i = 2
+    while True:
+        candidate = f"{slug}-{i}"
+        query = BehavioralBias.query.filter_by(slug=candidate)
+        if bias_id:
+            query = query.filter(BehavioralBias.id != bias_id)
+        if not query.first():
+            return candidate
+        i += 1
+
+
+def parse_list_field(value):
+    """Parse comma/newline/semicolon separated text into a list of unique items preserving order."""
+    if not value:
+        return []
+    items = []
+    seen = set()
+    normalized = str(value).replace(';', '\n')
+    for line in normalized.splitlines():
+        parts = [part.strip() for part in line.split(',')]
+        for part in parts:
+            if part and part.lower() not in seen:
+                seen.add(part.lower())
+                items.append(part)
+    return items
+
 def admin_required(f):
     """Decorator to require admin authentication."""
     @wraps(f)
@@ -133,6 +173,18 @@ class LDOutcomeForm(FlaskForm):
 class MetricTypeForm(FlaskForm):
     name = StringField('Name', validators=[DataRequired(), Length(max=100)])
     description = TextAreaField('Description', validators=[Optional()])
+
+
+class BehavioralBiasForm(FlaskForm):
+    name = StringField('Name', validators=[DataRequired(), Length(max=200)])
+    short_description = TextAreaField('Short Description', validators=[Optional(), Length(max=500)])
+    detailed_description = TextAreaField('Detailed Description', validators=[Optional()])
+    countermeasures = TextAreaField('Countermeasures (one per line)', validators=[Optional()])
+    tags = TextAreaField('Tags (comma or newline separated)', validators=[Optional()])
+    trigger_keywords = TextAreaField('Trigger Keywords (one per line)', validators=[Optional()])
+    model_framework = StringField('Behavioral Model / Framework', validators=[Optional(), Length(max=255)])
+    source_reference = StringField('Source Reference', validators=[Optional(), Length(max=255)])
+    is_active = BooleanField('Active', default=True)
 
 class FrameworkForm(FlaskForm):
     name = StringField('Name', validators=[DataRequired(), Length(max=200)])
@@ -385,6 +437,97 @@ def add_metric_type():
         return redirect(url_for('admin.metric_types'))
 
     return render_template('admin/metric_type_form.html', form=form, title='Add Metric Type')
+
+
+# Behavioral Biases management
+@admin.route('/behavioral-biases')
+@admin_required
+def behavioral_biases():
+    """List behavioral biases."""
+    items = BehavioralBias.query.order_by(BehavioralBias.name).all()
+    return render_template('admin/behavioral_biases.html', biases=items)
+
+
+@admin.route('/behavioral-biases/add', methods=['GET', 'POST'])
+@admin_required
+def add_behavioral_bias():
+    """Add a new behavioral bias."""
+    form = BehavioralBiasForm()
+    if form.validate_on_submit():
+        bias = BehavioralBias(
+            name=form.name.data,
+            slug=unique_bias_slug(form.name.data),
+            short_description=form.short_description.data,
+            detailed_description=form.detailed_description.data,
+            model_framework=form.model_framework.data,
+            source_reference=form.source_reference.data,
+            is_active=form.is_active.data,
+        )
+        bias.set_countermeasures(parse_list_field(form.countermeasures.data))
+        bias.set_tags(parse_list_field(form.tags.data))
+        bias.set_trigger_keywords(parse_list_field(form.trigger_keywords.data))
+
+        db.session.add(bias)
+        db.session.commit()
+        log_admin_action('ADD_BEHAVIORAL_BIAS', f'Added bias: {bias.name}')
+        flash('Behavioral bias added successfully!', 'success')
+        return redirect(url_for('admin.behavioral_biases'))
+
+    return render_template('admin/behavioral_bias_form.html', form=form, title='Add Behavioral Bias')
+
+
+@admin.route('/behavioral-biases/<int:bias_id>/edit', methods=['GET', 'POST'])
+@admin_required
+def edit_behavioral_bias(bias_id):
+    """Edit an existing behavioral bias."""
+    bias = BehavioralBias.query.get_or_404(bias_id)
+    form = BehavioralBiasForm(
+        name=bias.name,
+        short_description=bias.short_description,
+        detailed_description=bias.detailed_description,
+        countermeasures='\n'.join(bias.countermeasures_list),
+        tags='\n'.join(bias.tags_list),
+        trigger_keywords='\n'.join(bias.trigger_keywords_list),
+        model_framework=bias.model_framework,
+        source_reference=bias.source_reference,
+        is_active=bias.is_active,
+    )
+
+    if form.validate_on_submit():
+        old_name = bias.name
+        bias.name = form.name.data
+        bias.slug = unique_bias_slug(form.name.data, bias.id)
+        bias.short_description = form.short_description.data
+        bias.detailed_description = form.detailed_description.data
+        bias.model_framework = form.model_framework.data
+        bias.source_reference = form.source_reference.data
+        bias.is_active = form.is_active.data
+        bias.set_countermeasures(parse_list_field(form.countermeasures.data))
+        bias.set_tags(parse_list_field(form.tags.data))
+        bias.set_trigger_keywords(parse_list_field(form.trigger_keywords.data))
+
+        db.session.commit()
+        log_admin_action('EDIT_BEHAVIORAL_BIAS', f'Edited bias: {old_name} -> {bias.name}')
+        flash('Behavioral bias updated successfully!', 'success')
+        return redirect(url_for('admin.behavioral_biases'))
+
+    return render_template('admin/behavioral_bias_form.html', form=form, title='Edit Behavioral Bias', bias=bias)
+
+
+@admin.route('/behavioral-biases/<int:bias_id>/delete', methods=['POST'])
+@admin_required
+def delete_behavioral_bias(bias_id):
+    """Delete a behavioral bias."""
+    bias = BehavioralBias.query.get_or_404(bias_id)
+    name = bias.name
+
+    db.session.delete(bias)
+    db.session.commit()
+
+    log_admin_action('DELETE_BEHAVIORAL_BIAS', f'Deleted bias: {name}')
+    flash('Behavioral bias deleted successfully!', 'success')
+    return redirect(url_for('admin.behavioral_biases'))
+
 
 # Frameworks management
 @admin.route('/frameworks')

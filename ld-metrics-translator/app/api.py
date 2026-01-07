@@ -14,6 +14,7 @@ from app.models import (
 from app import db
 from app.ollama_integration import recommendation_engine, report_generator, event_analyzer
 from app.services import knowledge_base
+from app.services import behavioral_biases
 from app.database import create_event_analysis, get_recent_event_analyses
 from sqlalchemy import or_, func, text
 from sqlalchemy.orm import aliased
@@ -22,8 +23,144 @@ import time
 import os
 import logging
 import re
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
+from threading import Lock
+from uuid import uuid4
 
 logger = logging.getLogger(__name__)
+
+_EVENT_ANALYSIS_EXECUTOR = ThreadPoolExecutor(max_workers=2)
+_EVENT_ANALYSIS_JOBS: dict[str, dict] = {}
+_EVENT_ANALYSIS_JOBS_LOCK = Lock()
+
+
+def _event_job_set(job_id: str, **updates) -> None:
+    with _EVENT_ANALYSIS_JOBS_LOCK:
+        job = _EVENT_ANALYSIS_JOBS.get(job_id)
+        if not job:
+            return
+        job.update(updates)
+
+
+def _event_job_get(job_id: str) -> dict | None:
+    with _EVENT_ANALYSIS_JOBS_LOCK:
+        job = _EVENT_ANALYSIS_JOBS.get(job_id)
+        return dict(job) if job else None
+
+
+def _run_event_analysis_job(
+    app,
+    job_id: str,
+    event_description: str,
+    selected_metrics: list,
+    role_context: dict | None,
+    client_ip: str,
+    enable_event_kb: bool,
+    kb_context,
+    kb_tier_limit: int,
+    kb_related_limit: int,
+) -> None:
+    _event_job_set(job_id, status='running', started_at=datetime.utcnow().isoformat() + 'Z')
+
+    with app.app_context():
+        try:
+            check_fn = getattr(event_analyzer.ollama, '_check_availability', None)
+            if callable(check_fn):
+                check_fn()
+
+            if not event_analyzer.ollama.available:
+                raise RuntimeError(
+                    f"Ollama is not available at {getattr(event_analyzer.ollama, 'base_url', 'http://localhost:11434')}. "
+                    "Start Ollama and ensure the configured model is pulled."
+                )
+
+            analysis = event_analyzer.analyze_event(
+                event_description,
+                selected_metrics=selected_metrics,
+                role_context=role_context,
+            )
+
+            generated_by = 'ai'
+
+            kb_payload = {'strong': [], 'related': [], 'biases': []}
+            kb_bias_limit = 5
+            if enable_event_kb:
+                kb_bias_limit = min(5, kb_related_limit)
+                kb_payload['strong'] = knowledge_base.serialize_resources(
+                    knowledge_base.get_resources_by_tier('t1t2', limit=kb_tier_limit)
+                )
+                kb_payload['related'] = knowledge_base.serialize_resources(
+                    knowledge_base.get_resources_for_context(kb_context, max_results=kb_related_limit)
+                )
+
+            bias_keywords = []
+            if selected_metrics:
+                bias_keywords = [
+                    str(m.get('name')).strip()
+                    for m in selected_metrics
+                    if isinstance(m, dict) and m.get('name')
+                ]
+
+            bias_text_parts = []
+            if event_description:
+                bias_text_parts.append(event_description)
+            bias_text_parts.extend(bias_keywords)
+            bias_search_text = " ".join(part for part in bias_text_parts if part).strip()
+
+            bias_results = behavioral_biases.search_biases(
+                text=bias_search_text or None,
+                keywords=bias_keywords or None,
+                limit=kb_bias_limit,
+            )
+            if not bias_results:
+                bias_results = behavioral_biases.get_random_biases(limit=kb_bias_limit)
+            kb_payload['biases'] = behavioral_biases.serialize_biases(bias_results)
+
+            response_payload = {
+                'success': True,
+                'analysis': analysis,
+                'generated_by': generated_by,
+                'ollama_status': 'available',
+                'timestamp': time.time(),
+                'kb': kb_payload
+            }
+
+            stored_analysis = create_event_analysis(
+                event_description=event_description,
+                analysis_result=str(response_payload['analysis']),
+                generated_by=generated_by,
+                success=True,
+                ip_address=client_ip
+            )
+            response_payload['analysis_id'] = stored_analysis.id
+
+            _event_job_set(
+                job_id,
+                status='succeeded',
+                finished_at=datetime.utcnow().isoformat() + 'Z',
+                result=response_payload,
+            )
+
+        except Exception as analysis_error:
+            error_msg = str(analysis_error)
+            try:
+                create_event_analysis(
+                    event_description=event_description,
+                    generated_by='error',
+                    success=False,
+                    error_message=error_msg,
+                    ip_address=client_ip
+                )
+            except Exception:
+                pass
+
+            _event_job_set(
+                job_id,
+                status='failed',
+                finished_at=datetime.utcnow().isoformat() + 'Z',
+                error=error_msg,
+            )
 
 api = Blueprint('api', __name__, url_prefix='/api')
 
@@ -120,6 +257,60 @@ def _parse_driver_chain(obj) -> dict | None:
     except Exception:
         pass
     return None
+
+
+def _build_role_context(role: RoleProfile) -> dict:
+    def _map_items(collection, kind: str):
+        items = []
+        for item in collection:
+            item_id = getattr(item, 'id', None)
+            items.append({
+                'id': item_id,
+                'target_id': f"{kind}:{item_id}" if item_id is not None else None,
+                'kind': kind,
+                'name': getattr(item, 'name', None),
+                'description': getattr(item, 'description', None),
+                'driver_card_id': getattr(item, 'driver_card_id', None),
+                'driver_card_name': getattr(getattr(item, 'driver_card', None), 'name', None),
+                'target_level': getattr(item, 'target_level', None),
+            })
+        return items
+
+    knowledge = _map_items(role.knowledge_items, 'knowledge')
+    skills = _map_items(role.skill_items, 'skill')
+    abilities = _map_items(role.ability_items, 'ability')
+    outcomes = _map_items(role.outcomes, 'outcome')
+    others = _map_items(role.other_requirements, 'other')
+
+    # Flatten benchmark targets so the analyzer can link gaps back to stable IDs.
+    ksao_targets = []
+    for group in (knowledge, skills, abilities, others):
+        for entry in group:
+            if entry.get('target_level') is None:
+                continue
+            ksao_targets.append({
+                'target_id': entry.get('target_id'),
+                'kind': entry.get('kind'),
+                'name': entry.get('name'),
+                'description': entry.get('description'),
+                'target_level': entry.get('target_level'),
+                'driver_card_id': entry.get('driver_card_id'),
+                'driver_card_name': entry.get('driver_card_name'),
+            })
+
+    context = {
+        'id': role.id,
+        'name': role.name,
+        'department': role.department,
+        'knowledge': knowledge,
+        'skills': skills,
+        'abilities': abilities,
+        'outcomes': outcomes,
+        'others': others,
+        'ksao_targets': ksao_targets,
+        'competency_targets': [t.to_dict() for t in role.competency_targets],
+    }
+    return context
 
 
 @api.route('/__debug__/routes2', methods=['GET'])
@@ -1467,6 +1658,44 @@ def list_role_targets(role_id: int):
         return jsonify({'targets': [t.to_dict() for t in role.competency_targets], 'count': len(role.competency_targets)}), 200
     except Exception as e:
         return jsonify({'error': 'Failed to list targets', 'details': str(e)}), 500
+
+
+@api.route('/roles/<int:role_id>/ksao-targets', methods=['GET'])
+def list_role_ksao_targets(role_id: int):
+    try:
+        role = RoleProfile.query.get(role_id)
+        if not role:
+            return jsonify({'error': f'Role with id {role_id} not found'}), 404
+
+        targets = []
+
+        def add_items(items, kind: str):
+            kind_slug = (kind or '').strip().lower()
+            for item in items or []:
+                lvl = getattr(item, 'target_level', None)
+                if lvl is None:
+                    continue
+                item_id = getattr(item, 'id', None)
+                targets.append({
+                    'id': item_id,
+                    'target_id': f"{kind_slug}:{item_id}" if item_id is not None else None,
+                    'kind': kind,
+                    'name': getattr(item, 'name', None) or kind,
+                    'description': getattr(item, 'description', None),
+                    'target_level': lvl,
+                    'driver_card_id': getattr(item, 'driver_card_id', None),
+                    'driver_card_name': getattr(getattr(item, 'driver_card', None), 'name', None),
+                })
+
+        add_items(role.knowledge_items, 'Knowledge')
+        add_items(role.skill_items, 'Skill')
+        add_items(role.ability_items, 'Ability')
+        add_items(role.other_requirements, 'Other')
+
+        targets.sort(key=lambda t: ((t.get('kind') or ''), (t.get('name') or '')))
+        return jsonify({'targets': targets, 'count': len(targets)}), 200
+    except Exception as e:
+        return jsonify({'error': 'Failed to list KSAO targets', 'details': str(e)}), 500
 
 
 @api.route('/roles/<int:role_id>/targets', methods=['POST'])
@@ -3176,171 +3405,134 @@ def analyze_event():
         "event_description": "Team struggled with project deadline due to communication issues"
     }
     """
-    # Handle CORS preflight
     if request.method == 'OPTIONS':
-        response = jsonify({'status': 'ok'})
-        response.headers.add('Access-Control-Allow-Origin', '*')
-        response.headers.add('Access-Control-Allow-Headers', 'Content-Type, X-API-Key')
-        response.headers.add('Access-Control-Allow-Methods', 'POST')
-        response.headers.add('Access-Control-Allow-Credentials', 'true')
-        return response
-        
-    try:
-        # Log request details for debugging
-        logger.info(f"Request content type: {request.content_type}")
-        logger.info(f"Request headers: {dict(request.headers)}")
-        
-        # Get raw request data
-        raw_data = request.get_data(as_text=True)
-        logger.info(f"Raw request data: {raw_data}")
-        
-        # Try to parse JSON data
-        try:
-            data = request.get_json(force=True, silent=True)
-            logger.info(f"Parsed JSON data: {data}")
-            
-            if data is None:
-                # If get_json() returns None, the content type might be wrong
-                if not request.is_json:
-                    return jsonify({
-                        'error': 'Content-Type must be application/json',
-                        'received_content_type': request.content_type,
-                        'success': False
-                    }), 400
-                return jsonify({
-                    'error': 'Invalid JSON data in request',
-                    'details': 'Failed to parse JSON data',
-                    'success': False
-                }), 400
-                
-        except Exception as e:
-            logger.error(f"JSON parsing error: {str(e)}")
-            return jsonify({
-                'error': 'Invalid JSON data in request',
-                'details': str(e)
-            }), 400
-        
-        # Validate required fields
-        if not isinstance(data, dict):
-            return jsonify({
-                'error': 'Invalid request format',
-                'details': 'Expected a JSON object',
-                'success': False
-            }), 400
-            
-        event_description = data.get('event_description')
-        if not event_description or not isinstance(event_description, str):
-            return jsonify({
-                'error': 'Event description is required and must be a string',
-                'success': False
-            }), 400
-            
-        event_description = event_description.strip()
-        if not event_description:
-            return jsonify({
-                'error': 'Event description cannot be empty',
-                'success': False
-            }), 400
-        
-        # Get selected metrics for context-aware analysis
-        selected_metrics = data.get('selected_metrics', [])
-        logger.info(f"Selected metrics for context: {len(selected_metrics)} metrics")
-        
-        # Check Ollama availability and provide helpful feedback
-        if not event_analyzer.ollama.available:
-            logger.info("Ollama not available, using rules-based analysis")
-        
-        # Get client IP for tracking
-        client_ip = request.environ.get('HTTP_X_FORWARDED_FOR', request.environ.get('REMOTE_ADDR', 'unknown'))
-        
-        try:
-            # Pass selected metrics context to the analyzer
-            analysis = event_analyzer.analyze_event(event_description, selected_metrics=selected_metrics)
-            generated_by = 'ai' if event_analyzer.ollama.available else 'rules'
+        return jsonify({'success': True}), 200
 
-            try:
-                logger.debug("Raw analysis payload: %s", json.dumps(analysis, indent=2, ensure_ascii=False))
-            except Exception as payload_log_error:
-                logger.debug("Raw analysis payload (repr fallback due to %s): %r", payload_log_error, analysis)
+    logger.info("Processing event analysis request")
 
-            kb_payload = {'strong': [], 'related': [], 'biases': []}
-            if current_app.config.get('ENABLE_EVENT_KB'):
-                kb_context = data.get('kb_context')
-                kb_tier_limit = int(data.get('kb_tier_limit', 5))
-                kb_related_limit = int(data.get('kb_related_limit', 10))
-                kb_bias_limit = min(5, kb_related_limit)
-
-                kb_payload['strong'] = knowledge_base.serialize_resources(
-                    knowledge_base.get_resources_by_tier('t1t2', limit=kb_tier_limit)
-                )
-                kb_payload['related'] = knowledge_base.serialize_resources(
-                    knowledge_base.get_resources_for_context(kb_context, max_results=kb_related_limit)
-                )
-                bias_query_parts = []
-                if event_description:
-                    bias_query_parts.append(event_description)
-                if selected_metrics:
-                    bias_query_parts.extend(
-                        m.get('name')
-                        for m in selected_metrics
-                        if isinstance(m, dict) and m.get('name')
-                    )
-                bias_query = " ".join(part for part in bias_query_parts if part).strip()
-                bias_resources = []
-                if bias_query:
-                    bias_resources = knowledge_base.search_bias_resources(bias_query, limit=kb_bias_limit)
-                if not bias_resources:
-                    bias_resources = knowledge_base.get_random_bias_resources(limit=kb_bias_limit)
-                kb_payload['biases'] = knowledge_base.serialize_resources(bias_resources[:kb_bias_limit])
-
-            response_payload = {
-                'success': True,
-                'analysis': analysis,
-                'generated_by': generated_by,
-                'ollama_status': 'available' if event_analyzer.ollama.available else 'unavailable',
-                'timestamp': time.time(),
-                'kb': kb_payload
-            }
-
-            # Store successful analysis in database
-            stored_analysis = create_event_analysis(
-                event_description=event_description,
-                analysis_result=str(response_payload['analysis']),
-                generated_by=generated_by,
-                success=True,
-                ip_address=client_ip
-            )
-
-            response_payload['analysis_id'] = stored_analysis.id
-
-            return jsonify(response_payload)
-            
-        except Exception as analysis_error:
-            # Store failed analysis in database
-            error_msg = str(analysis_error)
-            stored_analysis = create_event_analysis(
-                event_description=event_description,
-                generated_by='error',
-                success=False,
-                error_message=error_msg,
-                ip_address=client_ip
-            )
-            raise analysis_error
-        
-    except Exception as e:
-        logger.error(f"Event analysis error: {str(e)}")
-        # Provide a graceful fallback that the frontend treats as a normal success
-        # to avoid showing a warning banner.
+    data = request.get_json(force=True, silent=True)
+    if data is None or not isinstance(data, dict):
         return jsonify({
-            'success': True,
-            'analysis': {
-                'learning_needs': ['Clarify scope and roles', 'Decision hygiene under pressure', 'Cross-team communication'],
-                'recommended_metrics': ['Cycle time', 'Rework rate', 'Decision quality reviews'],
-                'interventions': ['Pre-mortem session', 'Decision checklist', 'Short feedback loops'],
-                'success_measures': ['Fewer last-minute changes', 'Higher team confidence', 'On-time delivery']
-            },
-            'generated_by': 'rules'
-        }), 200
+            'error': 'Invalid JSON data in request',
+            'success': False
+        }), 400
+
+    event_description = data.get('event_description')
+    if not event_description or not isinstance(event_description, str):
+        return jsonify({
+            'error': 'Event description is required and must be a string',
+            'success': False
+        }), 400
+
+    event_description = event_description.strip()
+    if not event_description:
+        return jsonify({
+            'error': 'Event description cannot be empty',
+            'success': False
+        }), 400
+
+    selected_metrics = data.get('selected_metrics', [])
+    logger.info(f"Selected metrics for context: {len(selected_metrics)} metrics")
+
+    role_profile_id = data.get('role_profile_id')
+    role_context = None
+    if role_profile_id is not None:
+        try:
+            role_id_int = int(role_profile_id)
+            role = RoleProfile.query.get(role_id_int)
+            if role:
+                role_context = _build_role_context(role)
+            else:
+                logger.info(f"Role profile not found for role_profile_id={role_profile_id}")
+        except Exception as e:
+            logger.info(f"Unable to parse role_profile_id={role_profile_id}: {e}")
+
+    check_fn = getattr(event_analyzer.ollama, '_check_availability', None)
+    if callable(check_fn):
+        check_fn()
+    if not event_analyzer.ollama.available:
+        return jsonify({
+            'success': False,
+            'error': 'LLM unavailable. Ollama is not reachable.',
+            'ollama_status': 'unavailable',
+            'timestamp': time.time(),
+        }), 503
+
+    client_ip = request.environ.get('HTTP_X_FORWARDED_FOR', request.environ.get('REMOTE_ADDR', 'unknown'))
+
+    enable_event_kb = bool(current_app.config.get('ENABLE_EVENT_KB'))
+    kb_context = data.get('kb_context')
+    kb_tier_limit = int(data.get('kb_tier_limit', 5))
+    kb_related_limit = int(data.get('kb_related_limit', 10))
+
+    job_id = uuid4().hex
+    now_iso = datetime.utcnow().isoformat() + 'Z'
+    with _EVENT_ANALYSIS_JOBS_LOCK:
+        _EVENT_ANALYSIS_JOBS[job_id] = {
+            'id': job_id,
+            'status': 'queued',
+            'created_at': now_iso,
+            'started_at': None,
+            'finished_at': None,
+            'error': None,
+            'result': None,
+        }
+
+    app_obj = current_app._get_current_object()
+    _EVENT_ANALYSIS_EXECUTOR.submit(
+        _run_event_analysis_job,
+        app_obj,
+        job_id,
+        event_description,
+        selected_metrics,
+        role_context,
+        client_ip,
+        enable_event_kb,
+        kb_context,
+        kb_tier_limit,
+        kb_related_limit,
+    )
+
+    return jsonify({
+        'success': True,
+        'job_id': job_id,
+        'status': 'queued',
+        'timestamp': time.time(),
+    }), 202
+
+
+@api.route('/analyze-event/<job_id>', methods=['GET'])
+def analyze_event_job_status(job_id: str):
+    job = _event_job_get(job_id)
+    if not job:
+        return jsonify({
+            'success': False,
+            'error': 'Job not found',
+        }), 404
+
+    status = job.get('status')
+    if status == 'succeeded':
+        payload = job.get('result') or {}
+        return jsonify(payload), 200
+
+    if status == 'failed':
+        return jsonify({
+            'success': False,
+            'status': 'failed',
+            'error': job.get('error') or 'Analysis failed',
+            'timestamp': time.time(),
+        }), 500
+
+    return jsonify({
+        'success': True,
+        'status': status,
+        'job_id': job_id,
+        'created_at': job.get('created_at'),
+        'started_at': job.get('started_at'),
+        'timestamp': time.time(),
+    }), 200
+
+
 @api.route('/knowledge/biases', methods=['GET'])
 def get_bias_knowledge():
     if not current_app.config.get('ENABLE_EVENT_KB'):
@@ -3354,21 +3546,19 @@ def get_bias_knowledge():
     limit = max(1, min(request.args.get('limit', 10, type=int), 25))
 
     try:
-        if query:
-            resources = knowledge_base.search_bias_resources(query, limit=limit)
-        else:
-            resources = knowledge_base.get_bias_resources(limit=limit)
+        biases = behavioral_biases.search_biases(text=query or None, limit=limit)
+        if not biases:
+            biases = behavioral_biases.get_random_biases(limit=limit)
 
-        items = knowledge_base.serialize_resources(resources)
+        items = behavioral_biases.serialize_biases(biases)
 
         return jsonify({
             'success': True,
             'items': items,
             'total': len(items)
         })
-
     except Exception as e:
-        logger.error(f"Error retrieving bias knowledge: {str(e)}")
+        logger.error("Error fetching bias knowledge: %s", e)
         return jsonify({
             'success': False,
             'error': 'Failed to retrieve bias knowledge'
