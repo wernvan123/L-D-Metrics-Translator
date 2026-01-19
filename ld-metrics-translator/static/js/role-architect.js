@@ -53,7 +53,7 @@ const RoleArchitect = (() => {
       }
       tbody.innerHTML = data.roles.map(r => {
         const created = fmtDate(r.created_date);
-        const editHref = isAdmin ? `/admin/roles/new#edit=${r.id}` : `/roles/new#edit=${r.id}`;
+        const editHref = isAdmin ? `/admin/roles/new?edit=${r.id}` : `/roles/new?edit=${r.id}`;
         return `
           <tr data-id="${r.id}">
             <td><input type="checkbox" class="row-check"></td>
@@ -187,11 +187,15 @@ const RoleArchitect = (() => {
     const sel = selected && typeof selected === 'object' ? selected.id : selected;
     const selId = sel === undefined || sel === null ? null : Number(sel);
     const meta = driverCardMeta(selId);
-    const options = _driverCardCache.map(card => `<option value="${card.id}"${selId === card.id ? ' selected' : ''}>${escapeHtml(card.name)}</option>`).join('');
+    const options = _driverCardCache.map(card => {
+      const label = driverCardDisplayName(card.name);
+      const title = (card.name == null) ? '' : String(card.name);
+      return `<option value="${card.id}"${selId === card.id ? ' selected' : ''} title="${escapeAttr(title)}">${escapeHtml(label)}</option>`;
+    }).join('');
     let fallbackOption = '';
     if (selId !== null && !meta) {
       const fallbackName = (selected && typeof selected === 'object' && selected.name) ? selected.name : `Card #${selId}`;
-      fallbackOption = `<option value="${selId}" selected>${escapeHtml(fallbackName)}</option>`;
+      fallbackOption = `<option value="${selId}" selected title="${escapeAttr(String(fallbackName || ''))}">${escapeHtml(driverCardDisplayName(fallbackName))}</option>`;
     }
     return `<select id="${escapeAttr(selectId)}"${selectName}${classAttr}><option value="">Link driver card (optional)</option>${fallbackOption}${options}</select>`;
   }
@@ -201,6 +205,14 @@ const RoleArchitect = (() => {
     const num = Number(id);
     if (Number.isNaN(num)) return null;
     return _driverCardMap.get(num) || null;
+  }
+
+  function driverCardDisplayName(name){
+    const raw = (name == null) ? '' : String(name);
+    const idx = raw.indexOf('@');
+    if (idx === -1) return raw.trim();
+    const left = raw.slice(0, idx).trim();
+    return left || raw.trim();
   }
 
   function driverCardLabels(cardMeta) {
@@ -235,7 +247,7 @@ const RoleArchitect = (() => {
     if (cardName) {
       const { subtype } = driverCardLabels(card);
       const details = subtype ? ` ${escapeHtml(subtype)}` : '';
-      parts.push(`<span class="chip-driver">@ ${escapeHtml(cardName)}${details}</span>`);
+      parts.push(`<span class="chip-driver" title="${escapeAttr(cardName)}">Driver card: ${escapeHtml(driverCardDisplayName(cardName))}${details}</span>`);
     }
     if (['knowledge','skills','abilities','outcomes'].includes(kind) && typeof item.target_level === 'number') {
       parts.push(`<span class="chip-target">Target ${escapeHtml(String(item.target_level))} (${escapeHtml(levelLabel(item.target_level))})</span>`);
@@ -258,7 +270,7 @@ const RoleArchitect = (() => {
       const parts = [escapeHtml(item.name || '')];
       if (driverName) {
         const details = subtype ? ` ${escapeHtml(subtype)}` : '';
-        parts.push(`<span class="chip-driver">@ ${escapeHtml(driverName)}${details}</span>`);
+        parts.push(`<span class="chip-driver" title="${escapeAttr(driverName)}">Driver card: ${escapeHtml(driverCardDisplayName(driverName))}${details}</span>`);
       }
       if (includeTarget && typeof item.target_level === 'number') {
         parts.push(`<span class="chip-target">Target ${escapeHtml(String(item.target_level))} (${escapeHtml(levelLabel(item.target_level))})</span>`);
@@ -363,7 +375,8 @@ const RoleArchitect = (() => {
       const driverId = getDriverCardId(item);
       if (driverId) record.driver_card_id = driverId;
       if (includeTarget && driverId) {
-        const val = normalizeTargetLevel(item.target_level);
+        const defaultLevel = Number(state.targetDefaults?.target || 3);
+        const val = normalizeTargetLevel(item.target_level, defaultLevel);
         if (val !== undefined) record.target_level = val;
       }
       out.push(record);
@@ -401,9 +414,10 @@ const RoleArchitect = (() => {
       const items = state[key] || [];
       const editing = state._editing && state._editing[key];
       const label = key === 'knowledge' ? 'Knowledge Area' : key === 'skills' ? 'Skill' : 'Ability';
+      const plural = key === 'abilities' ? 'Abilities' : `${label}s`;
       html = `
         <div class="list-editor">
-          <h3 style="margin:0 0 8px 0;">${label}s</h3>
+          <h3 style="margin:0 0 8px 0;">${plural}</h3>
           <div class="list-row">
             <label class="field flex-1"><span>${label} name</span>
               <textarea id="item-input" placeholder="Describe the ${label.toLowerCase()}" rows="3">${editing ? escapeHtml(editing.name || '') : ''}</textarea>
@@ -1083,14 +1097,23 @@ const RoleArchitect = (() => {
   }
 
   function initWizard() {
-    // Read edit mode if hash contains #edit=ID
+    // Read edit mode from query string (?edit=ID) or legacy hash (#edit=ID)
+    const url = new URL(window.location.href);
+    const qp = (url.searchParams.get('edit') || '').trim();
     const hash = window.location.hash;
-    const m = /edit=(\d+)/.exec(hash || '');
-    if (m) {
-      state.roleId = parseInt(m[1], 10);
+    const hm = /edit=(\d+)/.exec(hash || '');
+    const editId = qp && /^\d+$/.test(qp) ? qp : (hm ? hm[1] : null);
+
+    if (editId) {
+      state.roleId = parseInt(editId, 10);
       // Load role to prefill
       fetchJSON(`/api/roles/${state.roleId}?include=ksaos,targets`).then(data => {
-        const r = data.role;
+        const r = data && data.role;
+        if (!r) {
+          const err = new Error('Unable to load role profile for editing.');
+          err.payload = data;
+          throw err;
+        }
         state.name = r.name || '';
         state.description = r.description || '';
         state.department = r.department || '';
@@ -1124,7 +1147,12 @@ const RoleArchitect = (() => {
         }));
         state.others = (r.others || []).map(x=>({ name: x.name || '', description: x.description || '' }));
         renderStep();
-      }).catch(() => renderStep());
+      }).catch((err) => {
+        console.error(err);
+        const status = err && err.status ? ` (HTTP ${err.status})` : '';
+        showAlert('danger', `Failed to load role profile for editing${status}. Please refresh and try again.`);
+        renderStep();
+      });
     } else {
       renderStep();
     }

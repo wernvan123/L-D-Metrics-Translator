@@ -18,9 +18,14 @@
   </div>
 </section>
 
+<span id="app-flags" data-enable-event-kb="{{ 1 if ENABLE_EVENT_KB else 0 }}" style="display:none"></span>
 <script>
   window.APP_FLAGS = window.APP_FLAGS || {};
-  window.APP_FLAGS.ENABLE_EVENT_KB = {{ 'true' if ENABLE_EVENT_KB else 'false' }};
+  (function(){
+    const el = document.getElementById('app-flags');
+    if (!el) return;
+    window.APP_FLAGS.ENABLE_EVENT_KB = el.dataset.enableEventKb === '1';
+  })();
 </script>
 
 <!-- Panel: AI Event Analysis (hooks for event-analysis.js) -->
@@ -54,8 +59,8 @@
 
       <div class="event-input-container">
         <div class="event-input-header">
-          <textarea id="event-description" class="event-input" placeholder="Describe a workplace event or situation..." rows="4" maxlength="1000"></textarea>
-          <div class="character-counter"><span id="analysis-char-count">0</span>/1000</div>
+          <textarea id="event-description" class="event-input" placeholder="Describe a workplace event or situation..." rows="4" maxlength="40000"></textarea>
+          <div class="character-counter"><span id="analysis-char-count">0</span>/40000</div>
         </div>
 
         <div id="event-suggestions" class="event-suggestions" style="display: none;"></div>
@@ -271,11 +276,11 @@
   <script src="{{ url_for('static', filename='js/driver-card-demo.js') }}?v=20250924"></script>
 </section>
 
-<script src="{{ url_for('static', filename='js/diagnostics.js') }}?v=20260104-1"></script>
-<script src="{{ url_for('static', filename='js/role-selection.js') }}?v=20250920-1"></script>
+<script src="{{ url_for('static', filename='js/diagnostics.js') }}?v=20260117-1"></script>
+<script src="{{ url_for('static', filename='js/role-selection.js') }}?v=20260111-2"></script>
 <script>
   document.addEventListener('DOMContentLoaded', function(){
-    if (window.RoleSelection) RoleSelection.init('diag-role-select');
+    if (typeof RoleSelection !== 'undefined' && RoleSelection && RoleSelection.init) RoleSelection.init('diag-role-select');
   });
 </script>
 {% endblock %}

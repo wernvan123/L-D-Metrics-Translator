@@ -286,7 +286,7 @@ def _build_role_context(role: RoleProfile) -> dict:
     ksao_targets = []
     for group in (knowledge, skills, abilities, others):
         for entry in group:
-            if entry.get('target_level') is None:
+            if not entry.get('target_id'):
                 continue
             ksao_targets.append({
                 'target_id': entry.get('target_id'),
@@ -1595,6 +1595,17 @@ def upsert_role_ksaos(role_id: int):
             return jsonify({'error': f'Role with id {role_id} not found'}), 404
         data = request.get_json(silent=True) or {}
 
+        def _parse_target_level(v):
+            try:
+                if v is None or v == '':
+                    return None
+                n = int(v)
+                if 1 <= n <= 5:
+                    return n
+                return None
+            except Exception:
+                return None
+
         # Clear existing
         for coll in (role.knowledge_items, role.skill_items, role.ability_items, role.other_requirements, role.outcomes):
             for item in list(coll):
@@ -1608,6 +1619,7 @@ def upsert_role_ksaos(role_id: int):
                     name=k['name'].strip(),
                     description=k.get('description'),
                     driver_card_id=k.get('driver_card_id'),
+                    target_level=_parse_target_level(k.get('target_level')),
                 ))
         for s in _parse_list(data.get('skills')):
             if (s.get('name') or '').strip():
@@ -1616,6 +1628,7 @@ def upsert_role_ksaos(role_id: int):
                     name=s['name'].strip(),
                     description=s.get('description'),
                     driver_card_id=s.get('driver_card_id'),
+                    target_level=_parse_target_level(s.get('target_level')),
                 ))
         for a in _parse_list(data.get('abilities')):
             if (a.get('name') or '').strip():
@@ -1624,6 +1637,7 @@ def upsert_role_ksaos(role_id: int):
                     name=a['name'].strip(),
                     description=a.get('description'),
                     driver_card_id=a.get('driver_card_id'),
+                    target_level=_parse_target_level(a.get('target_level')),
                 ))
         for o in _parse_list(data.get('others')):
             if (o.get('name') or '').strip():
@@ -1640,6 +1654,7 @@ def upsert_role_ksaos(role_id: int):
                     name=outcome['name'].strip(),
                     description=outcome.get('description'),
                     driver_card_id=outcome.get('driver_card_id'),
+                    target_level=_parse_target_level(outcome.get('target_level')),
                 ))
 
         db.session.commit()
@@ -1673,8 +1688,6 @@ def list_role_ksao_targets(role_id: int):
             kind_slug = (kind or '').strip().lower()
             for item in items or []:
                 lvl = getattr(item, 'target_level', None)
-                if lvl is None:
-                    continue
                 item_id = getattr(item, 'id', None)
                 targets.append({
                     'id': item_id,
@@ -3521,7 +3534,7 @@ def analyze_event_job_status(job_id: str):
             'status': 'failed',
             'error': job.get('error') or 'Analysis failed',
             'timestamp': time.time(),
-        }), 500
+        }), 200
 
     return jsonify({
         'success': True,

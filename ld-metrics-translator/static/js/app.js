@@ -18,24 +18,22 @@ const AppState = {
 // URL parameter management
 const URLManager = {
     updateURL() {
-        const params = new URLSearchParams();
-        
-        if (AppState.searchQuery) {
-            params.set('q', AppState.searchQuery);
-        }
-        
-        if (AppState.selectedOutcomes.size > 0) {
-            params.set('outcomes', Array.from(AppState.selectedOutcomes).join(','));
-        }
-        
-        if (AppState.selectedTypes.size > 0) {
-            params.set('types', Array.from(AppState.selectedTypes).join(','));
-        }
-        
-        if (AppState.currentView !== 'grid') {
-            params.set('view', AppState.currentView);
-        }
-        
+        // Preserve unrelated query params (e.g., Role Architect wizard uses ?edit=ID).
+        // Only mutate keys managed by this module.
+        const params = new URLSearchParams(window.location.search);
+
+        if (AppState.searchQuery) params.set('q', AppState.searchQuery);
+        else params.delete('q');
+
+        if (AppState.selectedOutcomes.size > 0) params.set('outcomes', Array.from(AppState.selectedOutcomes).join(','));
+        else params.delete('outcomes');
+
+        if (AppState.selectedTypes.size > 0) params.set('types', Array.from(AppState.selectedTypes).join(','));
+        else params.delete('types');
+
+        if (AppState.currentView !== 'grid') params.set('view', AppState.currentView);
+        else params.delete('view');
+
         const newURL = window.location.pathname + (params.toString() ? '?' + params.toString() : '');
         window.history.replaceState({}, '', newURL);
     },

@@ -457,12 +457,23 @@ class EventAnalyzer {
             console.log('Selected metrics for context:', selectedMetrics);
             
             const roleContext = window.RoleSelection?.getCurrentSelection?.() || null;
+            const roleIdFallback = (() => {
+                try {
+                    const sel = document.getElementById('diag-role-select');
+                    if (!sel || !sel.value) return null;
+                    const parsed = parseInt(sel.value, 10);
+                    return Number.isFinite(parsed) ? parsed : null;
+                } catch (_) {
+                    return null;
+                }
+            })();
             const requestBody = {
                 event_description: eventDescription,
                 selected_metrics: selectedMetrics
             };
-            if (roleContext && roleContext.id) {
-                requestBody.role_profile_id = roleContext.id;
+            const roleId = (roleContext && roleContext.id) ? roleContext.id : roleIdFallback;
+            if (roleId) {
+                requestBody.role_profile_id = roleId;
             }
             
             console.log('Sending request to /api/analyze-event with body:', requestBody);
@@ -668,15 +679,22 @@ class EventAnalyzer {
     updateCharCount() {
         if (!this.eventInput) return;
         
-        const maxLength = this.eventInput.getAttribute('maxlength') || 500;
+        const maxLengthAttr = this.eventInput.getAttribute('maxlength');
+        const maxLength = maxLengthAttr ? parseInt(maxLengthAttr, 10) : 500;
         const currentLength = this.eventInput.value.length;
         const remaining = maxLength - currentLength;
-        
-        // Update character counter if it exists
-        const charCounter = document.querySelector('.char-counter');
-        if (charCounter) {
-            charCounter.textContent = `${remaining} characters remaining`;
-            charCounter.style.color = remaining < 50 ? '#dc3545' : '#6c757d';
+
+        // Update character counters (Diagnostics uses #analysis-char-count inside .character-counter).
+        const countEl = document.getElementById('analysis-char-count');
+        if (countEl) {
+            countEl.textContent = String(currentLength);
+        }
+
+        // Backward-compatible counter support
+        const legacyCounter = document.querySelector('.char-counter');
+        if (legacyCounter) {
+            legacyCounter.textContent = `${remaining} characters remaining`;
+            legacyCounter.style.color = remaining < 50 ? '#dc3545' : '#6c757d';
         }
         
         // Enable/disable analyze button based on input length

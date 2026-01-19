@@ -467,12 +467,24 @@ class EventAnalyzer:
             }
             
             Keep the response concise so it fits within the output limit:
-            - learning_needs: 3 items
-            - recommended_metrics: 3 items
-            - interventions: 3 items
-            - success_measures: 3 items
+            - learning_needs: 2 items
+            - recommended_metrics: 2 items
+            - interventions: 2 items
+            - success_measures: 2 items
             - behavioral_biases: 2 items
-            - role_gap_analysis: 3 items max (only if role context provided)
+            - role_gap_analysis: 2 items max (only if role context provided)
+
+            IMPORTANT rules:
+            - Do NOT output null for required fields. Use an empty string only if truly unknown.
+            - If ROLE PROFILE CONTEXT is provided, role_gap_analysis MUST be a non-empty list.
+            - When role_gap_analysis is present, every item MUST include:
+              competency, severity, target_expectation, observation, recommended_action, linked_target_id, evidence.
+            - linked_target_id MUST match one of the bracketed IDs provided in ROLE PROFILE CONTEXT.
+            - evidence MUST include at least one snippet that is an exact quote from the event text.
+            - Output MUST be strict JSON:
+              - Use double quotes for all JSON keys and string values.
+              - Escape any double quotes inside string values as \".
+              - Do not include raw newline characters inside string values.
 
             Return only valid JSON. Do not include markdown, commentary, or trailing text."""
 
@@ -494,6 +506,208 @@ class EventAnalyzer:
                     if candidate and candidate != text:
                         return json.loads(candidate)
                     raise
+
+            def _norm_for_quote_match(text: str) -> str:
+                try:
+                    s = str(text or "")
+                    # Normalize common unicode quotes to ASCII
+                    s = s.replace("\u201c", '"').replace("\u201d", '"')
+                    s = s.replace("\u2018", "'").replace("\u2019", "'")
+                    # Normalize common dash variants
+                    s = s.replace("\u2013", "-").replace("\u2014", "-").replace("\u2212", "-")
+                    # Collapse whitespace
+                    s = " ".join(s.split())
+                    return s.lower()
+                except Exception:
+                    return ""
+
+            def _role_gaps_complete(payload: Dict[str, Any]) -> bool:
+                gaps = payload.get("role_gap_analysis")
+                if not isinstance(gaps, list) or not gaps:
+                    return False
+
+                def _clean_snippet(s: str) -> str:
+                    try:
+                        t = str(s or "").strip()
+                        if not t:
+                            return ""
+                        if t.startswith("```") and t.endswith("```"):
+                            t = t[3:-3].strip()
+                        t = t.strip("\"'`“”‘’ ")
+                        for prefix in ("- ", "• ", "* ", "> "):
+                            if t.startswith(prefix):
+                                t = t[len(prefix):].strip()
+                        return t
+                    except Exception:
+                        return ""
+
+                event_norm = _norm_for_quote_match(event_description)
+                for g in gaps:
+                    if not isinstance(g, dict):
+                        return False
+                    if not g.get("linked_target_id"):
+                        return False
+                    if not g.get("observation") or not g.get("recommended_action"):
+                        return False
+                    ev = g.get("evidence")
+                    if not isinstance(ev, list) or not ev:
+                        return False
+                    has_quote = False
+                    for item in ev:
+                        if isinstance(item, dict) and (item.get("snippet") or item.get("quote") or item.get("text")):
+                            snippet = _clean_snippet(item.get("snippet") or item.get("quote") or item.get("text"))
+                            if not snippet:
+                                continue
+                            if "..." in snippet or "…" in snippet:
+                                continue
+                            if snippet in event_description:
+                                has_quote = True
+                                break
+                            sn = _norm_for_quote_match(snippet)
+                            if sn and len(sn) >= 12 and sn in event_norm:
+                                has_quote = True
+                                break
+                        if isinstance(item, str) and item.strip():
+                            snippet = _clean_snippet(item)
+                            if "..." in snippet or "…" in snippet:
+                                continue
+                            if snippet in event_description:
+                                has_quote = True
+                                break
+                            sn = _norm_for_quote_match(snippet)
+                            if sn and len(sn) >= 12 and sn in event_norm:
+                                has_quote = True
+                                break
+                    if not has_quote:
+                        return False
+                return True
+
+            def _try_regenerate_role_gaps(payload: Dict[str, Any]) -> tuple[bool, bool]:
+                if not role_context:
+                    return (False, False)
+                if _role_gaps_complete(payload):
+                    return (False, True)
+                attempted = True
+                targets = role_context.get("ksao_targets") or []
+                allowed_lines = []
+                for t in targets[:12]:
+                    tid = t.get("target_id")
+                    if not tid:
+                        continue
+                    nm = t.get("name") or "Target"
+                    kd = t.get("kind") or "target"
+                    lvl = t.get("target_level")
+                    suffix = f" (target {lvl}/5)" if lvl is not None else ""
+                    allowed_lines.append(f"- {tid}: {kd}: {nm}{suffix}")
+                allowed_block = "\n".join(allowed_lines) if allowed_lines else "- (no targets provided)"
+                gap_fix_prompt = (
+                    "Generate ONLY a JSON object with a single key 'role_gap_analysis' (a list).\n\n"
+                    "ROLE PROFILE TARGETS (linked_target_id MUST be one of these IDs):\n"
+                    f"{allowed_block}\n\n"
+                    "EVENT TEXT:\n"
+                    f"{event_description}\n\n"
+                    "Create 2-3 role_gap_analysis items. Each item MUST include:\n"
+                    "- competency (string)\n"
+                    "- severity (high|medium|low)\n"
+                    "- target_expectation (string)\n"
+                    "- observation (string)\n"
+                    "- recommended_action (string)\n"
+                    "- linked_target_id (must match one of the provided IDs)\n"
+                    "- evidence: an array with at least 1 object {snippet, rationale}, where snippet is an exact contiguous quote from EVENT TEXT (copy-paste).\n"
+                    "  Do NOT paraphrase. Do NOT use ellipses (no '...' and no '…').\n\n"
+                    "Return only valid JSON."
+                )
+                gap_fix = self.ollama.generate(
+                    model=self.model_name,
+                    prompt=gap_fix_prompt,
+                    system_prompt="You output strict JSON only. Do not omit required keys. Do not use null.",
+                    format="json",
+                    temperature=0.0,
+                    num_predict=450,
+                    num_ctx=8192,
+                    keep_alive="30m",
+                    request_timeout=180,
+                    request_retries=1,
+                    request_backoff=0.0,
+                )
+                if not gap_fix:
+                    # Force fallback gaps if role context exists but model won't comply
+                    payload["role_gap_analysis"] = []
+                    return (attempted, False)
+                try:
+                    gap_fix_obj = _parse_json_response(gap_fix)
+                    new_gaps = gap_fix_obj.get("role_gap_analysis")
+                    if isinstance(new_gaps, list) and new_gaps:
+                        def _event_evidence_fallback() -> list[dict[str, Any]]:
+                            try:
+                                if not isinstance(event_description, str) or not event_description:
+                                    return []
+                                lines = [ln for ln in event_description.splitlines() if ln]
+                                snippet = (lines[0] if lines else event_description)[:240]
+                                snippet = str(snippet or "").strip()
+                                if not snippet:
+                                    return []
+                                return [{"snippet": snippet, "rationale": "Direct excerpt from the event description."}]
+                            except Exception:
+                                return []
+
+                        def _clean_snippet_local(s: Any) -> str:
+                            try:
+                                t = str(s or "").strip()
+                                if not t:
+                                    return ""
+                                if t.startswith("```") and t.endswith("```"):
+                                    t = t[3:-3].strip()
+                                t = t.strip("\"'`“”‘’ ")
+                                for prefix in ("- ", "• ", "* ", "> "):
+                                    if t.startswith(prefix):
+                                        t = t[len(prefix):].strip()
+                                return t
+                            except Exception:
+                                return ""
+
+                        def _evidence_has_valid_quote(ev: Any) -> bool:
+                            if not isinstance(ev, list) or not ev:
+                                return False
+                            event_norm = _norm_for_quote_match(event_description)
+                            for item in ev:
+                                if isinstance(item, dict):
+                                    raw = item.get("snippet") or item.get("quote") or item.get("text")
+                                else:
+                                    raw = item
+                                snippet = _clean_snippet_local(raw)
+                                if not snippet:
+                                    continue
+                                if "..." in snippet or "…" in snippet:
+                                    continue
+                                if snippet in event_description:
+                                    return True
+                                sn = _norm_for_quote_match(snippet)
+                                if sn and len(sn) >= 12 and sn in event_norm:
+                                    return True
+                            return False
+
+                        injected = _event_evidence_fallback()
+                        if injected:
+                            for g in new_gaps:
+                                if not isinstance(g, dict):
+                                    continue
+                                ev = g.get("evidence")
+                                if not _evidence_has_valid_quote(ev):
+                                    if isinstance(ev, list):
+                                        g["evidence"] = ev + injected
+                                    else:
+                                        g["evidence"] = injected
+                        payload["role_gap_analysis"] = new_gaps
+                except Exception:
+                    payload["role_gap_analysis"] = []
+                    return (attempted, False)
+
+                applied = _role_gaps_complete(payload)
+                if not applied:
+                    # If still incomplete, clear so _normalize_analysis falls back to role targets.
+                    payload["role_gap_analysis"] = []
+                return (attempted, applied)
             
             # Build context-aware prompt
             context_sections = []
@@ -536,9 +750,9 @@ class EventAnalyzer:
                 prompt=user_prompt,
                 system_prompt=system_prompt,
                 format="json",
-                temperature=0.2,
-                num_predict=650,
-                num_ctx=2048,
+                temperature=0.0,
+                num_predict=900,
+                num_ctx=8192,
                 keep_alive="30m",
                 request_timeout=180,
                 request_retries=2,
@@ -563,7 +777,21 @@ class EventAnalyzer:
                 if "behavioral_biases" not in analysis_raw or not isinstance(analysis_raw.get("behavioral_biases"), list):
                     analysis_raw["behavioral_biases"] = []
 
-                normalized = self._normalize_analysis(analysis_raw, selected_metrics, role_context=role_context)
+                role_gap_regen_attempted = False
+                role_gap_regen_applied = False
+                if role_context:
+                    role_gap_regen_attempted, role_gap_regen_applied = _try_regenerate_role_gaps(analysis_raw)
+
+                normalized = self._normalize_analysis(
+                    analysis_raw,
+                    selected_metrics,
+                    role_context=role_context,
+                    event_description=event_description,
+                    extra_meta={
+                        "role_gap_regen_attempted": role_gap_regen_attempted,
+                        "role_gap_regen_applied": role_gap_regen_applied,
+                    },
+                )
                 logger.info(f"[{req_id}] Analysis completed successfully")
                 return normalized
                 
@@ -585,8 +813,8 @@ class EventAnalyzer:
                     system_prompt="You are a strict JSON repair tool. Output only valid JSON.",
                     format="json",
                     temperature=0.0,
-                    num_predict=700,
-                    num_ctx=2048,
+                    num_predict=900,
+                    num_ctx=8192,
                     keep_alive="30m",
                     request_timeout=180,
                     request_retries=2,
@@ -609,8 +837,8 @@ class EventAnalyzer:
                         ),
                         format="json",
                         temperature=0.0,
-                        num_predict=650,
-                        num_ctx=2048,
+                        num_predict=900,
+                        num_ctx=8192,
                         keep_alive="30m",
                         request_timeout=180,
                         request_retries=1,
@@ -619,7 +847,21 @@ class EventAnalyzer:
                     if not regen:
                         raise ValueError(f"Invalid JSON response from Ollama: {str(e)}")
                     analysis_raw = _parse_json_response(regen)
-                normalized = self._normalize_analysis(analysis_raw, selected_metrics, role_context=role_context)
+
+                role_gap_regen_attempted = False
+                role_gap_regen_applied = False
+                if role_context:
+                    role_gap_regen_attempted, role_gap_regen_applied = _try_regenerate_role_gaps(analysis_raw)
+                normalized = self._normalize_analysis(
+                    analysis_raw,
+                    selected_metrics,
+                    role_context=role_context,
+                    event_description=event_description,
+                    extra_meta={
+                        "role_gap_regen_attempted": role_gap_regen_attempted,
+                        "role_gap_regen_applied": role_gap_regen_applied,
+                    },
+                )
                 logger.info(f"[{req_id}] Analysis completed successfully after repair")
                 return normalized
             except Exception as e:
@@ -635,8 +877,10 @@ class EventAnalyzer:
         selected_metrics: Optional[List[Dict[str, Any]]] = None,
         *,
         role_context: Optional[Dict[str, Any]] = None,
+        event_description: Optional[str] = None,
         source_override: Optional[str] = None,
         error: Optional[str] = None,
+        extra_meta: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Coerce LLM analysis into structured objects for consistent rendering."""
 
@@ -745,8 +989,416 @@ class EventAnalyzer:
         normalized_biases = _normalize_biases(analysis_raw.get("behavioral_biases", []))
 
         role_gap_items = self._normalize_role_gaps(analysis_raw.get("role_gap_analysis"))
+
+        def _clean_snippet_local(s: Any) -> str:
+            try:
+                t = str(s or "").strip()
+                if not t:
+                    return ""
+                if t.startswith("```") and t.endswith("```"):
+                    t = t[3:-3].strip()
+                t = t.strip("\"'`“”‘’ ")
+                for prefix in ("- ", "• ", "* ", "> "):
+                    if t.startswith(prefix):
+                        t = t[len(prefix):].strip()
+                return t
+            except Exception:
+                return ""
+
+        def _excerpt_from_event_for(snippet: str) -> str:
+            try:
+                if not isinstance(event_description, str) or not event_description:
+                    return ""
+                if not snippet:
+                    return ""
+                if "..." in snippet or "…" in snippet:
+                    return ""
+
+                MAX_LEN = 240
+
+                def _clip_exact(text: str) -> str:
+                    t = str(text or "")
+                    if not t:
+                        return ""
+                    if len(t) <= MAX_LEN:
+                        return t
+                    cut = t[:MAX_LEN]
+                    if cut and cut[-1].isalnum():
+                        sp = cut.rfind(" ")
+                        if sp >= 40:
+                            cut = cut[:sp]
+                    return cut.rstrip()
+
+                def _sentence_around_index(idx: int) -> str:
+                    try:
+                        if idx < 0:
+                            return ""
+                        s = event_description
+                        breaks = ".!?\n"
+                        left = -1
+                        for ch in breaks:
+                            left = max(left, s.rfind(ch, 0, idx))
+                        start = left + 1 if left >= 0 else 0
+                        right = len(s)
+                        for ch in breaks:
+                            r = s.find(ch, idx)
+                            if r != -1:
+                                right = min(right, r + 1)
+                        sent = s[start:right].strip()
+                        if not sent:
+                            return ""
+                        if len(sent) <= MAX_LEN:
+                            return sent
+                        rel = idx - start
+                        w_start = max(0, rel - 60)
+                        w_end = min(len(sent), rel + 160)
+                        piece = sent[w_start:w_end]
+                        piece = piece.strip()
+                        piece = _clip_exact(piece)
+                        return piece
+                    except Exception:
+                        return ""
+
+                if snippet in event_description:
+                    if len(snippet) <= MAX_LEN:
+                        return snippet
+                    snip_lower = snippet.lower()
+                    anchor_idx = event_description.lower().find(snip_lower[: max(10, min(40, len(snip_lower)))])
+                    if anchor_idx >= 0:
+                        sent = _sentence_around_index(anchor_idx)
+                        if sent:
+                            return sent
+                    return _clip_exact(snippet)
+
+                event_lower = event_description.lower()
+
+                variants = [
+                    snippet,
+                    snippet.replace("\u201c", '"').replace("\u201d", '"').replace("\u2018", "'").replace("\u2019", "'"),
+                    snippet.replace('"', "").replace("'", "").replace("\u201c", "").replace("\u201d", "").replace("\u2018", "").replace("\u2019", ""),
+                ]
+                for v in variants:
+                    v = str(v or "").strip()
+                    if v and v in event_description:
+                        return _clip_exact(v)
+
+                raw_tokens = [tok.strip("\"'`“”‘’.,;:()[]{}") for tok in snippet.replace("\n", " ").split()]
+                tokens = [t for t in raw_tokens if t and any(ch.isalnum() for ch in t)]
+                tokens.sort(key=len, reverse=True)
+                anchor = None
+                for t in tokens:
+                    tl = t.lower()
+                    if len(tl) < 6:
+                        continue
+                    if tl in event_lower:
+                        anchor = t
+                        break
+                if not anchor:
+                    for t in tokens:
+                        tl = t.lower()
+                        if tl and tl in event_lower:
+                            anchor = t
+                            break
+                if not anchor:
+                    return ""
+
+                idx = event_lower.find(anchor.lower())
+                if idx < 0:
+                    return ""
+
+                sent = _sentence_around_index(idx)
+                if sent:
+                    return sent
+
+                start = max(0, idx - 60)
+                end = min(len(event_description), idx + len(anchor) + 160)
+                excerpt = event_description[start:end].strip()
+                return _clip_exact(excerpt)
+            except Exception:
+                return ""
+
+        def _repair_gap_evidence(g: Dict[str, Any]) -> None:
+            try:
+                if not isinstance(g, dict):
+                    return
+                ev = g.get("evidence")
+                if not isinstance(ev, list) or not ev:
+                    return
+                repaired: list[dict[str, Any]] = []
+                for item in ev:
+                    if not isinstance(item, dict):
+                        continue
+                    raw = item.get("snippet") or item.get("quote") or item.get("text")
+                    rationale = item.get("rationale") or item.get("reason") or item.get("explanation")
+                    snippet = _clean_snippet_local(raw)
+                    if not snippet:
+                        continue
+                    excerpt = _excerpt_from_event_for(snippet)
+                    if not excerpt:
+                        continue
+                    repaired.append({"snippet": excerpt, "rationale": str(rationale).strip() if rationale else None})
+                g["evidence"] = repaired
+            except Exception:
+                return
+
+        def _gap_complete(g: Dict[str, Any]) -> bool:
+            if not isinstance(g, dict):
+                return False
+            if not g.get("linked_target_id"):
+                return False
+            if not g.get("observation") or not g.get("recommended_action"):
+                return False
+            ev = g.get("evidence")
+            if not isinstance(ev, list) or not ev:
+                return False
+            for item in ev:
+                if not isinstance(item, dict):
+                    continue
+                raw = item.get("snippet") or item.get("quote") or item.get("text")
+                snippet = _clean_snippet_local(raw)
+                if not snippet:
+                    continue
+                excerpt = _excerpt_from_event_for(snippet)
+                if excerpt:
+                    return True
+            return False
+
+        fallback_used = False
+
+        if isinstance(event_description, str) and event_description and role_gap_items:
+            for g in role_gap_items:
+                _repair_gap_evidence(g)
+
+        relinked_count = 0
+        observation_rewritten_count = 0
+        if role_context and isinstance(event_description, str) and event_description and role_gap_items:
+            targets = role_context.get("ksao_targets") or []
+            if isinstance(targets, list) and targets:
+                target_by_id: Dict[str, Dict[str, Any]] = {}
+                for t in targets:
+                    if not isinstance(t, dict):
+                        continue
+                    tid = t.get("target_id")
+                    if tid:
+                        target_by_id[str(tid)] = t
+
+                def _tokenize(text: Any) -> set[str]:
+                    try:
+                        s = str(text or "").lower()
+                        out: set[str] = set()
+                        buf: list[str] = []
+                        for ch in s:
+                            if ch.isalnum():
+                                buf.append(ch)
+                            else:
+                                if buf:
+                                    out.add("".join(buf))
+                                    buf = []
+                        if buf:
+                            out.add("".join(buf))
+                        stop = {
+                            "the","and","or","to","of","a","an","in","on","for","with","without","by","from","is","are",
+                            "was","were","be","been","being","this","that","these","those","it","as","at","into","over",
+                            "during","later","then","when","while","instead","due","did","not","just","quickly",
+                        }
+                        out = {w for w in out if len(w) >= 4 and w not in stop}
+                        return out
+                    except Exception:
+                        return set()
+
+                def _gap_text(g: Dict[str, Any]) -> str:
+                    try:
+                        parts: list[str] = []
+                        ev = g.get("evidence")
+                        if isinstance(ev, list):
+                            for item in ev[:3]:
+                                if isinstance(item, dict) and item.get("snippet"):
+                                    parts.append(str(item.get("snippet")))
+                        for k in ("observation", "recommended_action"):
+                            v = g.get(k)
+                            if v:
+                                parts.append(str(v))
+                        if not parts:
+                            for k in ("competency", "target_expectation"):
+                                v = g.get(k)
+                                if v:
+                                    parts.append(str(v))
+                        return " ".join(parts)
+                    except Exception:
+                        return ""
+
+                def _gap_evidence_text(g: Dict[str, Any]) -> str:
+                    try:
+                        parts: list[str] = []
+                        ev = g.get("evidence")
+                        if isinstance(ev, list):
+                            for item in ev[:4]:
+                                if isinstance(item, dict) and item.get("snippet"):
+                                    parts.append(str(item.get("snippet")))
+                        return " ".join(parts)
+                    except Exception:
+                        return ""
+
+                def _rewrite_observation_if_needed(g: Dict[str, Any]) -> bool:
+                    try:
+                        obs = str(g.get("observation") or "").strip()
+                        exp = str(g.get("target_expectation") or "").strip()
+
+                        ev_text = _gap_evidence_text(g)
+                        ev_toks = _tokenize(ev_text)
+                        obs_toks = _tokenize(obs)
+                        exp_toks = _tokenize(exp)
+
+                        needs = False
+                        if not obs or len(obs) < 12:
+                            needs = True
+                        elif exp and obs.lower() == exp.lower():
+                            needs = True
+                        elif exp_toks and obs_toks and len(obs_toks) >= 4 and obs_toks == exp_toks:
+                            needs = True
+                        elif ev_toks and (not obs_toks or len(obs_toks.intersection(ev_toks)) < 1):
+                            needs = True
+
+                        if not needs:
+                            return False
+
+                        ev = g.get("evidence")
+                        snippet = ""
+                        if isinstance(ev, list) and ev:
+                            first = ev[0]
+                            if isinstance(first, dict) and first.get("snippet"):
+                                snippet = str(first.get("snippet") or "").strip()
+                        if not snippet:
+                            return False
+
+                        if len(snippet) > 220:
+                            snippet = snippet[:220].rstrip()
+                        g["observation"] = f"Observed: {snippet}"
+                        return True
+                    except Exception:
+                        return False
+
+                def _target_cats(t: Dict[str, Any]) -> set[str]:
+                    try:
+                        tname = str(t.get("name") or "")
+                        tkind = str(t.get("kind") or "")
+                        ttext = f"{tkind} {tname}".strip()
+                        ttoks = _tokenize(ttext)
+                        cats: set[str] = set()
+                        if {"safety", "incident", "procedure", "procedures", "sop"}.intersection(ttoks):
+                            cats.add("safety")
+                        if {"quality", "defect", "verification", "verify", "checks", "check"}.intersection(ttoks):
+                            cats.add("quality")
+                        if {"handover", "handoff", "briefing"}.intersection(ttoks):
+                            cats.add("handover")
+                        if {"plan", "planning", "allocation", "prioritization", "priority", "backlog", "output"}.intersection(ttoks):
+                            cats.add("planning")
+                        if {"conflict", "deescalation", "deescalate", "deescal", "voice"}.intersection(ttoks):
+                            cats.add("conflict")
+                        return cats
+                    except Exception:
+                        return set()
+
+                def _gap_flags(gtext: str) -> set[str]:
+                    try:
+                        toks = _tokenize(gtext)
+                        gl = gtext.lower()
+                        flags: set[str] = set()
+                        if "lockout" in gl or "tagout" in gl or "lockout/tagout" in gl:
+                            flags.add("safety")
+                        if {"safety", "incident", "sop"}.intersection(toks):
+                            flags.add("safety")
+                        if {"quality", "verification", "verify", "defect", "checks", "check"}.intersection(toks):
+                            flags.add("quality")
+                        if {"handover", "briefing"}.intersection(toks):
+                            flags.add("handover")
+                        if {"plan", "backlog", "output", "priorit"}.intersection(toks):
+                            flags.add("planning")
+                        if {"argued", "voice", "deescal", "de-escal", "conflict"}.intersection(toks) or "de-escal" in gl:
+                            flags.add("conflict")
+                        return flags
+                    except Exception:
+                        return set()
+
+                def _score_target(t: Dict[str, Any], gtext: str) -> int:
+                    try:
+                        tname = str(t.get("name") or "")
+                        tkind = str(t.get("kind") or "")
+                        ttext = f"{tkind} {tname}".strip()
+                        if not ttext:
+                            return 0
+                        gtoks = _tokenize(gtext)
+                        ttoks = _tokenize(ttext)
+                        if not gtoks or not ttoks:
+                            return 0
+                        overlap = len(gtoks.intersection(ttoks))
+                        score = overlap * 2
+                        gl = gtext.lower()
+                        tl = ttext.lower()
+                        flags = _gap_flags(gtext)
+                        cats = _target_cats(t)
+                        kind_l = tkind.lower().strip()
+                        if "safety" in flags and "safety" in cats:
+                            score += 12
+                        if "quality" in flags and "quality" in cats:
+                            score += 10
+                        if "handover" in flags and "handover" in cats:
+                            score += 9
+                        if "planning" in flags and "planning" in cats:
+                            score += 6
+                        if "conflict" in flags and "conflict" in cats:
+                            score += 8
+
+                        if kind_l == "knowledge":
+                            if "safety" in flags and "safety" in cats:
+                                score += 3
+                            if "quality" in flags and "quality" in cats:
+                                score += 3
+                        if kind_l == "skill" and "handover" in flags and "handover" in cats:
+                            score += 2
+
+                        if ("lockout" in gl or "tagout" in gl) and "safety" in cats:
+                            score += 10
+                        if ("verification" in gl or "quality" in gl) and "quality" in cats:
+                            score += 8
+                        if "handover" in gl and "handover" in cats:
+                            score += 7
+                        return int(score)
+                    except Exception:
+                        return 0
+
+                for g in role_gap_items:
+                    if not isinstance(g, dict):
+                        continue
+                    gtext = _gap_evidence_text(g) or _gap_text(g)
+                    if not gtext:
+                        continue
+
+                    current_id = g.get("linked_target_id")
+                    current_t = target_by_id.get(str(current_id)) if current_id is not None else None
+                    current_score = _score_target(current_t, gtext) if current_t else 0
+
+                    best_id = None
+                    best_score = 0
+                    for tid, t in target_by_id.items():
+                        s = _score_target(t, gtext)
+                        if s > best_score:
+                            best_score = s
+                            best_id = tid
+
+                    if best_id and (best_score >= 8) and (best_score > current_score):
+                        if str(g.get("linked_target_id")) != str(best_id):
+                            g["linked_target_id"] = best_id
+                            relinked_count += 1
+
+                    if _rewrite_observation_if_needed(g):
+                        observation_rewritten_count += 1
+
+        if role_context and role_gap_items:
+            role_gap_items = [g for g in role_gap_items if _gap_complete(g)]
         if role_context and not role_gap_items:
-            role_gap_items = self._fallback_role_gaps(role_context, normalized_learning_needs)
+            fallback_used = True
+            role_gap_items = self._fallback_role_gaps(role_context, normalized_learning_needs, event_description=event_description)
 
         context_summary = None
         if role_context:
@@ -770,8 +1422,17 @@ class EventAnalyzer:
                 "raw_response": analysis_raw,
                 "role_context_included": bool(role_context),
                 "role_context_summary": context_summary,
+                "role_gap_fallback_used": bool(fallback_used),
+                "role_gap_relinked_count": int(relinked_count),
+                "role_gap_observation_rewritten_count": int(observation_rewritten_count),
             }
         }
+
+        if extra_meta and isinstance(extra_meta, dict):
+            try:
+                normalized_payload["_meta"].update(extra_meta)
+            except Exception:
+                pass
 
         return normalized_payload
 
@@ -838,10 +1499,28 @@ class EventAnalyzer:
             normalized.append(gap)
         return normalized
 
-    def _fallback_role_gaps(self, role_context: Dict[str, Any], learning_needs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _fallback_role_gaps(
+        self,
+        role_context: Dict[str, Any],
+        learning_needs: List[Dict[str, Any]],
+        *,
+        event_description: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
         targets = role_context.get("ksao_targets") or []
         need_names = [n.get("name") for n in learning_needs if isinstance(n, dict) and n.get("name")]
         fallback: List[Dict[str, Any]] = []
+
+        evidence_items: List[Dict[str, Any]] = []
+        if isinstance(event_description, str) and event_description:
+            # Use exact excerpts from the event text (no rewriting) so fallback remains auditable.
+            lines = [ln for ln in event_description.splitlines() if ln]
+            if lines:
+                snippet = lines[0][:240]
+            else:
+                snippet = event_description[:240]
+            if snippet:
+                evidence_items = [{"snippet": snippet, "rationale": "Direct excerpt from the event description."}]
+
         for idx, target in enumerate(targets[:3]):
             comp_name = target.get("name")
             if not comp_name:
@@ -858,7 +1537,7 @@ class EventAnalyzer:
                 "observation": observation or "Event indicates potential deviation from this benchmark.",
                 "recommended_action": "Discuss expectation with the individual and design coaching focused on this competency.",
                 "linked_target_id": target.get("target_id"),
-                "evidence": [],
+                "evidence": evidence_items,
             })
         return fallback
 

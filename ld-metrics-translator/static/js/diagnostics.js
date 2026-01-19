@@ -63,6 +63,24 @@
   let GAP_lastAnalysis = null; // enriched analysis object from event analyzer
   let GAP_lastInput = '';
 
+  try{
+    window.DiagnosticsDebug = window.DiagnosticsDebug || {};
+    window.DiagnosticsDebug.getSelectedRole = () => GAP_selectedRole;
+    window.DiagnosticsDebug.getRoleTargets = () => GAP_roleTargets;
+    window.DiagnosticsDebug.getLastAnalysis = () => GAP_lastAnalysis;
+    window.DiagnosticsDebug.getLastInput = () => ({ event_description: GAP_lastInput });
+    window.DiagnosticsDebug.getRoleTargetById = (id) => {
+      const needle = (id == null) ? '' : String(id).trim().toLowerCase();
+      if(!needle) return null;
+      const items = GAP_roleTargets || [];
+      for(const t of items){
+        const tid = t && t.target_id ? String(t.target_id).trim().toLowerCase() : '';
+        if(tid && tid === needle) return t;
+      }
+      return null;
+    };
+  }catch(e){}
+
   const PLAN_SS_KEY = 'plan:selections';
   const PLAN_SHOW_KEY = 'plan:showMini';
   function planKey(kind,label){ return `${(kind||'').toLowerCase()}:${(label||'').toLowerCase()}`; }
@@ -231,7 +249,11 @@
   function captureAnalysis(detail){
     if(!detail || typeof detail !== 'object') return;
     GAP_lastAnalysis = detail.analysis || null;
-    GAP_lastInput = detail.input || '';
+    if(detail.input && typeof detail.input === 'object'){
+      GAP_lastInput = toText(detail.input.event_description || detail.input.text || detail.input.event || '');
+    } else {
+      GAP_lastInput = toText(detail.input || '');
+    }
     if(detail.role_context_summary){
       GAP_selectedRole = Object.assign({}, GAP_selectedRole || {}, detail.role_context_summary);
     }
@@ -299,6 +321,9 @@
         const kind = esc(t.kind || 'Target');
         const name = esc(t.name || 'KSAO');
         const lvl = t.target_level;
+        if(lvl == null){
+          return `• ${kind} — ${name}: Target —`;
+        }
         return `• ${kind} — ${name}: Target ${lvl} (${proficiencyName(lvl)})`;
       });
       const more = tgts.length>6 ? ` +${tgts.length-6} more` : '';

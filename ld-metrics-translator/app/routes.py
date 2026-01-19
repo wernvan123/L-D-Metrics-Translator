@@ -262,7 +262,9 @@ def roles():
 def role_new():
     """Role Architect wizard for creating a new Role Profile."""
     if session.get('is_admin') or session.get('admin_user_id'):
-        return redirect('/admin/roles/new')
+        qs = request.query_string.decode() if request.query_string else ''
+        target = f"/admin/roles/new?{qs}" if qs else "/admin/roles/new"
+        return redirect(target)
     return render_template('role_wizard.html', title='New Role Profile')
 
 

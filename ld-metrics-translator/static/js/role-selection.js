@@ -16,6 +16,7 @@ const RoleSelection = (() => {
 
   let _rolesCache = [];
   let _currentSelection = null;
+  const _initializedSelectIds = new Set();
 
   async function loadRoles() {
     console.debug('[RoleSelection] fetching roles ...');
@@ -79,8 +80,10 @@ const RoleSelection = (() => {
   }
 
   async function init(selectId) {
+    if (_initializedSelectIds.has(selectId)) return;
     const select = document.getElementById(selectId);
     if (!select) return;
+    _initializedSelectIds.add(selectId);
     try {
       console.debug('[RoleSelection] init on', selectId);
       const [roles, selectedId] = await Promise.all([loadRoles(), getSelected()]);
@@ -112,6 +115,13 @@ const RoleSelection = (() => {
 
   return { init, getCurrentSelection };
 })();
+
+// Expose as a window-global so other scripts can access it reliably.
+try {
+  if (typeof window !== 'undefined') {
+    window.RoleSelection = RoleSelection;
+  }
+} catch (_) {}
 
 // Auto-initialize on common pages with a resilient retry to avoid race conditions
 (function autoInit(){
