@@ -9,9 +9,10 @@ Welcome to the L&D Metrics Translator! This comprehensive guide will help you na
 3. [Exploring Metrics](#exploring-metrics)
 4. [Filtering and Search](#filtering-and-search)
 5. [Metric Details](#metric-details)
-6. [Admin Features](#admin-features)
-7. [Best Practices](#best-practices)
-8. [Troubleshooting](#troubleshooting)
+6. [Diagnostics (Human Performance Navigator)](#diagnostics-human-performance-navigator)
+7. [Admin Features](#admin-features)
+8. [Best Practices](#best-practices)
+9. [Troubleshooting](#troubleshooting)
 
 ## Getting Started
 
@@ -42,6 +43,7 @@ The top navigation provides access to key sections:
 - **Outcomes**: View metrics by L&D outcomes
 - **Types**: Browse by metric types
 - **Search** (🔍): Advanced search functionality
+- **Diagnostics**: Event Analysis and behavioral diagnostics
 - **Admin** (👤): Administrative features (login required)
 
 ![Navigation Screenshot](../screenshots/navigation.png)
@@ -198,6 +200,43 @@ Click on any metric to access comprehensive details:
 - Understand the value and impact of L&D programs
 - Make data-driven decisions about learning investments
 - Communicate ROI effectively
+
+## Diagnostics (Human Performance Navigator)
+
+The Diagnostics area supports consultant-led analysis of workplace events and patterns.
+
+### Accessing Diagnostics
+
+- Navigate to: `/diagnostics`
+- Use this area to analyze an event description and generate structured insights.
+
+### Event Analysis workflow
+
+1. Enter a workplace event description in the text box.
+2. (Optional) Select a Role Profile to contextualize the analysis.
+3. Click **Analyze Event**.
+
+Notes:
+- Anonymous usage is supported.
+- If a Role Profile is selected, the output may include role-contextualized insights (gap analysis).
+
+### Consultant operating model
+
+Diagnostics is designed to support consulting engagements where:
+- You (the consultant) run the analysis and interpret findings.
+- The company provides access to the relevant data sources and/or exports.
+- Outputs should be reviewed with stakeholders at an appropriate aggregation level.
+
+### MVP direction: company data intake via exports
+
+For early pilots, the intended data intake approach is exports/CSV-first from the systems a company already uses (examples):
+
+- Work tracking / project systems (tickets, cycle times, blocked reasons)
+- Retrospectives (themes, action items)
+- Code repository / pull request activity (optional)
+- Survey exports (engagement, feedback)
+
+This enables event feeds and diagnostics without requiring employees to manually log every event. CSV ingestion may be introduced incrementally depending on the deployment.
 
 ## Admin Features
 

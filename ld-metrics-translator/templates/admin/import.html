@@ -109,6 +109,15 @@
                         <button class="btn btn-outline-secondary btn-sm" onclick="downloadSample('types')">
                             <i class="bi bi-download me-1"></i>Types Sample
                         </button>
+                        <button class="btn btn-outline-secondary btn-sm" onclick="downloadSample('retros')">
+                            <i class="bi bi-download me-1"></i>Retros Sample
+                        </button>
+                        <button class="btn btn-outline-secondary btn-sm" onclick="downloadSample('pull_requests')">
+                            <i class="bi bi-download me-1"></i>Pull Requests Sample
+                        </button>
+                        <button class="btn btn-outline-secondary btn-sm" onclick="downloadSample('survey_responses')">
+                            <i class="bi bi-download me-1"></i>Survey Responses Sample
+                        </button>
                     </div>
                 </div>
             </div>
@@ -156,6 +165,24 @@
             headers: ['name', 'description'],
             description: 'Required: name. Optional: description.',
             notes: 'Duplicate names will be skipped.'
+        },
+        'retros': {
+            title: 'Client Retrospective Items CSV Format',
+            headers: ['retro_date', 'team', 'category', 'text', 'action_owner', 'action_status', 'source'],
+            description: 'Required: text. Optional: retro_date, team, category, action_owner, action_status, source.',
+            notes: 'Date formats supported: YYYY-MM-DD or YYYY-MM-DD HH:MM:SS or ISO8601.'
+        },
+        'pull_requests': {
+            title: 'Client Pull Requests CSV Format',
+            headers: ['pr_id', 'url', 'created_at', 'merged_at', 'author', 'comments_count', 'additions', 'deletions', 'team', 'source'],
+            description: 'Required: pr_id. Optional: url, created_at, merged_at, author, comments_count, additions, deletions, team, source.',
+            notes: 'Numeric fields should be integers. Date formats supported: YYYY-MM-DD or YYYY-MM-DD HH:MM:SS or ISO8601.'
+        },
+        'survey_responses': {
+            title: 'Client Survey Responses CSV Format',
+            headers: ['submitted_at', 'survey_name', 'question', 'answer', 'team', 'source'],
+            description: 'Required: answer. Optional: submitted_at, survey_name, question, team, source.',
+            notes: 'Date formats supported: YYYY-MM-DD or YYYY-MM-DD HH:MM:SS or ISO8601.'
         }
     };
 
@@ -222,34 +249,34 @@
     function displayPreview(data, headers) {
         const previewSection = document.getElementById('previewSection');
         const previewContent = document.getElementById('previewContent');
-        
-        if (data.length === 0) {
-            previewContent.innerHTML = '<p class="text-muted">No data found in the file.</p>';
+
+        if (!headers || headers.length === 0) {
+            previewContent.innerHTML = '<p class="text-muted">No headers found. Ensure the first row contains CSV headers.</p>';
         } else {
             let tableHTML = '<div class="table-responsive"><table class="table table-sm table-bordered">';
-            
+
             // Headers
             tableHTML += '<thead class="table-light"><tr>';
             headers.forEach(header => {
                 tableHTML += `<th>${header}</th>`;
             });
             tableHTML += '</tr></thead>';
-            
+
             // Data rows
             tableHTML += '<tbody>';
-            data.forEach(row => {
-                tableHTML += '<tr>';
-                headers.forEach(header => {
-                    tableHTML += `<td>${row[header] || ''}</td>`;
+            if (data.length === 0) {
+                tableHTML += `<tr><td colspan="${headers.length}" class="text-muted">0 data rows found (headers only).</td></tr>`;
+            } else {
+                data.forEach(row => {
+                    tableHTML += '<tr>';
+                    headers.forEach(header => {
+                        tableHTML += `<td>${row[header] || ''}</td>`;
+                    });
+                    tableHTML += '</tr>';
                 });
-                tableHTML += '</tr>';
-            });
-            tableHTML += '</tbody></table></div>';
-            
-            if (data.length >= 10) {
-                tableHTML += '<p class="small text-muted mt-2">Showing first 10 rows. Total rows will be processed during import.</p>';
             }
-            
+            tableHTML += '</tbody></table></div>';
+
             previewContent.innerHTML = tableHTML;
         }
         
@@ -273,12 +300,27 @@
                 ['name', 'description'],
                 ['Operational KPI', 'Key performance indicators for L&D operations'],
                 ['Behavioral Metric', 'Measures changes in learner behavior']
+            ],
+            'retros': [
+                ['retro_date', 'team', 'category', 'text', 'action_owner', 'action_status', 'source'],
+                ['2026-01-15', 'Platform', 'Went well', 'Pairing reduced review churn', '', '', 'ClickUp Retro'],
+                ['2026-01-15', 'Platform', 'Blocker', 'Unclear ownership on deployment tasks', 'Team Lead', 'Open', 'ClickUp Retro']
+            ],
+            'pull_requests': [
+                ['pr_id', 'url', 'created_at', 'merged_at', 'author', 'comments_count', 'additions', 'deletions', 'team', 'source'],
+                ['123', 'https://github.com/org/repo/pull/123', '2026-01-10 09:12:00', '2026-01-10 15:45:00', 'alice', '8', '120', '45', 'Platform', 'GitHub Export'],
+                ['124', 'https://github.com/org/repo/pull/124', '2026-01-11 10:00:00', '', 'bob', '2', '30', '10', 'Platform', 'GitHub Export']
+            ],
+            'survey_responses': [
+                ['submitted_at', 'survey_name', 'question', 'answer', 'team', 'source'],
+                ['2026-01-20', 'Weekly Pulse', 'What slowed you down this week?', 'Too many context switches', 'Platform', 'Google Forms'],
+                ['2026-01-20', 'Weekly Pulse', 'What helped you most this week?', 'Clearer ticket ownership', 'Platform', 'Google Forms']
             ]
         };
         
         const csvContent = samples[type].map(row => 
             row.map(field => `"${field}"`).join(',')
-        ).join('\\n');
+        ).join('\n');
         
         const blob = new Blob([csvContent], { type: 'text/csv' });
         const url = window.URL.createObjectURL(blob);

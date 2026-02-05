@@ -124,7 +124,7 @@ class OllamaClient:
         payload = {
             "model": model,
             "prompt": prompt,
-            "stream": False,
+            "stream": True,
         }
 
         if system_prompt:
@@ -158,19 +158,38 @@ class OllamaClient:
                 response = requests.post(
                     f"{self.base_url}/api/generate",
                     json=payload,
-                    timeout=timeout
+                    timeout=timeout,
+                    stream=True,
                 )
 
-                if response.status_code == 200:
-                    data = response.json()
-                    response_text = data.get('response', '').strip()
-                    logger.info(
-                        f"Received response from Ollama (attempt {attempt}, first 200 chars): {response_text[:200]}..."
-                    )
-                    return response_text
+                if response.status_code != 200:
+                    try:
+                        body = response.text
+                    except Exception:
+                        body = ''
+                    error_msg = f"Ollama API error: {response.status_code} - {body}"
+                    raise Exception(error_msg)
 
-                error_msg = f"Ollama API error: {response.status_code} - {response.text}"
-                raise Exception(error_msg)
+                chunks: list[str] = []
+                for raw_line in response.iter_lines(decode_unicode=True):
+                    if not raw_line:
+                        continue
+                    try:
+                        data = json.loads(raw_line)
+                    except Exception:
+                        continue
+                    if isinstance(data, dict):
+                        piece = data.get('response')
+                        if isinstance(piece, str) and piece:
+                            chunks.append(piece)
+                        if data.get('done') is True:
+                            break
+
+                response_text = ''.join(chunks).strip()
+                logger.info(
+                    f"Received response from Ollama (attempt {attempt}, first 200 chars): {response_text[:200]}..."
+                )
+                return response_text
 
             except (requests.exceptions.Timeout, requests.exceptions.RequestException) as e:
                 last_error = str(e)
@@ -442,13 +461,43 @@ class EventAnalyzer:
                 "recommended_metrics": [{"name": "Metric name", "summary": "What it indicates", "category": "Optional"}],
                 "interventions": [{"name": "Intervention name", "summary": "How it helps"}],
                 "success_measures": [{"name": "Outcome/measure", "summary": "How to evaluate"}],
+                "pressures": {
+                    "promoting": [
+                        {
+                            "pressure": "Short title",
+                            "mechanism": "Capability | Opportunity | Motivation | Social | Environment (optional)",
+                            "why": "One sentence explaining how it promotes the undesired behavior",
+                            "suggested_lever": "One practical system/process lever",
+                            "confidence": "high | medium | low",
+                            "evidence": [
+                                {"snippet": "Exact quote from the event text", "rationale": "Why this quote supports the pressure"}
+                            ]
+                        }
+                    ],
+                    "inhibiting": [
+                        {
+                            "pressure": "Short title",
+                            "mechanism": "Capability | Opportunity | Motivation | Social | Environment (optional)",
+                            "why": "One sentence explaining what it blocks",
+                            "suggested_lever": "One practical system/process lever",
+                            "confidence": "high | medium | low",
+                            "evidence": [
+                                {"snippet": "Exact quote from the event text", "rationale": "Why this quote supports the pressure"}
+                            ]
+                        }
+                    ]
+                },
                 "behavioral_biases": [
                     {
                         "name": "Bias name",
                         "description": "Brief description of how this bias appears in the event",
                         "impact": "Short sentence describing the risk created by this bias",
                         "countermeasures": ["list", "of", "practical", "countermeasures"],
-                        "related_framework": "Optional learning or decision framework"
+                        "related_framework": "Optional learning or decision framework",
+                        "confidence": "high | medium | low",
+                        "evidence": [
+                            {"snippet": "Exact quote from the event text", "rationale": "Why this quote supports the bias"}
+                        ]
                     }
                 ],
                 "role_gap_analysis": [
@@ -471,6 +520,7 @@ class EventAnalyzer:
             - recommended_metrics: 2 items
             - interventions: 2 items
             - success_measures: 2 items
+            - pressures: 2 promoting + 2 inhibiting max
             - behavioral_biases: 2 items
             - role_gap_analysis: 2 items max (only if role context provided)
 
@@ -481,6 +531,15 @@ class EventAnalyzer:
               competency, severity, target_expectation, observation, recommended_action, linked_target_id, evidence.
             - linked_target_id MUST match one of the bracketed IDs provided in ROLE PROFILE CONTEXT.
             - evidence MUST include at least one snippet that is an exact quote from the event text.
+            - For EVERY pressure item (promoting and inhibiting):
+              - evidence MUST be a non-empty array.
+              - evidence[0].snippet MUST be an exact contiguous quote from the event text (copy-paste).
+              - Do NOT paraphrase. Do NOT use ellipses (no '...' and no '…').
+              - mechanism MUST be exactly one of: Capability, Opportunity, Motivation, Social, Environment.
+            - For EVERY behavioral_biases item:
+              - evidence MUST be a non-empty array.
+              - evidence[0].snippet MUST be an exact contiguous quote from the event text (copy-paste).
+              - Do NOT paraphrase. Do NOT use ellipses (no '...' and no '…').
             - Output MUST be strict JSON:
               - Use double quotes for all JSON keys and string values.
               - Escape any double quotes inside string values as \".
@@ -521,6 +580,20 @@ class EventAnalyzer:
                 except Exception:
                     return ""
 
+            valid_target_ids: set[str] = set()
+            try:
+                if role_context:
+                    targets = role_context.get("ksao_targets") or []
+                    if isinstance(targets, list):
+                        for t in targets:
+                            if not isinstance(t, dict):
+                                continue
+                            tid = t.get("target_id")
+                            if tid:
+                                valid_target_ids.add(str(tid))
+            except Exception:
+                valid_target_ids = set()
+
             def _role_gaps_complete(payload: Dict[str, Any]) -> bool:
                 gaps = payload.get("role_gap_analysis")
                 if not isinstance(gaps, list) or not gaps:
@@ -546,6 +619,8 @@ class EventAnalyzer:
                     if not isinstance(g, dict):
                         return False
                     if not g.get("linked_target_id"):
+                        return False
+                    if valid_target_ids and str(g.get("linked_target_id")) not in valid_target_ids:
                         return False
                     if not g.get("observation") or not g.get("recommended_action"):
                         return False
@@ -626,7 +701,7 @@ class EventAnalyzer:
                     num_predict=450,
                     num_ctx=8192,
                     keep_alive="30m",
-                    request_timeout=180,
+                    request_timeout=300,
                     request_retries=1,
                     request_backoff=0.0,
                 )
@@ -751,10 +826,10 @@ class EventAnalyzer:
                 system_prompt=system_prompt,
                 format="json",
                 temperature=0.0,
-                num_predict=900,
-                num_ctx=8192,
+                num_predict=1400,
+                num_ctx=4096,
                 keep_alive="30m",
-                request_timeout=180,
+                request_timeout=600,
                 request_retries=2,
                 request_backoff=1.5,
             )
@@ -777,6 +852,75 @@ class EventAnalyzer:
                 if "behavioral_biases" not in analysis_raw or not isinstance(analysis_raw.get("behavioral_biases"), list):
                     analysis_raw["behavioral_biases"] = []
 
+                # Ensure pressures exists even if empty
+                if "pressures" not in analysis_raw or not isinstance(analysis_raw.get("pressures"), (dict, list)):
+                    analysis_raw["pressures"] = {"promoting": [], "inhibiting": []}
+
+                def _event_evidence_fallback() -> list[dict[str, Any]]:
+                    try:
+                        if not isinstance(event_description, str) or not event_description:
+                            return []
+                        lines = [ln for ln in event_description.splitlines() if ln]
+                        snippet = (lines[0] if lines else event_description)[:240]
+                        snippet = str(snippet or "").strip()
+                        if not snippet:
+                            return []
+                        return [{"snippet": snippet, "rationale": "Direct excerpt from the event description."}]
+                    except Exception:
+                        return []
+
+                def _inject_missing_evidence() -> bool:
+                    injected_any = False
+                    injected = _event_evidence_fallback()
+                    if not injected:
+                        return False
+
+                    def _evidence_has_nonempty_snippet(ev: Any) -> bool:
+                        try:
+                            if not isinstance(ev, list) or not ev:
+                                return False
+                            for it in ev:
+                                raw = None
+                                if isinstance(it, dict):
+                                    raw = it.get("snippet") or it.get("quote") or it.get("text")
+                                else:
+                                    raw = it
+                                s = str(raw or "").strip()
+                                if s:
+                                    return True
+                            return False
+                        except Exception:
+                            return False
+
+                    pressures = analysis_raw.get("pressures")
+                    if isinstance(pressures, dict):
+                        for bucket in ("promoting", "inhibiting"):
+                            arr = pressures.get(bucket)
+                            if not isinstance(arr, list):
+                                continue
+                            for p in arr:
+                                if not isinstance(p, dict):
+                                    continue
+                                ev = p.get("evidence")
+                                if not _evidence_has_nonempty_snippet(ev):
+                                    p["evidence"] = injected
+                                    p["confidence"] = "low"
+                                    injected_any = True
+
+                    biases = analysis_raw.get("behavioral_biases")
+                    if isinstance(biases, list):
+                        for b in biases:
+                            if not isinstance(b, dict):
+                                continue
+                            ev = b.get("evidence")
+                            if not _evidence_has_nonempty_snippet(ev):
+                                b["evidence"] = injected
+                                b["confidence"] = "low"
+                                injected_any = True
+                    return injected_any
+
+                evidence_injected = _inject_missing_evidence()
+
                 role_gap_regen_attempted = False
                 role_gap_regen_applied = False
                 if role_context:
@@ -790,6 +934,7 @@ class EventAnalyzer:
                     extra_meta={
                         "role_gap_regen_attempted": role_gap_regen_attempted,
                         "role_gap_regen_applied": role_gap_regen_applied,
+                        "evidence_injected": evidence_injected,
                     },
                 )
                 logger.info(f"[{req_id}] Analysis completed successfully")
@@ -813,12 +958,12 @@ class EventAnalyzer:
                     system_prompt="You are a strict JSON repair tool. Output only valid JSON.",
                     format="json",
                     temperature=0.0,
-                    num_predict=900,
-                    num_ctx=8192,
+                    num_predict=1400,
+                    num_ctx=4096,
                     keep_alive="30m",
                     request_timeout=180,
-                    request_retries=2,
-                    request_backoff=1.5,
+                    request_retries=1,
+                    request_backoff=0.0,
                 )
                 if not repaired:
                     raise ValueError(f"Invalid JSON response from Ollama: {str(e)}")
@@ -837,10 +982,10 @@ class EventAnalyzer:
                         ),
                         format="json",
                         temperature=0.0,
-                        num_predict=900,
-                        num_ctx=8192,
+                        num_predict=1400,
+                        num_ctx=4096,
                         keep_alive="30m",
-                        request_timeout=180,
+                        request_timeout=240,
                         request_retries=1,
                         request_backoff=0.0,
                     )
@@ -961,6 +1106,8 @@ class EventAnalyzer:
                     "impact": None,
                     "countermeasures": [],
                     "related_framework": None,
+                    "confidence": None,
+                    "evidence": [],
                     "raw": entry
                 }
                 if isinstance(entry, dict):
@@ -973,14 +1120,145 @@ class EventAnalyzer:
                     elif isinstance(cm, str) and cm.strip():
                         bias["countermeasures"] = [cm.strip()]
                     bias["related_framework"] = entry.get("related_framework") or entry.get("framework") or entry.get("model")
+
+                    conf = entry.get("confidence") or entry.get("confidence_level")
+                    conf = str(conf or "").strip().lower()
+                    if conf in ("high", "medium", "low"):
+                        bias["confidence"] = conf
+
+                    evidence = entry.get("evidence") or entry.get("quotes") or entry.get("snippets")
+                    if isinstance(evidence, list):
+                        for ev in evidence:
+                            if ev is None:
+                                continue
+                            if isinstance(ev, dict):
+                                snippet = ev.get("snippet") or ev.get("quote") or ev.get("text")
+                                rationale = ev.get("rationale") or ev.get("reason") or ev.get("explanation")
+                                if snippet:
+                                    bias["evidence"].append({"snippet": str(snippet).strip(), "rationale": str(rationale).strip() if rationale else None})
+                            else:
+                                s = str(ev).strip()
+                                if s:
+                                    bias["evidence"].append({"snippet": s, "rationale": None})
+                    elif isinstance(evidence, dict):
+                        snippet = evidence.get("snippet") or evidence.get("quote") or evidence.get("text")
+                        rationale = evidence.get("rationale") or evidence.get("reason") or evidence.get("explanation")
+                        if snippet:
+                            bias["evidence"].append({"snippet": str(snippet).strip(), "rationale": str(rationale).strip() if rationale else None})
+                    elif isinstance(evidence, str) and evidence.strip():
+                        bias["evidence"].append({"snippet": evidence.strip(), "rationale": None})
                 else:
                     text = str(entry).strip()
                     if text:
                         bias["name"] = text
                 if not bias["name"]:
                     continue
+                if bias.get("confidence") is None:
+                    bias["confidence"] = "medium" if bias.get("evidence") else "low"
                 normalized.append(bias)
             return normalized
+
+        def _normalize_pressures(items: Any) -> Dict[str, List[Dict[str, Any]]]:
+            out: Dict[str, List[Dict[str, Any]]] = {"promoting": [], "inhibiting": []}
+
+            def _norm_item(entry: Any) -> Dict[str, Any] | None:
+                if entry is None:
+                    return None
+                item: Dict[str, Any] = {
+                    "pressure": None,
+                    "mechanism": None,
+                    "why": None,
+                    "suggested_lever": None,
+                    "confidence": None,
+                    "evidence": [],
+                    "raw": entry,
+                }
+                if isinstance(entry, dict):
+                    item["pressure"] = entry.get("pressure") or entry.get("title") or entry.get("name")
+                    item["mechanism"] = entry.get("mechanism") or entry.get("com_b") or entry.get("model")
+                    item["why"] = entry.get("why") or entry.get("explanation") or entry.get("description")
+                    item["suggested_lever"] = entry.get("suggested_lever") or entry.get("lever") or entry.get("intervention")
+
+                    allowed = ("capability", "opportunity", "motivation", "social", "environment")
+                    mech_raw = item.get("mechanism")
+                    mech = str(mech_raw or "").strip()
+                    mech_l = mech.lower()
+                    if mech_l in allowed:
+                        item["mechanism"] = mech_l.title()
+                    else:
+                        chosen = None
+                        for a in allowed:
+                            if a in mech_l:
+                                chosen = a
+                                break
+                        item["mechanism"] = chosen.title() if chosen else None
+
+                    conf = entry.get("confidence") or entry.get("confidence_level")
+                    conf = str(conf or "").strip().lower()
+                    if conf in ("high", "medium", "low"):
+                        item["confidence"] = conf
+
+                    evidence = entry.get("evidence") or entry.get("quotes") or entry.get("snippets")
+                    if isinstance(evidence, list):
+                        for ev in evidence:
+                            if ev is None:
+                                continue
+                            if isinstance(ev, dict):
+                                snippet = ev.get("snippet") or ev.get("quote") or ev.get("text")
+                                rationale = ev.get("rationale") or ev.get("reason") or ev.get("explanation")
+                                if snippet:
+                                    item["evidence"].append({"snippet": str(snippet).strip(), "rationale": str(rationale).strip() if rationale else None})
+                            else:
+                                s = str(ev).strip()
+                                if s:
+                                    item["evidence"].append({"snippet": s, "rationale": None})
+                    elif isinstance(evidence, dict):
+                        snippet = evidence.get("snippet") or evidence.get("quote") or evidence.get("text")
+                        rationale = evidence.get("rationale") or evidence.get("reason") or evidence.get("explanation")
+                        if snippet:
+                            item["evidence"].append({"snippet": str(snippet).strip(), "rationale": str(rationale).strip() if rationale else None})
+                    elif isinstance(evidence, str) and evidence.strip():
+                        item["evidence"].append({"snippet": evidence.strip(), "rationale": None})
+                else:
+                    text = str(entry).strip()
+                    if text:
+                        item["pressure"] = text
+
+                if not item.get("pressure"):
+                    return None
+                if item.get("confidence") is None:
+                    item["confidence"] = "medium" if item.get("evidence") else "low"
+                return item
+
+            if isinstance(items, dict):
+                promoting = items.get("promoting") or items.get("promoting_pressures") or items.get("promoters") or []
+                inhibiting = items.get("inhibiting") or items.get("inhibiting_pressures") or items.get("inhibitors") or []
+                if isinstance(promoting, list):
+                    for entry in promoting:
+                        it = _norm_item(entry)
+                        if it:
+                            out["promoting"].append(it)
+                if isinstance(inhibiting, list):
+                    for entry in inhibiting:
+                        it = _norm_item(entry)
+                        if it:
+                            out["inhibiting"].append(it)
+                return out
+
+            if isinstance(items, list):
+                for entry in items:
+                    direction = None
+                    if isinstance(entry, dict):
+                        direction = entry.get("direction") or entry.get("type") or entry.get("bucket")
+                    direction = str(direction or "").strip().lower()
+                    it = _norm_item(entry)
+                    if not it:
+                        continue
+                    if direction.startswith("inh"):
+                        out["inhibiting"].append(it)
+                    else:
+                        out["promoting"].append(it)
+            return out
 
         normalized_learning_needs = _normalize_list(analysis_raw.get("learning_needs", []), "learning_needs")
         normalized_metrics = _normalize_list(analysis_raw.get("recommended_metrics", []), "recommended_metrics")
@@ -988,7 +1266,16 @@ class EventAnalyzer:
         normalized_success = _normalize_list(analysis_raw.get("success_measures", []), "success_measures")
         normalized_biases = _normalize_biases(analysis_raw.get("behavioral_biases", []))
 
+        normalized_pressures = _normalize_pressures(
+            analysis_raw.get("pressures")
+            or analysis_raw.get("pressure_analysis")
+            or analysis_raw.get("behavioral_pressures")
+            or {}
+        )
+
         role_gap_items = self._normalize_role_gaps(analysis_raw.get("role_gap_analysis"))
+        if not role_context:
+            role_gap_items = []
 
         def _clean_snippet_local(s: Any) -> str:
             try:
@@ -1134,18 +1421,114 @@ class EventAnalyzer:
                     if not snippet:
                         continue
                     excerpt = _excerpt_from_event_for(snippet)
-                    if not excerpt:
-                        continue
-                    repaired.append({"snippet": excerpt, "rationale": str(rationale).strip() if rationale else None})
+                    if excerpt:
+                        repaired.append({"snippet": excerpt, "rationale": str(rationale).strip() if rationale else None, "verified": True})
+                    else:
+                        repaired.append({"snippet": snippet, "rationale": str(rationale).strip() if rationale else None, "verified": False})
                 g["evidence"] = repaired
             except Exception:
                 return
+
+        def _repair_pressure_evidence(p: Dict[str, Any]) -> None:
+            try:
+                if not isinstance(p, dict):
+                    return
+                ev = p.get("evidence")
+                if not isinstance(ev, list) or not ev:
+                    return
+                repaired: list[dict[str, Any]] = []
+                for item in ev:
+                    if not isinstance(item, dict):
+                        continue
+                    raw = item.get("snippet") or item.get("quote") or item.get("text")
+                    rationale = item.get("rationale") or item.get("reason") or item.get("explanation")
+                    snippet = _clean_snippet_local(raw)
+                    if not snippet:
+                        continue
+                    excerpt = _excerpt_from_event_for(snippet)
+                    if excerpt:
+                        repaired.append({"snippet": excerpt, "rationale": str(rationale).strip() if rationale else None, "verified": True})
+                    else:
+                        repaired.append({"snippet": snippet, "rationale": str(rationale).strip() if rationale else None, "verified": False})
+                p["evidence"] = repaired
+            except Exception:
+                return
+
+        def _repair_bias_evidence(b: Dict[str, Any]) -> None:
+            try:
+                if not isinstance(b, dict):
+                    return
+                ev = b.get("evidence")
+                if not isinstance(ev, list) or not ev:
+                    return
+                repaired: list[dict[str, Any]] = []
+                for item in ev:
+                    if item is None:
+                        continue
+                    if isinstance(item, dict):
+                        raw = item.get("snippet") or item.get("quote") or item.get("text")
+                        rationale = item.get("rationale") or item.get("reason") or item.get("explanation")
+                    else:
+                        raw = item
+                        rationale = None
+                    snippet = _clean_snippet_local(raw)
+                    if not snippet:
+                        continue
+                    excerpt = _excerpt_from_event_for(snippet)
+                    if excerpt:
+                        repaired.append({"snippet": excerpt, "rationale": str(rationale).strip() if rationale else None, "verified": True})
+                    else:
+                        repaired.append({"snippet": snippet, "rationale": str(rationale).strip() if rationale else None, "verified": False})
+                b["evidence"] = repaired
+            except Exception:
+                return
+
+        def _has_verified_evidence(items: Any) -> bool:
+            try:
+                if not isinstance(items, list) or not items:
+                    return False
+                for it in items:
+                    if not isinstance(it, dict):
+                        continue
+                    if it.get("verified") is True:
+                        return True
+                return False
+            except Exception:
+                return False
+
+        def _pressure_complete(p: Dict[str, Any]) -> bool:
+            if not isinstance(p, dict):
+                return False
+            if not p.get("pressure"):
+                return False
+            ev = p.get("evidence")
+            if not isinstance(ev, list) or not ev:
+                return False
+            for item in ev:
+                if not isinstance(item, dict):
+                    continue
+                if item.get("verified") is True:
+                    return True
+                raw = item.get("snippet") or item.get("quote") or item.get("text")
+                snippet = _clean_snippet_local(raw)
+                if not snippet:
+                    continue
+                excerpt = _excerpt_from_event_for(snippet)
+                if excerpt:
+                    return True
+            return False
 
         def _gap_complete(g: Dict[str, Any]) -> bool:
             if not isinstance(g, dict):
                 return False
             if not g.get("linked_target_id"):
                 return False
+            if role_context:
+                targets = role_context.get("ksao_targets") or []
+                if isinstance(targets, list):
+                    valid_ids = {str(t.get("target_id")) for t in targets if isinstance(t, dict) and t.get("target_id")}
+                    if valid_ids and str(g.get("linked_target_id")) not in valid_ids:
+                        return False
             if not g.get("observation") or not g.get("recommended_action"):
                 return False
             ev = g.get("evidence")
@@ -1154,6 +1537,8 @@ class EventAnalyzer:
             for item in ev:
                 if not isinstance(item, dict):
                     continue
+                if item.get("verified") is True:
+                    return True
                 raw = item.get("snippet") or item.get("quote") or item.get("text")
                 snippet = _clean_snippet_local(raw)
                 if not snippet:
@@ -1168,9 +1553,83 @@ class EventAnalyzer:
         if isinstance(event_description, str) and event_description and role_gap_items:
             for g in role_gap_items:
                 _repair_gap_evidence(g)
+            for g in role_gap_items:
+                try:
+                    if isinstance(g, dict) and g.get("confidence") in ("high", "medium"):
+                        if not _has_verified_evidence(g.get("evidence")):
+                            g["confidence"] = "low"
+                except Exception:
+                    pass
+
+        if isinstance(event_description, str) and event_description and normalized_biases:
+            for b in normalized_biases:
+                _repair_bias_evidence(b)
+            for b in normalized_biases:
+                try:
+                    if isinstance(b, dict) and b.get("confidence") in ("high", "medium"):
+                        if not _has_verified_evidence(b.get("evidence")):
+                            b["confidence"] = "low"
+                except Exception:
+                    pass
+
+        if isinstance(event_description, str) and event_description and normalized_pressures:
+            for bucket in ("promoting", "inhibiting"):
+                items = normalized_pressures.get(bucket)
+                if not isinstance(items, list) or not items:
+                    continue
+                for p in items:
+                    _repair_pressure_evidence(p)
+                kept: list[dict[str, Any]] = []
+                for p in items:
+                    if _pressure_complete(p):
+                        if isinstance(p, dict) and p.get("confidence") is None:
+                            p["confidence"] = "medium"
+                        try:
+                            if isinstance(p, dict) and p.get("confidence") in ("high", "medium"):
+                                if not _has_verified_evidence(p.get("evidence")):
+                                    p["confidence"] = "low"
+                        except Exception:
+                            pass
+                        kept.append(p)
+                        continue
+                    if isinstance(p, dict) and p.get("pressure"):
+                        try:
+                            if p.get("confidence") is None:
+                                p["confidence"] = "low"
+                        except Exception:
+                            pass
+                        try:
+                            if p.get("confidence") in ("high", "medium"):
+                                if not _has_verified_evidence(p.get("evidence")):
+                                    p["confidence"] = "low"
+                        except Exception:
+                            pass
+                        kept.append(p)
+                normalized_pressures[bucket] = kept
+
+            try:
+                inhib = normalized_pressures.get("inhibiting")
+                if isinstance(inhib, list) and inhib:
+                    moved: list[dict[str, Any]] = []
+                    remain: list[dict[str, Any]] = []
+                    for it in inhib:
+                        title = str((it or {}).get("pressure") or "").strip().lower()
+                        if title.startswith("lack of") or title.startswith("unclear"):
+                            moved.append(it)
+                        else:
+                            remain.append(it)
+                    if moved:
+                        normalized_pressures["inhibiting"] = remain
+                        promoting = normalized_pressures.get("promoting")
+                        if not isinstance(promoting, list):
+                            promoting = []
+                        normalized_pressures["promoting"] = promoting + moved
+            except Exception:
+                pass
 
         relinked_count = 0
         observation_rewritten_count = 0
+        target_expectation_normalized_count = 0
         if role_context and isinstance(event_description, str) and event_description and role_gap_items:
             targets = role_context.get("ksao_targets") or []
             if isinstance(targets, list) and targets:
@@ -1275,6 +1734,34 @@ class EventAnalyzer:
                             snippet = snippet[:220].rstrip()
                         g["observation"] = f"Observed: {snippet}"
                         return True
+                    except Exception:
+                        return False
+
+                def _normalize_target_expectation(g: Dict[str, Any]) -> bool:
+                    try:
+                        tid = g.get("linked_target_id")
+                        t = target_by_id.get(str(tid)) if tid is not None else None
+                        if not isinstance(t, dict):
+                            return False
+                        kind = str(t.get("kind") or "Target").strip() or "Target"
+                        name_raw = str(t.get("name") or "").strip()
+                        if name_raw:
+                            first_line = name_raw.splitlines()[0].strip()
+                            if first_line.lower().startswith("name:"):
+                                first_line = first_line.split(":", 1)[-1].strip()
+                            name = first_line
+                        else:
+                            name = "KSAO"
+                        lvl = t.get("target_level")
+                        expect = f"{kind} — {name}"
+                        if lvl is not None:
+                            expect = f"{expect} (Target level {lvl}/5)"
+
+                        cur = str(g.get("target_expectation") or "").strip()
+                        if not cur or cur.lower() != expect.lower():
+                            g["target_expectation"] = expect
+                            return True
+                        return False
                     except Exception:
                         return False
 
@@ -1386,10 +1873,22 @@ class EventAnalyzer:
                             best_score = s
                             best_id = tid
 
+                    if current_id is not None and str(current_id) not in target_by_id:
+                        if best_id and best_score >= 4:
+                            if str(g.get("linked_target_id")) != str(best_id):
+                                g["linked_target_id"] = best_id
+                                relinked_count += 1
+                        else:
+                            g["linked_target_id"] = None
+                            continue
+
                     if best_id and (best_score >= 8) and (best_score > current_score):
                         if str(g.get("linked_target_id")) != str(best_id):
                             g["linked_target_id"] = best_id
                             relinked_count += 1
+
+                    if _normalize_target_expectation(g):
+                        target_expectation_normalized_count += 1
 
                     if _rewrite_observation_if_needed(g):
                         observation_rewritten_count += 1
@@ -1413,6 +1912,7 @@ class EventAnalyzer:
             "recommended_metrics": normalized_metrics,
             "interventions": normalized_interventions,
             "success_measures": normalized_success,
+            "pressures": normalized_pressures,
             "behavioral_biases": normalized_biases,
             "role_gap_analysis": role_gap_items,
             "_meta": {
@@ -1425,6 +1925,7 @@ class EventAnalyzer:
                 "role_gap_fallback_used": bool(fallback_used),
                 "role_gap_relinked_count": int(relinked_count),
                 "role_gap_observation_rewritten_count": int(observation_rewritten_count),
+                "role_gap_target_expectation_normalized_count": int(target_expectation_normalized_count),
             }
         }
 

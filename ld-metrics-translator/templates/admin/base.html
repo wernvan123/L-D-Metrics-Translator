@@ -3,6 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
     <title>{% block title %}Admin Panel{% endblock %} - L&D Metrics Translator</title>
     
     <!-- Bootstrap CSS -->
@@ -187,6 +188,12 @@
                             <a class="nav-link {% if 'import' in request.endpoint %}active{% endif %}" 
                                href="{{ url_for('admin.bulk_import') }}">
                                 <i class="bi bi-upload"></i>Import Data
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link {% if 'event_feed' in request.endpoint %}active{% endif %}"
+                               href="{{ url_for('admin.event_feed_admin') }}">
+                                <i class="bi bi-list-ul"></i>Event Feed
                             </a>
                         </li>
                         <li class="nav-item">

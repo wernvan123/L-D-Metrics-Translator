@@ -94,6 +94,33 @@
     </div>
 </div>
 
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="card-title mb-0">
+                    <i class="bi bi-database me-2"></i>Client Data (Imported)
+                </h5>
+                <a href="{{ url_for('admin.bulk_import') }}" class="btn btn-sm btn-outline-primary">Import More</a>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-4 mb-2">
+                        <strong>Retro Items:</strong> {{ stats.total_client_retro_items }}
+                    </div>
+                    <div class="col-md-4 mb-2">
+                        <strong>Pull Requests:</strong> {{ stats.total_client_pull_requests }}
+                    </div>
+                    <div class="col-md-4 mb-2">
+                        <strong>Survey Responses:</strong> {{ stats.total_client_survey_responses }}
+                    </div>
+                </div>
+                <div class="small text-muted">Stored in SQLite database file <code>ld-metrics-translator/app.db</code>.</div>
+            </div>
+        </div>
+    </div>
+</div>
+
 <div class="row">
     <!-- Recent Metrics -->
     <div class="col-md-6 mb-4">

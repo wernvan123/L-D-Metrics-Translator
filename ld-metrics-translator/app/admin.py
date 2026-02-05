@@ -33,7 +33,7 @@ from wtforms.validators import DataRequired, Length, Optional, Email
 from wtforms import ValidationError
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
-from app.models import Metric, LDOutcome, MetricType, AdminUser, AuditLog, Framework, Competency
+from app.models import Metric, LDOutcome, MetricType, AdminUser, AuditLog, Framework, Competency, ClientRetroItem, ClientPullRequest, ClientSurveyResponse
 from app.models_behavioral_bias import BehavioralBias
 from app import db
 import csv
@@ -79,12 +79,57 @@ def unique_competency_slug(framework_id: int, base: str) -> str:
         slug = 'competency'
     if not Competency.query.filter_by(framework_id=framework_id, slug=slug).first():
         return slug
+
     i = 2
     while True:
         candidate = f"{slug}-{i}"
         if not Competency.query.filter_by(framework_id=framework_id, slug=candidate).first():
             return candidate
         i += 1
+
+def _parse_optional_datetime(value):
+    if value is None:
+        return None
+    s = str(value).strip()
+    if not s:
+        return None
+    try:
+        return datetime.fromisoformat(s.replace('Z', '+00:00'))
+    except Exception:
+        pass
+    for fmt in ('%Y-%m-%d %H:%M:%S', '%Y-%m-%d'):
+        try:
+            return datetime.strptime(s, fmt)
+        except Exception:
+            continue
+    return None
+
+def _normalize_csv_row(row: dict) -> dict:
+    normalized = {}
+    try:
+        items = row.items()
+    except Exception:
+        return normalized
+    for k, v in items:
+        if k is None:
+            continue
+        nk = str(k).strip().lstrip('\ufeff').lower()
+        if nk and nk not in normalized:
+            normalized[nk] = v
+    return normalized
+
+def _csv_dict_reader_from_text(text: str) -> csv.DictReader:
+    normalized_text = text or ''
+    if ('\n' not in normalized_text) and ('\\n' in normalized_text):
+        normalized_text = normalized_text.replace('\\r\\n', '\n').replace('\\n', '\n')
+
+    sample = normalized_text[:4096]
+    try:
+        dialect = csv.Sniffer().sniff(sample, delimiters=[',', ';', '\t', '|'])
+    except Exception:
+        dialect = csv.excel
+    stream = io.StringIO(normalized_text, newline=None)
+    return csv.DictReader(stream, dialect=dialect)
 
 
 def unique_bias_slug(base: str, bias_id: int | None = None) -> str:
@@ -208,7 +253,10 @@ class BulkImportForm(FlaskForm):
     import_type = SelectField('Import Type', choices=[
         ('metrics', 'Metrics'),
         ('outcomes', 'L&D Outcomes'),
-        ('types', 'Metric Types')
+        ('types', 'Metric Types'),
+        ('retros', 'Client Retrospective Items'),
+        ('pull_requests', 'Client Pull Requests'),
+        ('survey_responses', 'Client Survey Responses')
     ], validators=[DataRequired()])
 
 # Authentication routes
@@ -251,11 +299,32 @@ def dashboard():
         'total_outcomes': LDOutcome.query.count(),
         'total_types': MetricType.query.count(),
         'total_admin_users': AdminUser.query.count(),
+        'total_client_retro_items': ClientRetroItem.query.count(),
+        'total_client_pull_requests': ClientPullRequest.query.count(),
+        'total_client_survey_responses': ClientSurveyResponse.query.count(),
         'recent_metrics': Metric.query.order_by(Metric.created_date.desc()).limit(5).all(),
         'recent_audit_logs': AuditLog.query.order_by(AuditLog.created_date.desc()).limit(10).all()
     }
     
     return render_template('admin/dashboard.html', stats=stats)
+
+
+@admin.route('/event-feed')
+@admin.route('/event-feed/')
+@admin_required
+def event_feed_admin():
+    return render_template('admin/event_feed.html')
+
+
+@admin.route('/event-feed/report')
+@admin.route('/event-feed/report/')
+@admin_required
+def event_feed_report_admin():
+    job_id = (request.args.get('job_id') or '').strip()
+    if not job_id:
+        flash('Missing job_id for diagnostic report.', 'error')
+        return redirect(url_for('admin.event_feed_admin'))
+    return render_template('admin/event_feed_report.html', job_id=job_id)
 
 # Metrics management
 @admin.route('/metrics')
@@ -760,8 +829,8 @@ def bulk_import():
         
         try:
             # Read CSV file
-            stream = io.StringIO(file.stream.read().decode("UTF8"), newline=None)
-            csv_input = csv.DictReader(stream)
+            csv_text = file.stream.read().decode("utf-8-sig")
+            csv_input = _csv_dict_reader_from_text(csv_text)
             
             imported_count = 0
             errors = []
@@ -847,6 +916,77 @@ def bulk_import():
                         
                     except Exception as e:
                         errors.append(f'Row {row_num}: {str(e)}')
+
+            elif import_type == 'retros':
+                for row_num, row in enumerate(csv_input, start=2):
+                    try:
+                        r = _normalize_csv_row(row)
+                        text = (r.get('text') or r.get('retro_text') or r.get('item') or r.get('retro_item') or r.get('comment') or r.get('description') or r.get('notes') or '').strip()
+                        if not text:
+                            errors.append(f'Row {row_num}: Missing text field')
+                            continue
+                        retro = ClientRetroItem(
+                            retro_date=_parse_optional_datetime(r.get('retro_date') or r.get('date') or r.get('created_at') or r.get('timestamp')),
+                            team=(r.get('team') or r.get('squad') or r.get('group') or r.get('project') or '').strip() or None,
+                            category=(r.get('category') or r.get('type') or r.get('theme') or '').strip() or None,
+                            text=text,
+                            action_owner=(r.get('action_owner') or r.get('owner') or r.get('assignee') or '').strip() or None,
+                            action_status=(r.get('action_status') or r.get('status') or '').strip() or None,
+                            source=(r.get('source') or r.get('system') or '').strip() or None,
+                            raw_json=json.dumps(row),
+                        )
+                        db.session.add(retro)
+                        imported_count += 1
+                    except Exception as e:
+                        errors.append(f'Row {row_num}: {str(e)}')
+
+            elif import_type == 'pull_requests':
+                for row_num, row in enumerate(csv_input, start=2):
+                    try:
+                        r = _normalize_csv_row(row)
+                        pr_id = (r.get('pr_id') or r.get('pr_number') or r.get('number') or r.get('id') or '').strip()
+                        if not pr_id:
+                            errors.append(f'Row {row_num}: Missing pr_id field')
+                            continue
+                        pr = ClientPullRequest(
+                            pr_id=pr_id,
+                            url=(r.get('url') or r.get('html_url') or r.get('link') or '').strip() or None,
+                            created_at=_parse_optional_datetime(r.get('created_at') or r.get('created') or r.get('opened_at') or r.get('timestamp')),
+                            merged_at=_parse_optional_datetime(r.get('merged_at') or r.get('merged') or r.get('closed_at')),
+                            author=(r.get('author') or r.get('user') or r.get('created_by') or '').strip() or None,
+                            comments_count=int(r['comments_count']) if (r.get('comments_count') or '').strip().isdigit() else (int(r['comments']) if (r.get('comments') or '').strip().isdigit() else None),
+                            additions=int(r['additions']) if (r.get('additions') or '').strip().isdigit() else None,
+                            deletions=int(r['deletions']) if (r.get('deletions') or '').strip().isdigit() else None,
+                            team=(r.get('team') or r.get('squad') or r.get('group') or '').strip() or None,
+                            source=(r.get('source') or r.get('system') or '').strip() or None,
+                            raw_json=json.dumps(row),
+                        )
+                        db.session.add(pr)
+                        imported_count += 1
+                    except Exception as e:
+                        errors.append(f'Row {row_num}: {str(e)}')
+
+            elif import_type == 'survey_responses':
+                for row_num, row in enumerate(csv_input, start=2):
+                    try:
+                        r = _normalize_csv_row(row)
+                        answer = (r.get('answer') or r.get('response') or r.get('value') or '').strip()
+                        if not answer:
+                            errors.append(f'Row {row_num}: Missing answer field')
+                            continue
+                        survey = ClientSurveyResponse(
+                            submitted_at=_parse_optional_datetime(r.get('submitted_at') or r.get('timestamp') or r.get('submitted') or r.get('created_at')),
+                            survey_name=(r.get('survey_name') or r.get('form') or r.get('survey') or '').strip() or None,
+                            question=(r.get('question') or r.get('prompt') or r.get('item') or '').strip() or None,
+                            answer=answer,
+                            team=(r.get('team') or r.get('squad') or r.get('group') or '').strip() or None,
+                            source=(r.get('source') or r.get('system') or '').strip() or None,
+                            raw_json=json.dumps(row),
+                        )
+                        db.session.add(survey)
+                        imported_count += 1
+                    except Exception as e:
+                        errors.append(f'Row {row_num}: {str(e)}')
             
             # Commit changes
             db.session.commit()
@@ -855,6 +995,8 @@ def bulk_import():
             
             if imported_count > 0:
                 flash(f'Successfully imported {imported_count} {import_type}!', 'success')
+            else:
+                flash('No rows were imported. This usually means the CSV had headers but 0 data rows, or the required column names did not match.', 'info')
             
             if errors:
                 flash(f'Import completed with {len(errors)} errors. See details below.', 'warning')
@@ -1037,29 +1179,34 @@ def audit_logs():
 def preview_import():
     """Preview CSV import data."""
     if 'file' not in request.files:
-        return jsonify({'error': 'No file provided'}), 400
+        return jsonify({'success': False, 'error': 'No file provided'}), 400
     
     file = request.files['file']
     import_type = request.form.get('import_type')
     
     try:
-        stream = io.StringIO(file.stream.read().decode("UTF8"), newline=None)
-        csv_input = csv.DictReader(stream)
-        
+        csv_text = file.stream.read().decode("utf-8-sig")
+        csv_input = _csv_dict_reader_from_text(csv_text)
+
+        headers = list(csv_input.fieldnames or [])
+
         preview_data = []
-        for i, row in enumerate(csv_input):
-            if i >= 10:  # Limit preview to 10 rows
-                break
-            preview_data.append(dict(row))
-        
+        total_rows = 0
+        for row in csv_input:
+            total_rows += 1
+            if len(preview_data) < 10:
+                preview_data.append(dict(row))
+
         return jsonify({
             'success': True,
             'data': preview_data,
-            'headers': list(preview_data[0].keys()) if preview_data else []
+            'headers': headers,
+            'total_rows': total_rows,
+            'import_type': import_type,
         })
     
     except Exception as e:
-        return jsonify({'error': str(e)}), 400
+        return jsonify({'success': False, 'error': str(e)}), 400
 
 @admin.route('/api/stats')
 @admin_required

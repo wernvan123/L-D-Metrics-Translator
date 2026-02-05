@@ -56,6 +56,8 @@ All API responses follow a consistent JSON format:
 }
 ```
 
+> Note: Some endpoints (notably Event Analysis) return a different payload shape (e.g., `{ "success": true, ... }`) because they are optimized for UI workflows and asynchronous execution.
+
 ## Endpoints
 
 ### Health Check
@@ -78,6 +80,86 @@ Check the health and status of the API.
 **Status Codes:**
 - `200 OK`: Service is healthy
 - `503 Service Unavailable`: Service is unhealthy
+
+---
+
+### Diagnostics: Event Analysis (Async)
+
+The application includes an asynchronous Event Analysis workflow used by the Diagnostics UI (`/diagnostics`).
+
+#### Submit Event Analysis Job
+
+**POST** `/api/analyze-event`
+
+**Request body:**
+```json
+{
+  "event_description": "Team struggled with deadline due to unclear ownership",
+  "selected_metrics": [],
+  "role_profile_id": 1,
+  "kb_context": "Optional context string",
+  "kb_tier_limit": 5,
+  "kb_related_limit": 10
+}
+```
+
+Notes:
+- `event_description` is required.
+- `role_profile_id` is optional. When supplied, the analysis can incorporate role context.
+- The endpoint returns a `202` with a `job_id` that must be polled for completion.
+
+**Example response (202):**
+```json
+{
+  "success": true,
+  "job_id": "<job_id>",
+  "status": "queued",
+  "timestamp": 1730000000.123
+}
+```
+
+#### Poll Job Status / Retrieve Result
+
+**GET** `/api/analyze-event/<job_id>`
+
+**Example response (running/queued):**
+```json
+{
+  "success": true,
+  "status": "running",
+  "job_id": "<job_id>",
+  "created_at": "2026-01-01T12:00:00Z",
+  "started_at": "2026-01-01T12:00:02Z",
+  "timestamp": 1730000002.456
+}
+```
+
+**Example response (succeeded):**
+```json
+{
+  "success": true,
+  "analysis": "...",
+  "generated_by": "ai",
+  "ollama_status": "available",
+  "timestamp": 1730000010.789,
+  "kb": {
+    "strong": [],
+    "related": [],
+    "biases": []
+  },
+  "analysis_id": 123
+}
+```
+
+**Example response (failed):**
+```json
+{
+  "success": false,
+  "status": "failed",
+  "error": "Analysis failed",
+  "timestamp": 1730000010.789
+}
+```
 
 ---
 

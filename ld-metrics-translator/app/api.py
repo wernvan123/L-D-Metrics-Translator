@@ -1,6 +1,7 @@
 from functools import wraps
 from flask import Blueprint, jsonify, request, session, current_app, abort
 from app.models import AdminUser, Metric, LDOutcome, MetricType, ReportTemplate, DynamicReport, ReportAnalytics, Framework, Competency, UserSession, competency_metrics
+from app.models import ClientRetroItem, ClientPullRequest, ClientSurveyResponse
 from app.models import (
     RoleProfile,
     RoleKnowledge,
@@ -33,6 +34,43 @@ logger = logging.getLogger(__name__)
 _EVENT_ANALYSIS_EXECUTOR = ThreadPoolExecutor(max_workers=2)
 _EVENT_ANALYSIS_JOBS: dict[str, dict] = {}
 _EVENT_ANALYSIS_JOBS_LOCK = Lock()
+
+_EVENT_ANALYSIS_MAX_ACTIVE = 2
+_EVENT_ANALYSIS_MAX_QUEUE_SECONDS = 180
+
+
+def _parse_iso_utc(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        v = value.strip()
+        if v.endswith('Z'):
+            v = v[:-1]
+        return datetime.fromisoformat(v)
+    except Exception:
+        return None
+
+
+def _event_job_sweep_stale_queued(now: datetime | None = None) -> None:
+    now_dt = now or datetime.utcnow()
+    with _EVENT_ANALYSIS_JOBS_LOCK:
+        for job in _EVENT_ANALYSIS_JOBS.values():
+            if not isinstance(job, dict):
+                continue
+            if job.get('status') != 'queued':
+                continue
+            created = _parse_iso_utc(job.get('created_at'))
+            if not created:
+                continue
+            age = (now_dt - created).total_seconds()
+            if age <= _EVENT_ANALYSIS_MAX_QUEUE_SECONDS:
+                continue
+            job['status'] = 'failed'
+            job['finished_at'] = now_dt.isoformat() + 'Z'
+            job['error'] = (
+                f"Analysis job was stuck in queue for {int(age)}s. "
+                "Please retry. If this persists, restart the server (executor may be stalled)."
+            )
 
 
 def _event_job_set(job_id: str, **updates) -> None:
@@ -177,6 +215,338 @@ def login_required(f):
             }), 401
         return f(*args, **kwargs)
     return decorated_function
+
+
+def _iso(dt):
+    try:
+        return dt.isoformat() if dt else None
+    except Exception:
+        return None
+
+
+def _parse_optional_iso_datetime(value: str | None):
+    if not value:
+        return None
+    s = str(value).strip()
+    if not s:
+        return None
+    try:
+        return datetime.fromisoformat(s.replace('Z', '+00:00'))
+    except Exception:
+        return None
+
+
+def _parse_limit_offset(default_limit: int = 200, max_limit: int = 1000):
+    try:
+        limit = int(request.args.get('limit', default_limit))
+    except Exception:
+        limit = default_limit
+    try:
+        offset = int(request.args.get('offset', 0))
+    except Exception:
+        offset = 0
+    limit = max(1, min(limit, max_limit))
+    offset = max(0, offset)
+    return limit, offset
+
+
+def _event_feed_item(source_type: str, item_id: int, occurred_at, team: str | None, category: str | None, text_value: str, source: str | None, extra: dict | None = None):
+    payload = {
+        'id': f"{source_type}:{item_id}",
+        'source_type': source_type,
+        'source_id': item_id,
+        'occurred_at': _iso(occurred_at),
+        'team': team,
+        'category': category,
+        'text': text_value,
+        'source': source,
+    }
+    if extra:
+        payload.update(extra)
+    return payload
+
+
+@api.route('/client-data/retros', methods=['GET'])
+@login_required
+def list_client_retros():
+    """List imported client retrospective items."""
+    try:
+        limit, offset = _parse_limit_offset()
+        team = (request.args.get('team') or '').strip()
+        source = (request.args.get('source') or '').strip()
+        since = _parse_optional_iso_datetime(request.args.get('since'))
+
+        query = ClientRetroItem.query
+        if team:
+            query = query.filter(ClientRetroItem.team == team)
+        if source:
+            query = query.filter(ClientRetroItem.source == source)
+        if since:
+            query = query.filter(ClientRetroItem.imported_at >= since)
+
+        total = query.count()
+        rows = (
+            query.order_by(ClientRetroItem.imported_at.desc())
+            .offset(offset)
+            .limit(limit)
+            .all()
+        )
+
+        return jsonify({
+            'success': True,
+            'count': len(rows),
+            'total': total,
+            'items': [
+                {
+                    'id': r.id,
+                    'retro_date': _iso(r.retro_date),
+                    'team': r.team,
+                    'category': r.category,
+                    'text': r.text,
+                    'action_owner': r.action_owner,
+                    'action_status': r.action_status,
+                    'source': r.source,
+                    'imported_at': _iso(r.imported_at),
+                }
+                for r in rows
+            ],
+            'timestamp': time.time(),
+        }), 200
+    except Exception as e:
+        logger.error(f"Error listing client retros: {str(e)}")
+        return jsonify({'success': False, 'error': 'Failed to list client retros', 'details': str(e)}), 500
+
+
+@api.route('/client-data/pull-requests', methods=['GET'])
+@login_required
+def list_client_pull_requests():
+    """List imported client pull request records."""
+    try:
+        limit, offset = _parse_limit_offset()
+        team = (request.args.get('team') or '').strip()
+        source = (request.args.get('source') or '').strip()
+        since = _parse_optional_iso_datetime(request.args.get('since'))
+
+        query = ClientPullRequest.query
+        if team:
+            query = query.filter(ClientPullRequest.team == team)
+        if source:
+            query = query.filter(ClientPullRequest.source == source)
+        if since:
+            query = query.filter(ClientPullRequest.imported_at >= since)
+
+        total = query.count()
+        rows = (
+            query.order_by(ClientPullRequest.imported_at.desc())
+            .offset(offset)
+            .limit(limit)
+            .all()
+        )
+
+        return jsonify({
+            'success': True,
+            'count': len(rows),
+            'total': total,
+            'items': [
+                {
+                    'id': r.id,
+                    'pr_id': r.pr_id,
+                    'url': r.url,
+                    'created_at': _iso(r.created_at),
+                    'merged_at': _iso(r.merged_at),
+                    'author': r.author,
+                    'comments_count': r.comments_count,
+                    'additions': r.additions,
+                    'deletions': r.deletions,
+                    'team': r.team,
+                    'source': r.source,
+                    'imported_at': _iso(r.imported_at),
+                }
+                for r in rows
+            ],
+            'timestamp': time.time(),
+        }), 200
+    except Exception as e:
+        logger.error(f"Error listing client pull requests: {str(e)}")
+        return jsonify({'success': False, 'error': 'Failed to list client pull requests', 'details': str(e)}), 500
+
+
+@api.route('/client-data/survey-responses', methods=['GET'])
+@login_required
+def list_client_survey_responses():
+    """List imported client survey responses."""
+    try:
+        limit, offset = _parse_limit_offset()
+        team = (request.args.get('team') or '').strip()
+        source = (request.args.get('source') or '').strip()
+        since = _parse_optional_iso_datetime(request.args.get('since'))
+
+        query = ClientSurveyResponse.query
+        if team:
+            query = query.filter(ClientSurveyResponse.team == team)
+        if source:
+            query = query.filter(ClientSurveyResponse.source == source)
+        if since:
+            query = query.filter(ClientSurveyResponse.imported_at >= since)
+
+        total = query.count()
+        rows = (
+            query.order_by(ClientSurveyResponse.imported_at.desc())
+            .offset(offset)
+            .limit(limit)
+            .all()
+        )
+
+        return jsonify({
+            'success': True,
+            'count': len(rows),
+            'total': total,
+            'items': [
+                {
+                    'id': r.id,
+                    'submitted_at': _iso(r.submitted_at),
+                    'survey_name': r.survey_name,
+                    'question': r.question,
+                    'answer': r.answer,
+                    'team': r.team,
+                    'source': r.source,
+                    'imported_at': _iso(r.imported_at),
+                }
+                for r in rows
+            ],
+            'timestamp': time.time(),
+        }), 200
+    except Exception as e:
+        logger.error(f"Error listing client survey responses: {str(e)}")
+        return jsonify({'success': False, 'error': 'Failed to list client survey responses', 'details': str(e)}), 500
+
+
+@api.route('/event-feed', methods=['GET'])
+@login_required
+def event_feed():
+    """Generate a simple unified Event Feed from imported client datasets.
+
+    Query params:
+    - sources: comma-separated of retros,pull_requests,survey_responses (default retros)
+    - team: exact match
+    - source: exact match
+    - limit: max events returned (default 200)
+    """
+    try:
+        limit, _ = _parse_limit_offset(default_limit=200, max_limit=1000)
+        team = (request.args.get('team') or '').strip()
+        source = (request.args.get('source') or '').strip()
+        sources = (request.args.get('sources') or 'retros').strip()
+        selected = {s.strip().lower() for s in sources.split(',') if s.strip()}
+
+        items: list[dict] = []
+
+        if 'retros' in selected:
+            query = ClientRetroItem.query
+            if team:
+                query = query.filter(ClientRetroItem.team == team)
+            if source:
+                query = query.filter(ClientRetroItem.source == source)
+            rows = query.order_by(ClientRetroItem.imported_at.desc()).limit(limit).all()
+            for r in rows:
+                occurred = r.retro_date or r.imported_at
+                items.append(
+                    _event_feed_item(
+                        'retro',
+                        r.id,
+                        occurred,
+                        r.team,
+                        r.category,
+                        r.text,
+                        r.source,
+                        extra={
+                            'action_owner': r.action_owner,
+                            'action_status': r.action_status,
+                        },
+                    )
+                )
+
+        if 'pull_requests' in selected:
+            query = ClientPullRequest.query
+            if team:
+                query = query.filter(ClientPullRequest.team == team)
+            if source:
+                query = query.filter(ClientPullRequest.source == source)
+            rows = query.order_by(ClientPullRequest.imported_at.desc()).limit(limit).all()
+            for r in rows:
+                occurred = r.merged_at or r.created_at or r.imported_at
+                text_bits = [f"PR {r.pr_id}"]
+                if r.author:
+                    text_bits.append(f"by {r.author}")
+                if r.merged_at:
+                    text_bits.append("merged")
+                text_value = " ".join(text_bits)
+                items.append(
+                    _event_feed_item(
+                        'pull_request',
+                        r.id,
+                        occurred,
+                        r.team,
+                        'Pull Request',
+                        text_value,
+                        r.source,
+                        extra={
+                            'pr_id': r.pr_id,
+                            'url': r.url,
+                            'author': r.author,
+                            'comments_count': r.comments_count,
+                            'additions': r.additions,
+                            'deletions': r.deletions,
+                        },
+                    )
+                )
+
+        if 'survey_responses' in selected:
+            query = ClientSurveyResponse.query
+            if team:
+                query = query.filter(ClientSurveyResponse.team == team)
+            if source:
+                query = query.filter(ClientSurveyResponse.source == source)
+            rows = query.order_by(ClientSurveyResponse.imported_at.desc()).limit(limit).all()
+            for r in rows:
+                occurred = r.submitted_at or r.imported_at
+                if r.question:
+                    text_value = f"{r.question}: {r.answer}"
+                else:
+                    text_value = r.answer
+                items.append(
+                    _event_feed_item(
+                        'survey_response',
+                        r.id,
+                        occurred,
+                        r.team,
+                        r.survey_name or 'Survey Response',
+                        text_value,
+                        r.source,
+                        extra={
+                            'survey_name': r.survey_name,
+                            'question': r.question,
+                        },
+                    )
+                )
+
+        def sort_key(item: dict):
+            s = item.get('occurred_at')
+            if not s:
+                return ''
+            return str(s)
+
+        items_sorted = sorted(items, key=sort_key, reverse=True)[:limit]
+
+        return jsonify({
+            'success': True,
+            'count': len(items_sorted),
+            'items': items_sorted,
+            'timestamp': time.time(),
+        }), 200
+    except Exception as e:
+        logger.error(f"Error generating event feed: {str(e)}")
+        return jsonify({'success': False, 'error': 'Failed to generate event feed', 'details': str(e)}), 500
 
 
 def admin_required(f):
@@ -1704,6 +2074,7 @@ def list_role_ksao_targets(role_id: int):
         add_items(role.skill_items, 'Skill')
         add_items(role.ability_items, 'Ability')
         add_items(role.other_requirements, 'Other')
+        add_items(role.outcomes, 'Outcome')
 
         targets.sort(key=lambda t: ((t.get('kind') or ''), (t.get('name') or '')))
         return jsonify({'targets': targets, 'count': len(targets)}), 200
@@ -3478,6 +3849,26 @@ def analyze_event():
     kb_tier_limit = int(data.get('kb_tier_limit', 5))
     kb_related_limit = int(data.get('kb_related_limit', 10))
 
+    # Avoid piling up queued jobs when the executor is saturated (common when Ollama stalls).
+    # If the pool is busy, return a fast response so the UI can show a clear error instead of spinning indefinitely.
+    try:
+        _event_job_sweep_stale_queued()
+        with _EVENT_ANALYSIS_JOBS_LOCK:
+            active = [
+                j for j in _EVENT_ANALYSIS_JOBS.values()
+                if isinstance(j, dict) and j.get('status') in ('queued', 'running')
+            ]
+        if len(active) >= _EVENT_ANALYSIS_MAX_ACTIVE:
+            return jsonify({
+                'success': False,
+                'error': 'Event analysis is busy (a previous analysis is still running). Please wait for it to finish and try again.',
+                'status': 'busy',
+                'active_jobs': [j.get('id') for j in active if j.get('id')],
+                'timestamp': time.time(),
+            }), 429
+    except Exception:
+        pass
+
     job_id = uuid4().hex
     now_iso = datetime.utcnow().isoformat() + 'Z'
     with _EVENT_ANALYSIS_JOBS_LOCK:
@@ -3516,6 +3907,7 @@ def analyze_event():
 
 @api.route('/analyze-event/<job_id>', methods=['GET'])
 def analyze_event_job_status(job_id: str):
+    _event_job_sweep_stale_queued()
     job = _event_job_get(job_id)
     if not job:
         return jsonify({

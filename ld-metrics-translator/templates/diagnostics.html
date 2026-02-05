@@ -41,22 +41,6 @@
       <div class="diag-grid">
         <div id="diag-main-col">
       <div id="diag-role-targets" class="notice" style="display:none"></div>
-      <!-- Inline Login Prompt within Enter Scenario card (Option A) -->
-      <div id="login-prompt" class="login-prompt inline" style="display: none;">
-        <div class="login-prompt-content">
-          <div class="login-prompt-icon">👤</div>
-          <div class="login-prompt-text">
-            <h4>Login to save analyses</h4>
-            <p>You can also continue as guest to try the analyzer</p>
-          </div>
-          <div class="login-prompt-actions">
-            <a id="open-login-btn" href="/admin/login" class="btn btn-primary">Log In</a>
-            <button id="continue-anonymous" class="btn btn-secondary">Continue as Guest</button>
-            <button id="login-dismiss" class="btn btn-outline" aria-label="Dismiss">Dismiss</button>
-          </div>
-        </div>
-      </div>
-
       <div class="event-input-container">
         <div class="event-input-header">
           <textarea id="event-description" class="event-input" placeholder="Describe a workplace event or situation..." rows="4" maxlength="40000"></textarea>
@@ -88,6 +72,41 @@
         #gap-report-card { margin-top: 16px; }
         #gap-report-card .card-header { padding: 12px 16px 8px; }
         #gap-report-card .card-header h3 { margin: 0; font-size: 1.05rem; }
+
+        #diag-role-targets.notice { padding: 0; background: transparent; border: 0; }
+        #diag-role-targets .role-targets { background: #f8fafc; border: 1px solid #e5e7eb; border-radius: 12px; padding: 12px 14px; }
+        #diag-role-targets .role-targets__head { display:flex; align-items:center; justify-content:space-between; gap: 10px; margin-bottom: 10px; }
+        #diag-role-targets .role-targets__title { font-weight: 800; color: #111827; }
+        #diag-role-targets .role-targets__actions { display:flex; align-items:center; gap: 10px; flex-wrap: wrap; }
+        #diag-role-targets .rt-count { font-size: .85rem; color: #6b7280; }
+        #diag-role-targets .role-targets__list { display:flex; flex-direction:column; gap: 8px; }
+        #diag-role-targets .role-targets__more { margin-top: 8px; font-size: .85rem; color: #6b7280; }
+
+        #diag-role-targets .rt-item { border: 1px solid #e5e7eb; border-radius: 10px; background: #ffffff; }
+        #diag-role-targets .rt-item--plain { padding: 10px 12px; }
+        #diag-role-targets details.rt-item { padding: 6px 10px; }
+        #diag-role-targets details.rt-item > summary { cursor: pointer; list-style: none; }
+        #diag-role-targets details.rt-item > summary::-webkit-details-marker { display: none; }
+        #diag-role-targets details.rt-item > summary { padding: 6px 2px; }
+        #diag-role-targets details.rt-item[open] > summary { border-bottom: 1px solid #eef2f7; padding-bottom: 10px; margin-bottom: 10px; }
+
+        #diag-role-targets .rt-row { display:flex; align-items:flex-start; justify-content:space-between; gap: 10px; }
+        #diag-role-targets .rt-left { display:flex; align-items:center; gap: 8px; min-width: 0; }
+        #diag-role-targets .rt-name { font-weight: 600; color: #111827; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 640px; }
+        #diag-role-targets .rt-right { display:flex; align-items:center; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+        #diag-role-targets .rt-desc { color: #374151; line-height: 1.45; font-size: .95rem; padding: 0 2px 10px; }
+
+        #diag-role-targets .rt-kind { font-size: .75rem; font-weight: 800; padding: 3px 8px; border-radius: 999px; border: 1px solid #e5e7eb; background: #f3f4f6; color: #374151; white-space: nowrap; }
+        #diag-role-targets .rt-kind[data-kind="knowledge"] { background: #eef2ff; border-color: #c7d2fe; color: #3730a3; }
+        #diag-role-targets .rt-kind[data-kind="skill"] { background: #ecfdf5; border-color: #a7f3d0; color: #065f46; }
+        #diag-role-targets .rt-kind[data-kind="ability"] { background: #fff7ed; border-color: #fed7aa; color: #9a3412; }
+        #diag-role-targets .rt-kind[data-kind="other"] { background: #fdf2f8; border-color: #fbcfe8; color: #9d174d; }
+        #diag-role-targets .rt-kind[data-kind="outcome"] { background: #f0fdf4; border-color: #bbf7d0; color: #166534; }
+
+        #diag-role-targets .rt-badge { font-size: .75rem; font-weight: 800; padding: 3px 8px; border-radius: 999px; border: 1px solid #e5e7eb; background: #ffffff; color: #111827; white-space: nowrap; }
+        #diag-role-targets .rt-badge--level { background: #eff6ff; border-color: #bfdbfe; color: #1d4ed8; }
+        #diag-role-targets .rt-badge--muted { background: #f3f4f6; border-color: #e5e7eb; color: #6b7280; }
+        #diag-role-targets .rt-badge--driver { background: #fff; border-color: #e5e7eb; color: #111827; font-weight: 700; max-width: 360px; overflow: hidden; text-overflow: ellipsis; }
 
         #gap-report { padding-top: 8px; }
         #gap-report .mb { margin-bottom: 16px; }
@@ -249,6 +268,7 @@
       </div>
       <div class="bsd-actions">
         <button type="button" id="bsd-analyze" class="btn btn-primary btn-lg">Analyze</button>
+        <button type="button" id="bsd-clear" class="btn btn-outline">Clear</button>
       </div>
     </div>
 
@@ -276,7 +296,7 @@
   <script src="{{ url_for('static', filename='js/driver-card-demo.js') }}?v=20250924"></script>
 </section>
 
-<script src="{{ url_for('static', filename='js/diagnostics.js') }}?v=20260117-1"></script>
+<script src="{{ url_for('static', filename='js/diagnostics.js') }}?v=20260201-1"></script>
 <script src="{{ url_for('static', filename='js/role-selection.js') }}?v=20260111-2"></script>
 <script>
   document.addEventListener('DOMContentLoaded', function(){

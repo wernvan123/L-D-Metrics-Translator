@@ -15,6 +15,18 @@ The L&D Metrics Translator helps L&D professionals:
 - Access neuroscience-backed insights for learning effectiveness
 - Build credible, data-driven conversations with stakeholders
 
+## Human Performance Navigator (Diagnostics)
+
+This application also includes a consultant-led Diagnostics experience ("Human Performance Navigator") to support event analysis and behavioral science diagnostics.
+
+- **Access**: `/diagnostics`
+- **Primary workflow**: Describe a workplace event, analyze it, and generate structured insights.
+- **Optional role context**: Select a Role Profile to contextualize analysis and produce a role-aligned gap report.
+
+### MVP direction: company data intake via exports
+
+To support consulting engagements (e.g., with clients providing internal data), the intended MVP approach is **exports/CSV-first** ingestion from systems clients already use (e.g., work tracking, retrospectives, code repositories, surveys). This documentation describes the operating model and data requirements; the UI/API for CSV ingestion may be introduced incrementally.
+
 ## ✨ Features
 
 ### Core Features
@@ -24,6 +36,7 @@ The L&D Metrics Translator helps L&D professionals:
 - **Detail Pages**: In-depth metric information with practical examples
 - **Admin Interface**: Comprehensive content management system
 - **RESTful API**: Complete API for integration with other systems
+- **Diagnostics**: Event Analysis and Behavioral Science Diagnostic tools in `/diagnostics`
 
 ### Production Features
 - **Security**: CSRF protection, secure headers, rate limiting

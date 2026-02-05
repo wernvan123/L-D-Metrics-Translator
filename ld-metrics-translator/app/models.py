@@ -264,6 +264,53 @@ class Metric(db.Model):
         return self.data_collection in {None, 'Daily', 'Weekly', 'Monthly'}
 
 
+class ClientRetroItem(db.Model):
+    __tablename__ = 'client_retro_items'
+
+    id = db.Column(db.Integer, primary_key=True)
+    retro_date = db.Column(db.DateTime)
+    team = db.Column(db.String(200))
+    category = db.Column(db.String(100))
+    text = db.Column(db.Text, nullable=False)
+    action_owner = db.Column(db.String(200))
+    action_status = db.Column(db.String(100))
+    source = db.Column(db.String(200))
+    imported_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+    raw_json = db.Column(db.Text)
+
+
+class ClientPullRequest(db.Model):
+    __tablename__ = 'client_pull_requests'
+
+    id = db.Column(db.Integer, primary_key=True)
+    pr_id = db.Column(db.String(200), nullable=False)
+    url = db.Column(db.String(500))
+    created_at = db.Column(db.DateTime)
+    merged_at = db.Column(db.DateTime)
+    author = db.Column(db.String(200))
+    comments_count = db.Column(db.Integer)
+    additions = db.Column(db.Integer)
+    deletions = db.Column(db.Integer)
+    team = db.Column(db.String(200))
+    source = db.Column(db.String(200))
+    imported_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+    raw_json = db.Column(db.Text)
+
+
+class ClientSurveyResponse(db.Model):
+    __tablename__ = 'client_survey_responses'
+
+    id = db.Column(db.Integer, primary_key=True)
+    submitted_at = db.Column(db.DateTime)
+    survey_name = db.Column(db.String(200))
+    question = db.Column(db.Text)
+    answer = db.Column(db.Text)
+    team = db.Column(db.String(200))
+    source = db.Column(db.String(200))
+    imported_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+    raw_json = db.Column(db.Text)
+
+
 class AdminUser(db.Model):
     """Admin users for the application."""
     __tablename__ = 'admin_users'

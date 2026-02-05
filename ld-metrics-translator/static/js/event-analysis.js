@@ -562,6 +562,10 @@ class EventAnalyzer {
                 if (st === 'failed') {
                     throw new Error(statusJson?.error || 'Analysis failed.');
                 }
+                if ((Date.now() - startTime) > 600000) {
+                    const elapsed = Math.round((Date.now() - startTime) / 1000);
+                    throw new Error(`Timed out waiting for analysis (job ${jobId}, ${elapsed}s).`);
+                }
                 // queued/running -> continue polling
             }
             
@@ -910,6 +914,9 @@ class EventAnalyzer {
         const needs = Array.isArray(a.learning_needs) ? a.learning_needs : [];
         const metrics = Array.isArray(a.recommended_metrics) ? a.recommended_metrics : [];
         const intervs = Array.isArray(a.interventions) ? a.interventions : [];
+        const pressures = (a && typeof a === 'object') ? a.pressures : null;
+        const promotingPressures = Array.isArray(pressures?.promoting) ? pressures.promoting : [];
+        const inhibitingPressures = Array.isArray(pressures?.inhibiting) ? pressures.inhibiting : [];
         const htmlParts = [];
 
         // The Diagnosis header
@@ -938,6 +945,46 @@ class EventAnalyzer {
                     </div>
                 `);
             });
+            htmlParts.push('</div></div>');
+        }
+
+        const renderPressuresBucket = (items, kind) => {
+            if(!Array.isArray(items) || !items.length) return '';
+            return items.slice(0, 4).map((p) => {
+                const title = this.escapeHtml(typeof p === 'string' ? p : (p?.pressure || p?.title || p?.name || 'Pressure'));
+                const mechanism = this.escapeHtml(p?.mechanism || '');
+                const why = this.escapeHtml(p?.why || p?.description || '');
+                const lever = this.escapeHtml(p?.suggested_lever || p?.lever || '');
+                const ev = Array.isArray(p?.evidence) ? p.evidence : [];
+                const quote = ev.length ? this.escapeHtml(ev[0]?.snippet || ev[0] || '') : '';
+                const quoteHtml = quote ? `<div class="meta" style="margin-top:8px;"><strong>Evidence:</strong> “${quote}”</div>` : '';
+                const mechHtml = mechanism ? `<div class="meta"><strong>Mechanism:</strong> ${mechanism}</div>` : '';
+                const whyHtml = why ? `<div class="meta"><strong>Why:</strong> ${why}</div>` : '';
+                const leverHtml = lever ? `<div class="meta"><strong>Lever:</strong> ${lever}</div>` : '';
+                return `
+                    <div class="ai-card ai-card--issue">
+                        <div class="ai-card-header">
+                            <h4>${kind} ${title}</h4>
+                            <div class="ai-card-actions">
+                                <button class="btn btn-sm btn-secondary" data-action="add-plan" data-kind="driver" data-label="${title}">Add to Plan</button>
+                            </div>
+                        </div>
+                        ${mechHtml}
+                        ${whyHtml}
+                        ${leverHtml}
+                        ${quoteHtml}
+                    </div>
+                `;
+            }).join('');
+        };
+
+        if(promotingPressures.length || inhibitingPressures.length){
+            htmlParts.push('<div class="analysis-section analysis-section--issues">');
+            htmlParts.push('<h3>⚖️ Pressures Shaping the Situation</h3>');
+            htmlParts.push('<p class="meta">Promoting pressures increase the likelihood of undesired behaviors. Inhibiting pressures block the desired behaviors.</p>');
+            htmlParts.push('<div class="ai-card-grid">');
+            htmlParts.push(renderPressuresBucket(promotingPressures, '➕'));
+            htmlParts.push(renderPressuresBucket(inhibitingPressures, '➖'));
             htmlParts.push('</div></div>');
         }
 

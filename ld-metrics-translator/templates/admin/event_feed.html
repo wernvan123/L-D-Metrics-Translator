@@ -1,0 +1,250 @@
+{% extends "admin/base.html" %}
+
+{% block title %}Event Feed{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+    <h1 class="h2">
+        <i class="bi bi-list-ul me-2"></i>Event Feed
+    </h1>
+    <div class="btn-toolbar mb-2 mb-md-0">
+        <div class="btn-group me-2">
+            <button type="button" class="btn btn-outline-secondary" id="refreshBtn">
+                <i class="bi bi-arrow-clockwise me-1"></i>Refresh
+            </button>
+        </div>
+    </div>
+</div>
+
+<div class="card mb-3">
+    <div class="card-header">
+        <h5 class="card-title mb-0">Filters</h5>
+    </div>
+    <div class="card-body">
+        <form id="filtersForm" class="row g-3">
+            <div class="col-md-6">
+                <label class="form-label">Sources</label>
+                <div class="d-flex flex-wrap gap-3">
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" value="retros" id="srcRetros" checked>
+                        <label class="form-check-label" for="srcRetros">Retros</label>
+                    </div>
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" value="pull_requests" id="srcPRs">
+                        <label class="form-check-label" for="srcPRs">Pull Requests</label>
+                    </div>
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" value="survey_responses" id="srcSurveys">
+                        <label class="form-check-label" for="srcSurveys">Survey Responses</label>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-md-3">
+                <label for="team" class="form-label">Team (exact match)</label>
+                <input type="text" class="form-control" id="team" placeholder="e.g., Platform">
+            </div>
+
+            <div class="col-md-3">
+                <label for="source" class="form-label">Source (exact match)</label>
+                <input type="text" class="form-control" id="source" placeholder="e.g., ClickUp Retro">
+            </div>
+
+            <div class="col-md-3">
+                <label for="limit" class="form-label">Limit</label>
+                <input type="number" class="form-control" id="limit" value="200" min="1" max="1000">
+            </div>
+
+            <div class="col-12">
+                <button type="submit" class="btn btn-primary">
+                    <i class="bi bi-funnel me-1"></i>Apply Filters
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <h5 class="card-title mb-0">Events</h5>
+        <div class="small text-muted" id="statusText"></div>
+    </div>
+    <div class="card-body">
+        <div id="errorBox" class="alert alert-danger" style="display:none;"></div>
+        <div class="table-responsive">
+            <table class="table table-sm table-bordered" id="eventsTable">
+                <thead class="table-light">
+                    <tr>
+                        <th>Occurred At</th>
+                        <th>Type</th>
+                        <th>Team</th>
+                        <th>Category</th>
+                        <th>Source</th>
+                        <th>Text</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    const statusText = document.getElementById('statusText');
+    const errorBox = document.getElementById('errorBox');
+    const tbody = document.querySelector('#eventsTable tbody');
+
+    function getSelectedSources() {
+        const sources = [];
+        if (document.getElementById('srcRetros').checked) sources.push('retros');
+        if (document.getElementById('srcPRs').checked) sources.push('pull_requests');
+        if (document.getElementById('srcSurveys').checked) sources.push('survey_responses');
+        return sources;
+    }
+
+    function buildUrl() {
+        const url = new URL('{{ url_for("api.event_feed") }}', window.location.origin);
+        const sources = getSelectedSources();
+        if (sources.length) url.searchParams.set('sources', sources.join(','));
+        const team = document.getElementById('team').value.trim();
+        const source = document.getElementById('source').value.trim();
+        const limit = document.getElementById('limit').value;
+        if (team) url.searchParams.set('team', team);
+        if (source) url.searchParams.set('source', source);
+        if (limit) url.searchParams.set('limit', limit);
+        return url.toString();
+    }
+
+    function setError(msg) {
+        if (!msg) {
+            errorBox.style.display = 'none';
+            errorBox.textContent = '';
+            return;
+        }
+        errorBox.style.display = 'block';
+        errorBox.textContent = msg;
+    }
+
+    function renderItems(items) {
+        tbody.innerHTML = '';
+        if (!items || items.length === 0) {
+            const tr = document.createElement('tr');
+            const td = document.createElement('td');
+            td.colSpan = 7;
+            td.className = 'text-muted';
+            td.textContent = 'No events found for the selected filters.';
+            tr.appendChild(td);
+            tbody.appendChild(tr);
+            return;
+        }
+        items.forEach(item => {
+            const tr = document.createElement('tr');
+            const cells = [
+                item.occurred_at || '',
+                item.source_type || '',
+                item.team || '',
+                item.category || '',
+                item.source || '',
+                item.text || ''
+            ];
+            cells.forEach(val => {
+                const td = document.createElement('td');
+                td.textContent = val;
+                tr.appendChild(td);
+            });
+
+            const actionsTd = document.createElement('td');
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'btn btn-sm btn-primary';
+            btn.textContent = 'Generate Diagnostic';
+            btn.addEventListener('click', async () => {
+                await generateDiagnostic(item, btn);
+            });
+            actionsTd.appendChild(btn);
+            tr.appendChild(actionsTd);
+            tbody.appendChild(tr);
+        });
+    }
+
+    async function generateDiagnostic(item, buttonEl) {
+        setError(null);
+        if (!item || !item.text) {
+            setError('Cannot generate diagnostic: event text is missing.');
+            return;
+        }
+        const originalLabel = buttonEl ? buttonEl.textContent : '';
+        try {
+            if (buttonEl) {
+                buttonEl.disabled = true;
+                buttonEl.textContent = 'Starting...';
+            }
+            const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
+            const resp = await fetch('{{ url_for("api.analyze_event") }}', {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json',
+                    'X-CSRFToken': csrfToken,
+                },
+                body: JSON.stringify({
+                    event_description: item.text,
+                    selected_metrics: [],
+                })
+            });
+            const data = await resp.json().catch(() => ({}));
+            if (!resp.ok || !data || !data.success || !data.job_id) {
+                const msg = data?.error || `Failed to start analysis job (HTTP ${resp.status}).`;
+                throw new Error(msg);
+            }
+            const reportUrl = new URL('{{ url_for("admin.event_feed_report_admin") }}', window.location.origin);
+            reportUrl.searchParams.set('job_id', data.job_id);
+            window.location.href = reportUrl.toString();
+        } catch (e) {
+            setError('Failed to generate diagnostic: ' + (e?.message || e));
+            if (buttonEl) {
+                buttonEl.disabled = false;
+                buttonEl.textContent = originalLabel || 'Generate Diagnostic';
+            }
+        }
+    }
+
+    async function loadFeed() {
+        setError(null);
+        statusText.textContent = 'Loading...';
+        const url = buildUrl();
+        try {
+            const resp = await fetch(url, { credentials: 'same-origin' });
+            const data = await resp.json();
+            if (!resp.ok || !data.success) {
+                const msg = (data && (data.error || data.details)) ? (data.error + (data.details ? (': ' + data.details) : '')) : 'Failed to load event feed.';
+                setError(msg);
+                statusText.textContent = '';
+                renderItems([]);
+                return;
+            }
+            renderItems(data.items);
+            statusText.textContent = `Showing ${data.count} events`;
+        } catch (e) {
+            setError('Failed to load event feed: ' + e);
+            statusText.textContent = '';
+            renderItems([]);
+        }
+    }
+
+    document.getElementById('filtersForm').addEventListener('submit', function(e) {
+        e.preventDefault();
+        loadFeed();
+    });
+
+    document.getElementById('refreshBtn').addEventListener('click', function() {
+        loadFeed();
+    });
+
+    loadFeed();
+</script>
+{% endblock %}

@@ -62,6 +62,7 @@
   let GAP_roleTargets = [];    // [ { competency_name, target_level, ... } ]
   let GAP_lastAnalysis = null; // enriched analysis object from event analyzer
   let GAP_lastInput = '';
+  let GAP_lastAnalysisRoleId = null; // role id used for last analysis (to prevent stale/mismatched gap reports)
 
   try{
     window.DiagnosticsDebug = window.DiagnosticsDebug || {};
@@ -155,6 +156,76 @@
     return String(value);
   }
 
+  function _normInputText(s){
+    try{
+      return String(s || '').replace(/\s+/g, ' ').trim();
+    }catch{ return ''; }
+  }
+
+  function clearGapReportUI(){
+    try{
+      const card = document.getElementById('gap-report-card');
+      if(card) card.style.display = 'none';
+      try{ document.body.setAttribute('data-gap-active','0'); }catch{}
+
+      const ids = [
+        'gap-report-header',
+        'gap-report-diagnosis',
+        'gap-report-root-causes',
+        'gap-report-recommendations',
+        'gap-report-footer'
+      ];
+      ids.forEach(id => {
+        const el = document.getElementById(id);
+        if(el) el.innerHTML = '';
+      });
+    }catch{ /* ignore */ }
+  }
+
+  function renderPressures(){
+    const p = GAP_lastAnalysis && typeof GAP_lastAnalysis === 'object' ? GAP_lastAnalysis.pressures : null;
+    const promoting = Array.isArray(p?.promoting) ? p.promoting : [];
+    const inhibiting = Array.isArray(p?.inhibiting) ? p.inhibiting : [];
+
+    const renderList = (items) => {
+      if(!items.length) return '<div class="meta">No items detected.</div>';
+      return items.slice(0,3).map(x => {
+        const title = esc(toText(x?.pressure || x?.title || x?.name || 'Pressure'));
+        const mech = esc(toText(x?.mechanism || ''));
+        const why = esc(toText(x?.why || x?.description || ''));
+        const lever = esc(toText(x?.suggested_lever || x?.lever || ''));
+        const ev = Array.isArray(x?.evidence) ? x.evidence : [];
+        const snip = ev.length ? esc(toText(ev[0]?.snippet || ev[0])) : '';
+        const quoteHtml = snip ? `<div class="pressure-quote">“${snip}”</div>` : '';
+        const mechHtml = mech ? `<div class="meta"><strong>Mechanism:</strong> ${mech}</div>` : '';
+        const whyHtml = why ? `<div class="meta"><strong>Why:</strong> ${why}</div>` : '';
+        const leverHtml = lever ? `<div class="meta"><strong>Lever:</strong> ${lever}</div>` : '';
+        return `
+          <div class="pressure-item">
+            <div class="pressure-title">${title}</div>
+            ${mechHtml}
+            ${whyHtml}
+            ${leverHtml}
+            ${quoteHtml}
+          </div>
+        `;
+      }).join('');
+    };
+
+    return `
+      <div class="pressure-grid">
+        <div>
+          <h5>Promoting pressures</h5>
+          <div class="pressure-list">${renderList(promoting)}</div>
+        </div>
+        <div>
+          <h5>Inhibiting pressures</h5>
+          <div class="pressure-list">${renderList(inhibiting)}</div>
+        </div>
+      </div>
+    `;
+  }
+
   function renderRoleGaps(){
     const roleGapEntries = Array.isArray(GAP_lastAnalysis?.role_gap_analysis)
       ? GAP_lastAnalysis.role_gap_analysis
@@ -196,16 +267,20 @@
       const observationText = toText(entry.observation || 'Event insight related to this benchmark.');
       const actionText = toText(entry.recommended_action || 'Align on expectations and provide targeted coaching.');
 
-      const evidence = Array.isArray(entry?.evidence) ? entry.evidence : [];
-      const evidenceHtml = evidence.length
+      const evidence = Array.isArray(entry && entry.evidence) ? entry.evidence : [];
+      const evidenceItems = evidence.slice(0, 2).map(ev => {
+        const rawSnip = toText((ev && typeof ev === 'object') ? (ev.snippet || '') : ev).trim();
+        const lower = rawSnip.toLowerCase();
+        const snip = (rawSnip && lower !== 'context:' && lower !== 'context') ? esc(rawSnip) : '';
+        const why = esc(toText((ev && typeof ev === 'object') ? (ev.rationale || '') : ''));
+        const whyHtml = why ? `<div class="meta">${why}</div>` : '';
+        if(!snip) return '';
+        return `<li><div>“${snip}”</div>${whyHtml}</li>`;
+      }).filter(Boolean);
+      const evidenceHtml = evidenceItems.length
         ? `<div class="meta" style="margin-top:8px;"><strong>Evidence:</strong></div>`
           + `<ul class="list-disc" style="margin-top:4px;">`
-          + evidence.slice(0, 2).map(ev => {
-            const snip = esc(toText(ev?.snippet || ''));
-            const why = esc(toText(ev?.rationale || ''));
-            const whyHtml = why ? `<div class="meta">${why}</div>` : '';
-            return `<li><div>“${snip}”</div>${whyHtml}</li>`;
-          }).join('')
+          + evidenceItems.join('')
           + `</ul>`
         : '';
 
@@ -257,23 +332,59 @@
     if(detail.role_context_summary){
       GAP_selectedRole = Object.assign({}, GAP_selectedRole || {}, detail.role_context_summary);
     }
+    // Track which role the analysis was actually run against.
+    try {
+      const metaRole = GAP_lastAnalysis?._meta?.role_context_summary?.id ?? null;
+      const included = GAP_lastAnalysis?._meta?.role_context_included;
+      if (included && (metaRole != null)) {
+        GAP_lastAnalysisRoleId = metaRole;
+      } else {
+        GAP_lastAnalysisRoleId = null;
+      }
+    } catch (_) {
+      GAP_lastAnalysisRoleId = null;
+    }
     renderGapReport();
   }
 
   async function callBsdEndpoint(text){
     try{
+      const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
+      const headers = { 'Content-Type': 'application/json', 'Accept': 'application/json' };
+      if (csrfToken) headers['X-CSRFToken'] = csrfToken;
+
       const res = await fetch('/api/analyze-event', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        headers,
         body: JSON.stringify({ event_description: text })
       });
       if(!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      if(data?.success) {
-        try { await refreshRoleTargets(); } catch (err) { console.warn('refreshRoleTargets failed after analysis', err); }
-        return data;
+
+      const data = await res.json().catch(() => ({}));
+      if(!(data && data.success && data.job_id)){
+        throw new Error(data?.error || 'Failed to start analysis job.');
       }
-      throw new Error(data?.error || 'Unexpected response');
+
+      const jobId = data.job_id;
+      const startTime = Date.now();
+      while(true){
+        await new Promise(r => setTimeout(r, 2000));
+        const statusResp = await fetch(`/api/analyze-event/${encodeURIComponent(jobId)}`, {
+          method: 'GET',
+          headers: { 'Accept': 'application/json' }
+        });
+        const statusJson = await statusResp.json().catch(() => ({}));
+        if(statusResp.ok && statusJson && statusJson.success && statusJson.analysis){
+          try { await refreshRoleTargets(); } catch (err) { console.warn('refreshRoleTargets failed after analysis', err); }
+          return statusJson;
+        }
+        if(!statusResp.ok){
+          throw new Error(statusJson?.error || `Analysis failed (HTTP ${statusResp.status}).`);
+        }
+        if((Date.now() - startTime) > 600000){
+          throw new Error('Timed out waiting for analysis.');
+        }
+      }
     }catch(err){
       return { success:false, error: err.message || String(err) };
     }
@@ -284,6 +395,20 @@
     const name = toText(entry.name || entry.heading || entry.title || 'Bias');
     const description = toText(entry.description ?? entry.short_description ?? entry.summary ?? entry.detailed_description ?? '');
     const impact = toText(entry.impact ?? entry.effect ?? '');
+
+    const confidenceRaw = toText(entry.confidence ?? entry.confidence_level ?? '');
+    const confidence = confidenceRaw ? confidenceRaw.trim().toLowerCase() : '';
+    const evRaw = Array.isArray(entry.evidence)
+      ? entry.evidence
+      : (Array.isArray(entry.quotes) ? entry.quotes : (Array.isArray(entry.snippets) ? entry.snippets : []));
+    const evidence = Array.isArray(evRaw)
+      ? evRaw.map(x => {
+          if(x && typeof x === 'object'){
+            return { snippet: toText(x.snippet ?? x.quote ?? x.text ?? ''), rationale: toText(x.rationale ?? x.reason ?? x.explanation ?? '') };
+          }
+          return { snippet: toText(x), rationale: '' };
+        }).filter(x => x && x.snippet)
+      : [];
     return {
       id: entry.id,
       name,
@@ -291,6 +416,8 @@
       impact,
       countermeasures: Array.isArray(entry.countermeasures) ? entry.countermeasures.map(toText).filter(Boolean) : [],
       model_framework: entry.model_framework || entry.related_framework || entry.framework || entry.collection || null,
+      confidence: (confidence === 'high' || confidence === 'medium' || confidence === 'low') ? confidence : null,
+      evidence,
     };
   }
 
@@ -317,29 +444,116 @@
       const tgts = Array.isArray(data.targets) ? data.targets : [];
       GAP_roleTargets = tgts;
       if(!tgts.length){ box.style.display='none'; box.innerHTML=''; return; }
-      const lines = tgts.slice(0,6).map(t => {
-        const kind = esc(t.kind || 'Target');
-        const name = esc(t.name || 'KSAO');
-        const lvl = t.target_level;
-        if(lvl == null){
-          return `• ${kind} — ${name}: Target —`;
-        }
-        return `• ${kind} — ${name}: Target ${lvl} (${proficiencyName(lvl)})`;
+
+      const tgtsDisplay = tgts.filter(t => {
+        const k = kindSlug(t && t.kind ? t.kind : '');
+        return k === 'knowledge' || k === 'skill' || k === 'ability' || k === 'outcome';
       });
-      const more = tgts.length>6 ? ` +${tgts.length-6} more` : '';
-      box.innerHTML = `<strong>Role Targets</strong><br>${lines.join('<br>')}${more}`;
-      box.style.display='block';
+      const totalDisplay = tgtsDisplay.length;
+      if(!totalDisplay){ box.style.display='none'; box.innerHTML=''; return; }
+
+      function cleanTargetNameAndDescription(t){
+        try{
+          const rawName = String((t && t.name) || '').trim();
+          let name = rawName;
+          let desc = String((t && t.description) || '').trim();
+          if(!desc && /description\s*:/i.test(rawName)){
+            const parts = rawName.split(/description\s*:/i);
+            name = String(parts[0] || '').trim();
+            desc = String(parts.slice(1).join('Description:') || '').trim();
+          }
+          name = name.split(/\r?\n/)[0].trim();
+          if(/^name\s*:/i.test(name)) name = name.split(':', 2).slice(1).join(':').trim();
+          if(/description\s*:/i.test(name)) name = name.split(/description\s*:/i)[0].trim();
+          if(!name) name = 'KSAO';
+          return { name, desc };
+        }catch{
+          return { name: (t && t.name) ? String(t.name) : 'KSAO', desc: (t && t.description) ? String(t.description) : '' };
+        }
+      }
+
+      function kindSlug(v){
+        return String(v || '').trim().toLowerCase();
+      }
+
+      function render(){
+        const expanded = box.dataset.expanded === '1';
+        const show = expanded ? tgtsDisplay : tgtsDisplay.slice(0, 6);
+        const remaining = Math.max(0, totalDisplay - show.length);
+        const toggle = totalDisplay > 6
+          ? `<button class="btn btn-sm btn-secondary" data-action="toggle-role-targets">${expanded ? 'Show less' : `Show all (${totalDisplay})`}</button>`
+          : '';
+
+        const itemsHtml = show.map(t => {
+          const kind = String(t.kind || 'Target').trim() || 'Target';
+          const ks = kindSlug(kind);
+          const { name, desc } = cleanTargetNameAndDescription(t);
+          const lvl = t.target_level;
+          const drv = t && t.driver_card_name ? String(t.driver_card_name).trim() : '';
+          const lvlHtml = (lvl == null)
+            ? `<span class="rt-badge rt-badge--muted" title="Target level not set">Target —</span>`
+            : `<span class="rt-badge rt-badge--level">Target ${esc(lvl)}/5</span>`;
+          const drvHtml = drv ? `<span class="rt-badge rt-badge--driver" title="Linked driver card">Driver: ${esc(drv)}</span>` : '';
+
+          const head = `
+            <div class="rt-row">
+              <div class="rt-left">
+                <span class="rt-kind" data-kind="${esc(ks)}">${esc(kind)}</span>
+                <span class="rt-name">${esc(name)}</span>
+              </div>
+              <div class="rt-right">${lvlHtml}${drvHtml}</div>
+            </div>
+          `;
+          if(desc){
+            return `<details class="rt-item"><summary>${head}</summary><div class="rt-desc">${esc(desc)}</div></details>`;
+          }
+          return `<div class="rt-item rt-item--plain">${head}</div>`;
+        }).join('');
+
+        box.innerHTML = `
+          <div class="role-targets">
+            <div class="role-targets__head">
+              <div class="role-targets__title">Role Targets</div>
+              <div class="role-targets__actions">
+                <span class="rt-count">${esc(totalDisplay)} total</span>
+                ${toggle}
+              </div>
+            </div>
+            <div class="role-targets__list">${itemsHtml}</div>
+            ${remaining ? `<div class="role-targets__more">+${esc(remaining)} more</div>` : ''}
+          </div>
+        `;
+        box.style.display = 'block';
+
+        const btn = box.querySelector('[data-action="toggle-role-targets"]');
+        if(btn){
+          btn.addEventListener('click', (e) => {
+            e.preventDefault();
+            box.dataset.expanded = (box.dataset.expanded === '1') ? '0' : '1';
+            render();
+          });
+        }
+      }
+
+      if(!('expanded' in box.dataset)) box.dataset.expanded = '0';
+      render();
       // Also re-render the gap report with latest role context
       renderGapReport();
     }catch(e){ const box = document.getElementById('diag-role-targets'); if(box){ box.style.display='none'; } }
   }
   function initRoleTargetsFraming(){
     const sel = document.getElementById('diag-role-select');
-    if(sel){ sel.addEventListener('change', () => setTimeout(refreshRoleTargets, 50)); }
+    if(sel){
+      sel.addEventListener('change', () => {
+        // Immediately hide any previously-rendered gap report to avoid stale output flash.
+        clearGapReportUI();
+        setTimeout(refreshRoleTargets, 50);
+      });
+    }
     // initial load
     refreshRoleTargets();
     // also refresh when other modules persist the role
-    window.addEventListener('role:selected', () => setTimeout(refreshRoleTargets, 0));
+    window.addEventListener('role:selected', () => { clearGapReportUI(); setTimeout(refreshRoleTargets, 0); });
   }
 
   // ----------------------------
@@ -376,6 +590,30 @@
       return;
     }
 
+    // Also require the current textbox content to match the analyzed input.
+    // This prevents showing an older gap report when the user edits the event text or when the page restores cached output.
+    try{
+      const curEl = document.getElementById('event-description');
+      const cur = curEl ? _normInputText(curEl.value) : '';
+      const last = _normInputText(GAP_lastInput);
+      if(cur && last && cur !== last){
+        card.style.display = 'none';
+        try{ document.body.setAttribute('data-gap-active','0'); }catch{}
+        return;
+      }
+    }catch{ /* ignore */ }
+
+    // Only show gap report if the last analysis was run WITH role context for the currently selected role.
+    // Otherwise, the cached analysis can make a gap report appear as an artifact when switching roles.
+    const roleIncluded = !!(GAP_lastAnalysis?._meta?.role_context_included);
+    const currentRoleId = GAP_selectedRole?.id;
+    const roleMatches = roleIncluded && (GAP_lastAnalysisRoleId != null) && (String(GAP_lastAnalysisRoleId) === String(currentRoleId));
+    if(!roleMatches){
+      card.style.display = 'none';
+      try{ document.body.setAttribute('data-gap-active','0'); }catch{}
+      return;
+    }
+
     // Ensure visible once role context exists
     card.style.display = '';
     try{ document.body.setAttribute('data-gap-active','1'); }catch{}
@@ -389,6 +627,10 @@
     const dateStr = new Date().toLocaleDateString();
     const hasAnalysis2 = true; // by this point, we've already validated hasAnalysis
 
+    const inputText = String(GAP_lastInput || '').trim();
+    const inputPreview = inputText.length > 160 ? (inputText.slice(0, 160) + '…') : inputText;
+    const hasInput = inputText.length > 0;
+
     // Header & Context (compact, in a distinct card)
     headerEl.innerHTML = `
       <div class="section">
@@ -397,7 +639,15 @@
           <div class="meta">Assessment for ${esc('an individual in the role')} — ${dateStr}</div>
           <div><strong>Role Profile:</strong> ${roleName ? esc(roleName) : '—'}</div>
           <div class="meta" style="margin-top:6px;">Utilizing its defined KSAOs and target competencies as a benchmark. The AI compares the described performance against the role's ideal expectations.</div>
-          ${GAP_lastInput ? `<div class="user-input"><em>Observed Event/Situation:</em> “${esc(GAP_lastInput)}”</div>` : ''}
+          ${hasInput ? `
+            <div class="user-input" style="margin-top:10px;">
+              <div class="meta"><strong>Input used:</strong> “${esc(inputPreview)}”</div>
+              <details style="margin-top:6px;">
+                <summary class="meta" style="cursor:pointer;">View full input</summary>
+                <div style="margin-top:6px;">${esc(inputText)}</div>
+              </details>
+            </div>
+          ` : ''}
         </div>
       </div>
     `;
@@ -424,6 +674,10 @@
       : [];
     causesEl.innerHTML = `
       <div class="section">
+        <h4>Pressures Shaping the Situation</h4>
+        <p class="meta">Promoting pressures increase the likelihood of undesired behaviors. Inhibiting pressures block the desired behaviors.</p>
+        ${renderPressures()}
+
         <h4>Potential Root Causes (Behavioral Biases): Impact on Role Performance</h4>
         ${biases.length ? biases.map(b => `
           <div class="bias-card">
@@ -636,9 +890,29 @@
 
   function initBSD(){
     const btn = $('#bsd-analyze');
+    const clearBtn = $('#bsd-clear');
     const output = $('#bsd-output');
     const textarea = $('#bsd-text');
     if(!btn || !output || !textarea) return;
+
+    let bsdTimerHandle = null;
+    let bsdTimerStart = 0;
+
+    function stopBsdTimer(){
+      if(bsdTimerHandle){
+        try{ clearInterval(bsdTimerHandle); }catch{}
+        bsdTimerHandle = null;
+      }
+      bsdTimerStart = 0;
+    }
+
+    function formatElapsed(ms){
+      const total = Math.max(0, Math.floor(ms / 1000));
+      const m = Math.floor(total / 60);
+      const s = total % 60;
+      const ss = String(s).padStart(2, '0');
+      return `${m}:${ss}`;
+    }
 
     // Restore persisted text
     try{
@@ -648,6 +922,17 @@
     textarea.addEventListener('input', () => {
       try{ sessionStorage.setItem('bsd_text', textarea.value); }catch{}
     });
+
+    if(clearBtn){
+      clearBtn.addEventListener('click', () => {
+        stopBsdTimer();
+        textarea.value = '';
+        try{ sessionStorage.removeItem('bsd_text'); }catch{}
+        output.innerHTML = '';
+        output.style.display = 'none';
+        try{ textarea.focus(); }catch{}
+      });
+    }
 
     function analyze(text){
       const t = (text || '').toLowerCase();
@@ -667,11 +952,47 @@
       return `/playbook?kind=bias&q=${q}&filter=${filter}`;
     }
 
-    function render(text, result, kbItems, meta){
-      const intro = `You described: “${escapeHtml(text.trim())}”. The context suggests potential cognitive patterns to consider:`;
+    function render(text, result, kbItems, meta, pressures){
+      const inputText = (text || '').trim();
+      const inputPreview = inputText.length > 160 ? (inputText.slice(0, 160) + '…') : inputText;
+      const inputHtml = inputText ? `
+        <div class="analysis-card">
+          <h4>Input used</h4>
+          <div class="meta"><strong>Input used:</strong> “${escapeHtml(inputPreview)}”</div>
+          <details style="margin-top:6px;">
+            <summary class="meta" style="cursor:pointer;">View full input</summary>
+            <div style="margin-top:6px;">${escapeHtml(inputText)}</div>
+          </details>
+        </div>
+      ` : '';
+
+      const intro = 'This diagnostic surfaces plausible behavioral pressures and cognitive biases suggested by the described event. Treat these as hypotheses to validate with direct observation and data.';
       const idList = result.map(b => {
         const icon = '🧠';
         const framework = b.model_framework ? `<span class="bias-framework">Framework: ${escapeHtml(b.model_framework)}</span>` : '';
+
+        const conf = (b && b.confidence) ? String(b.confidence).toLowerCase() : '';
+        const confHtml = (conf === 'high' || conf === 'medium' || conf === 'low')
+          ? `<div class="meta"><strong>Confidence:</strong> ${escapeHtml(conf)}</div>`
+          : `<div class="meta"><strong>Confidence:</strong> low</div>`;
+
+        const ev = Array.isArray(b?.evidence) ? b.evidence : [];
+        const evItems = ev
+          .map(x => ({
+            snippet: toText(x?.snippet || x),
+            rationale: toText(x?.rationale || ''),
+            verified: !!(x && typeof x === 'object' && (x.verified === true || x.verified === 'true' || x.verified === 1))
+          }))
+          .filter(x => x.snippet)
+          .slice(0, 2);
+        const evHtml = evItems.length
+          ? `<div class="meta" style="margin-top:8px;"><strong>Evidence:</strong><div style="margin-top:4px;">${evItems.map(e => {
+              const badge = e.verified
+                ? '<span class="badge" style="margin-left:6px;">Verified</span>'
+                : '<span class="badge" style="margin-left:6px;opacity:.75;">Unverified</span>';
+              return `“${escapeHtml(e.snippet)}”${badge}${e.rationale ? `<div class=\"meta\" style=\"margin-top:2px;\"><strong>Why:</strong> ${escapeHtml(e.rationale)}</div>` : ''}`;
+            }).join('<div style="height:6px;"></div>')}</div></div>`
+          : `<div class="meta" style="margin-top:8px;"><strong>Evidence:</strong> Not provided</div>`;
         return `
         <li class="bias-card">
           <div class="bias-card-header">
@@ -679,7 +1000,9 @@
             <div class="bias-title">${escapeHtml(b.name)}</div>
           </div>
           <p class="bias-desc">${escapeHtml(b.description || '')}</p>
+          ${confHtml}
           ${framework}
+          ${evHtml}
           <div class="bias-actions">
             <button class="btn btn-sm btn-secondary" data-action="add-plan" data-kind="bias" data-label="${escapeHtml(b.name)}">Copy to Plan</button>
             <a class="btn btn-sm btn-primary" href="${playbookLink(b.name)}">Open Bias Card</a>
@@ -687,6 +1010,83 @@
           ${Array.isArray(b.countermeasures) && b.countermeasures.length ? `<div class="bias-recs"><div class="recs-title">Countermeasures</div><ul class="list-disc"><li>${b.countermeasures.map(escapeHtml).join('</li><li>')}</li></ul></div>` : ''}
         </li>`;
       }).join('');
+
+      const renderPressures = (p) => {
+        const promoting = Array.isArray(p?.promoting) ? p.promoting : [];
+        const inhibiting = Array.isArray(p?.inhibiting) ? p.inhibiting : [];
+        const any = promoting.length || inhibiting.length;
+
+        const renderList = (items) => {
+          if(!items.length) return '<div class="meta">No items detected.</div>';
+          return items.slice(0, 4).map(x => {
+            const title = escapeHtml(toText(x?.pressure || x?.title || x?.name || 'Pressure'));
+            const mech = escapeHtml(toText(x?.mechanism || ''));
+            const why = escapeHtml(toText(x?.why || x?.description || ''));
+            const lever = escapeHtml(toText(x?.suggested_lever || x?.lever || ''));
+
+            const conf = String(toText(x?.confidence || x?.confidence_level || '')).trim().toLowerCase();
+            const confHtml = (conf === 'high' || conf === 'medium' || conf === 'low')
+              ? `<div class="meta"><strong>Confidence:</strong> ${escapeHtml(conf)}</div>`
+              : `<div class="meta"><strong>Confidence:</strong> low</div>`;
+
+            const ev = Array.isArray(x?.evidence) ? x.evidence : [];
+            const evItems = ev
+              .map(e => ({
+                snippet: toText(e?.snippet || e),
+                rationale: toText(e?.rationale || ''),
+                verified: !!(e && typeof e === 'object' && (e.verified === true || e.verified === 'true' || e.verified === 1))
+              }))
+              .filter(e => e.snippet && e.snippet.trim() && e.snippet.trim().toLowerCase() !== 'context:')
+              .slice(0, 2);
+            const quoteHtml = evItems.length
+              ? `<div class="meta" style="margin-top:8px;"><strong>Evidence:</strong><div style="margin-top:4px;">${evItems.map(e => {
+                  const badge = e.verified
+                    ? '<span class="badge" style="margin-left:6px;">Verified</span>'
+                    : '<span class="badge" style="margin-left:6px;opacity:.75;">Unverified</span>';
+                  return `“${escapeHtml(e.snippet)}”${badge}${e.rationale ? `<div class=\"meta\" style=\"margin-top:2px;\"><strong>Why:</strong> ${escapeHtml(e.rationale)}</div>` : ''}`;
+                }).join('<div style="height:6px;"></div>')}</div></div>`
+              : `<div class="meta" style="margin-top:8px;"><strong>Evidence:</strong> Not provided</div>`;
+            const mechHtml = mech ? `<div class="meta"><strong>Mechanism:</strong> ${mech}</div>` : '';
+            const whyHtml = why ? `<div class="meta"><strong>Why:</strong> ${why}</div>` : '';
+            const leverHtml = lever ? `<div class="meta"><strong>Lever:</strong> ${lever}</div>` : '';
+            return `
+              <li class="bias-card">
+                <div class="bias-card-header">
+                  <span class="bias-icon">⚖️</span>
+                  <div class="bias-title">${title}</div>
+                </div>
+                ${mechHtml}
+                ${whyHtml}
+                ${leverHtml}
+                ${confHtml}
+                ${quoteHtml}
+                <div class="bias-actions">
+                  <button class="btn btn-sm btn-secondary" data-action="add-plan" data-kind="driver" data-label="${title}">Copy to Plan</button>
+                </div>
+              </li>
+            `;
+          }).join('');
+        };
+
+        if(!p && !any) return '';
+
+        return `
+          <div class="analysis-card">
+            <h4>Pressures (Promoting vs Inhibiting)</h4>
+            <p class="meta">Promoting pressures increase the likelihood of undesired behaviors. Inhibiting pressures block the desired behaviors.</p>
+            <div class="analysis-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+              <div>
+                <h5 style="margin:0 0 8px;">Promoting pressures</h5>
+                <ol class="analysis-list">${renderList(promoting)}</ol>
+              </div>
+              <div>
+                <h5 style="margin:0 0 8px;">Inhibiting pressures</h5>
+                <ol class="analysis-list">${renderList(inhibiting)}</ol>
+              </div>
+            </div>
+          </div>
+        `;
+      };
 
       const kbSection = Array.isArray(kbItems) && kbItems.length ? `
         <div class="analysis-card">
@@ -712,6 +1112,7 @@
         <div class="analysis-card">
           <h4>Analysis Details</h4>
           <ul class="analysis-list meta-list">
+            ${meta.elapsed ? `<li><strong>Completed in:</strong> ${escapeHtml(meta.elapsed)}</li>` : ''}
             ${meta.generated_by ? `<li><strong>Generated by:</strong> ${escapeHtml(meta.generated_by)}</li>` : ''}
             ${meta.ollama_status ? `<li><strong>LLM status:</strong> ${escapeHtml(meta.ollama_status)}</li>` : ''}
             ${meta.error ? `<li class="text-danger"><strong>Note:</strong> ${escapeHtml(meta.error)}</li>` : ''}
@@ -720,10 +1121,12 @@
       ` : '';
 
       output.innerHTML = `
+        ${inputHtml}
         <div class="analysis-card">
-          <h4>Introduction</h4>
+          <h4>Overview</h4>
           <p>${intro}</p>
         </div>
+        ${renderPressures(pressures)}
         <div class="analysis-card">
           <h4>Identified Biases, Heuristics, and Fallacies</h4>
           ${result.length ? `<ol class="analysis-list">${idList}</ol>` : '<p>No specific biases detected from keywords; consider trying the AI Event Analysis tab for a deeper read.</p>'}
@@ -737,29 +1140,50 @@
     btn.addEventListener('click', async () => {
       const text = textarea.value.trim();
       if(!text){ textarea.focus(); return; }
-      output.innerHTML = '<div class="analysis-card"><p>Analyzing event…</p></div>';
+
+      stopBsdTimer();
+      bsdTimerStart = Date.now();
+      output.innerHTML = '<div class="analysis-card"><p>Analyzing event… <span class="meta" id="bsd-elapsed" style="margin-left:8px;">Elapsed: 0:00</span></p></div>';
       output.style.display = 'block';
 
-      const apiResult = await callBsdEndpoint(text);
+      bsdTimerHandle = setInterval(() => {
+        const el = document.getElementById('bsd-elapsed');
+        if(!el || !bsdTimerStart) return;
+        el.textContent = `Elapsed: ${formatElapsed(Date.now() - bsdTimerStart)}`;
+      }, 1000);
+
+      let apiResult = null;
+      let elapsedMs = 0;
+      try{
+        apiResult = await callBsdEndpoint(text);
+      }finally{
+        elapsedMs = bsdTimerStart ? (Date.now() - bsdTimerStart) : 0;
+        stopBsdTimer();
+      }
 
       let biases = [];
       let kbItems = null;
       let meta = null;
+      let pressures = null;
 
       if(apiResult.success){
         const kbPayload = apiResult.kb || {};
         kbItems = Array.isArray(kbPayload.biases) ? kbPayload.biases : null;
-        const providedBiases = Array.isArray(apiResult.analysis?.biases) ? apiResult.analysis.biases : [];
+        const providedBiases = Array.isArray(apiResult.analysis?.behavioral_biases)
+          ? apiResult.analysis.behavioral_biases
+          : (Array.isArray(apiResult.analysis?.biases) ? apiResult.analysis.biases : []);
         biases = providedBiases.map(normaliseBiasEntry).filter(Boolean);
         if(!biases.length && kbItems){
           biases = kbItems.map(normaliseBiasEntry).filter(Boolean);
         }
+        pressures = apiResult.analysis?.pressures || null;
         meta = {
+          elapsed: elapsedMs ? formatElapsed(elapsedMs) : null,
           generated_by: apiResult.generated_by,
           ollama_status: apiResult.ollama_status,
         };
       }else{
-        meta = { error: apiResult.error };
+        meta = { elapsed: elapsedMs ? formatElapsed(elapsedMs) : null, error: apiResult.error };
       }
 
       if(!biases.length){
@@ -767,7 +1191,7 @@
         biases = analyze(text);
       }
 
-      render(text, biases, kbItems, meta);
+      render(text, biases, kbItems, meta, pressures);
     });
 
     // Inline login prompt dismiss
