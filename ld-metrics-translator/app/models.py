@@ -279,6 +279,48 @@ class ClientRetroItem(db.Model):
     raw_json = db.Column(db.Text)
 
 
+class ClientCompany(db.Model):
+    __tablename__ = 'client_companies'
+
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(200), nullable=False, unique=True)
+    slug = db.Column(db.String(220), nullable=False, unique=True, index=True)
+    industry = db.Column(db.String(200))
+    notes = db.Column(db.Text)
+    created_date = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+
+    inventory_items = db.relationship(
+        'ClientDataInventoryItem',
+        backref='client_company',
+        cascade='all, delete-orphan'
+    )
+
+
+class ClientDataInventoryItem(db.Model):
+    __tablename__ = 'client_data_inventory_items'
+
+    id = db.Column(db.Integer, primary_key=True)
+    client_company_id = db.Column(db.Integer, db.ForeignKey('client_companies.id'), nullable=False, index=True)
+
+    data_category = db.Column(db.String(200), nullable=False)
+    data_point = db.Column(db.String(255), nullable=False)
+
+    # One of: yes | no | partial
+    collected_status = db.Column(db.String(20), nullable=False, default='no')
+    system_location = db.Column(db.String(255))
+    access_method = db.Column(db.String(255))
+
+    # One of: low | medium | high
+    sensitivity = db.Column(db.String(20))
+    # One of: unknown | anonymous | not_anonymous | reidentification_risk
+    anonymity = db.Column(db.String(40))
+
+    notes = db.Column(db.Text)
+
+    created_date = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+    updated_date = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
+
+
 class ClientPullRequest(db.Model):
     __tablename__ = 'client_pull_requests'
 

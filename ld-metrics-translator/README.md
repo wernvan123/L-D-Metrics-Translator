@@ -1,13 +1,13 @@
 # L&D Metrics Translator
 
-[![Build Status](https://github.com/your-org/ld-metrics-translator/workflows/CI/badge.svg)](https://github.com/your-org/ld-metrics-translator/actions)
-[![Python Version](https://img.shields.io/badge/python-3.11+-blue.svg)](https://python.org)
+[![Build Status](https://github.com/wernvan123/L-D-Metrics-Translator/workflows/CI/badge.svg)](https://github.com/wernvan123/L-D-Metrics-Translator/actions)
+[![Python Version](https://img.shields.io/badge/python-3.10+-blue.svg)](https://python.org)
 [![Flask Version](https://img.shields.io/badge/flask-2.3+-green.svg)](https://flask.palletsprojects.com/)
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![License](https://img.shields.io/badge/license-TBD-lightgrey.svg)](#-license)
 
 A powerful, production-ready web application designed for Learning & Development (L&D) professionals to bridge the gap between learning initiatives and tangible business results.
 
-## 🎯 Overview
+## Overview
 
 The L&D Metrics Translator helps L&D professionals:
 - Translate learning outcomes into measurable business metrics
@@ -27,7 +27,7 @@ This application also includes a consultant-led Diagnostics experience ("Human P
 
 To support consulting engagements (e.g., with clients providing internal data), the intended MVP approach is **exports/CSV-first** ingestion from systems clients already use (e.g., work tracking, retrospectives, code repositories, surveys). This documentation describes the operating model and data requirements; the UI/API for CSV ingestion may be introduced incrementally.
 
-## ✨ Features
+## Features
 
 ### Core Features
 - **Interactive Metrics Database**: 100+ L&D metrics categorized by outcomes and types
@@ -45,121 +45,122 @@ To support consulting engagements (e.g., with clients providing internal data), 
 - **Scalability**: Docker support, load balancer ready
 - **Testing**: 95%+ test coverage with automated CI/CD
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Prerequisites
-- Python 3.11 or higher
+- Python 3.10 or higher
 - Git
 - (Optional) Docker and Docker Compose
+
+## Dependencies
+
+Dependencies are pinned in:
+
+`ld-metrics-translator/requirements.txt`
+
+The file includes:
+
+- **Runtime**: Flask + SQLAlchemy + Migrate + CSRF, etc.
+- **Production ops**: gunicorn, psycopg2, redis, sentry-sdk
+- **Dev/test tooling**: pytest, black, flake8, mypy, bandit, safety, locust
 
 ### Local Development Setup
 
 1. **Clone the repository**:
    ```bash
-   git clone https://github.com/your-org/ld-metrics-translator.git
-   cd ld-metrics-translator
+   git clone https://github.com/wernvan123/L-D-Metrics-Translator.git
+   cd L-D-Metrics-Translator
    ```
 
 2. **Create virtual environment**:
    ```bash
-   python -m venv venv
+   python -m venv .venv
    
    # Windows
-   venv\Scripts\activate
+   .venv\Scripts\activate
    
    # macOS/Linux
-   source venv/bin/activate
+   source .venv/bin/activate
    ```
 
 3. **Install dependencies**:
    ```bash
-   pip install -r requirements.txt
+   pip install -r ld-metrics-translator/requirements.txt
    ```
 
 4. **Set up environment**:
    ```bash
-   cp .env.example .env
-   # Edit .env with your configuration
+   cp ld-metrics-translator/.env.example ld-metrics-translator/.env
+   # Edit ld-metrics-translator/.env with your configuration
    ```
 
 5. **Initialize database**:
    ```bash
-   python init_db.py
-   python seed_database.py
+   python ld-metrics-translator/init_db.py
+   python ld-metrics-translator/seed_database.py
    ```
 
 6. **Create admin user**:
    ```bash
-   python setup_admin.py
+   python ld-metrics-translator/setup_admin.py
    ```
 
 7. **Run the application**:
+
+   Option A: **Dev/Demo server** (Mocks ON)
+   ```bat
+   run_dev.bat
+   ```
+
+   Option B: **Production-parity dev server** (Mocks OFF)
+   ```bat
+   run_prod_parity.bat
+   ```
+
+   Option C: **Full Flask app** (DB-backed app package under `ld-metrics-translator/`)
    ```bash
-   python run.py
+   python ld-metrics-translator/run.py
    ```
 
 8. **Access the application**:
-   - Main app: http://localhost:5000
-   - Admin panel: http://localhost:5000/admin
-   - API docs: http://localhost:5000/api
+ - Main app: http://localhost:8080/
+ - Diagnostics: http://localhost:8080/diagnostics
+ - Admin panel: http://localhost:8080/admin
 
-## 🐳 Docker Deployment
+## Docker Deployment
 
 ### Development with Docker
 ```bash
-docker-compose up --build
+docker compose -f ld-metrics-translator/docker-compose.yml up --build
 ```
 
-### Production Deployment
-1. **Configure environment variables**:
-   ```bash
-   cp .env.example .env.production
-   # Edit .env.production with production values
-   ```
-
-2. **Deploy with Docker Compose**:
-   ```bash
-   docker-compose -f docker-compose.yml --env-file .env.production up -d
-   ```
-
-## 📁 Project Structure
+## Project Structure
 
 ```
-ld-metrics-translator/
-├── app/                     # Application package
-│   ├── __init__.py         # Flask app factory
-│   ├── models.py           # Database models
-│   ├── routes.py           # Main routes
-│   ├── api.py              # API endpoints
-│   └── admin.py            # Admin interface
-├── templates/              # Jinja2 templates
-│   ├── base.html           # Base template
-│   ├── index.html          # Homepage
-│   ├── admin/              # Admin templates
-│   └── errors/             # Error pages
-├── static/                 # Static assets
-│   ├── css/                # Stylesheets
-│   ├── js/                 # JavaScript
-│   └── images/             # Images
-├── tests/                  # Test suite
-├── scripts/                # Utility scripts
-├── docs/                   # Documentation
-├── logs/                   # Application logs
-├── instance/               # Instance-specific files
-├── config.py               # Configuration
-├── run.py                  # Application entry point
-├── requirements.txt        # Python dependencies
-├── Dockerfile              # Docker configuration
-├── docker-compose.yml      # Docker Compose setup
-├── nginx.conf              # Nginx configuration
-└── Makefile                # Development commands
+L-D-Metrics-Translator/
+├── app.py                           # Dev/Demo entrypoint server (mocks + UI)
+├── run_dev.bat                      # Dev/Demo launcher (USE_MOCKS=true)
+├── run_prod_parity.bat              # Prod-parity launcher (USE_MOCKS=false)
+├── ld-metrics-translator/
+│   ├── app/                         # Flask app package (DB-backed)
+│   ├── templates/                   # Jinja2 templates
+│   ├── static/                      # Static assets
+│   ├── tests/                       # Test suite
+│   ├── docs/                        # Documentation
+│   ├── .env.example                 # Example env file (copy to .env)
+│   ├── requirements.txt             # Python dependencies
+│   ├── run.py                       # Full app entry point (port 8080)
+│   ├── Dockerfile                   # Docker configuration
+│   ├── docker-compose.yml           # Docker Compose setup
+│   ├── nginx.conf                   # Nginx configuration
+│   └── Makefile                     # Development commands
 ```
 
-## 🔧 Configuration
+## Configuration
 
 ### Environment Variables
 
-Key configuration options (see `.env.example` for complete list):
+Key configuration options (see `ld-metrics-translator/.env.example` for complete list):
 
 ```bash
 # Application
@@ -180,28 +181,21 @@ MAIL_SERVER=smtp.gmail.com
 MAIL_USERNAME=your-email@example.com
 ```
 
-## 🧪 Testing
+## Testing
 
 ### Run Tests
 ```bash
-# All tests
-make test
-
-# With coverage
-make test-coverage
+# From repo root
+pytest -q
 
 # Specific test file
-pytest tests/test_api.py -v
-
-# Performance tests
-make test-performance
+pytest ld-metrics-translator/tests/test_api.py -v
 ```
 
 ### Test Coverage
 The project maintains 95%+ test coverage across:
 - Unit tests for models and utilities
 - Integration tests for API endpoints
-- End-to-end tests for user workflows
 - Performance and security tests
 
 ## 📊 Monitoring and Logging
@@ -295,17 +289,17 @@ See [API Documentation](docs/api.md) for complete details.
 5. Run the test suite
 6. Submit a pull request
 
-See [Contributing Guide](docs/contributing.md) for detailed guidelines.
+See [Developer Guide](docs/developer.md) for detailed guidelines.
 
 ## 📄 License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+License status: TBD (no `LICENSE` file is currently committed in this repository).
 
 ## 🆘 Support
 
 - **Documentation**: [docs/](docs/)
-- **Issues**: [GitHub Issues](https://github.com/your-org/ld-metrics-translator/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/your-org/ld-metrics-translator/discussions)
+- **Issues**: [GitHub Issues](https://github.com/wernvan123/L-D-Metrics-Translator/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/wernvan123/L-D-Metrics-Translator/discussions)
 - **Email**: support@ldmetrics.com
 
 ## 🏆 Acknowledgments

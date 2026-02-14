@@ -1,0 +1,102 @@
+{% extends "admin/base.html" %}
+
+{% block title %}Client Data - Surveys{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+    <h1 class="h2">
+        <i class="bi bi-ui-checks me-2"></i>Client Data — Survey Responses
+    </h1>
+    <div class="btn-toolbar mb-2 mb-md-0">
+        <div class="btn-group me-2">
+            <a class="btn btn-outline-secondary" href="{{ url_for('admin.client_data_admin') }}">
+                <i class="bi bi-arrow-left me-1"></i>Back
+            </a>
+        </div>
+    </div>
+</div>
+
+<div class="card mb-3">
+    <div class="card-header"><strong>Filters</strong></div>
+    <div class="card-body">
+        <form method="GET" class="row g-3">
+            <div class="col-md-3">
+                <label class="form-label">Team (exact)</label>
+                <input class="form-control" name="team" value="{{ filters.team }}" placeholder="e.g., Platform">
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">Source (exact)</label>
+                <input class="form-control" name="source" value="{{ filters.source }}" placeholder="e.g., Google Forms">
+            </div>
+            <div class="col-md-4">
+                <label class="form-label">Search text</label>
+                <input class="form-control" name="q" value="{{ filters.q }}" placeholder="Search in answer/question">
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">Per page</label>
+                <input class="form-control" name="per_page" value="{{ filters.per_page }}" type="number" min="10" max="200">
+            </div>
+            <div class="col-12">
+                <button class="btn btn-primary" type="submit">
+                    <i class="bi bi-funnel me-1"></i>Apply
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <strong>Rows</strong>
+        <span class="text-muted small">{{ items.total }} total</span>
+    </div>
+    <div class="card-body">
+        {% if items.items %}
+            <div class="table-responsive">
+                <table class="table table-sm table-bordered align-middle">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Imported</th>
+                            <th>Submitted</th>
+                            <th>Survey</th>
+                            <th>Team</th>
+                            <th>Source</th>
+                            <th>Question</th>
+                            <th>Answer</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for s in items.items %}
+                            <tr>
+                                <td class="text-muted small">{% if s.imported_at %}{{ s.imported_at.strftime('%Y-%m-%d %H:%M') }}{% else %}—{% endif %}</td>
+                                <td class="text-muted small">{% if s.submitted_at %}{{ s.submitted_at.strftime('%Y-%m-%d') }}{% else %}—{% endif %}</td>
+                                <td>{{ s.survey_name or '—' }}</td>
+                                <td>{{ s.team or '—' }}</td>
+                                <td class="text-muted">{{ s.source or '—' }}</td>
+                                <td style="min-width: 260px;">{{ s.question or '—' }}</td>
+                                <td style="min-width: 320px;">{{ s.answer or '' }}</td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+
+            {% if items.pages > 1 %}
+                <nav aria-label="Pagination">
+                    <ul class="pagination justify-content-center mt-3">
+                        {% if items.has_prev %}
+                            <li class="page-item"><a class="page-link" href="{{ url_for('admin.client_data_surveys_admin', page=items.prev_num, team=filters.team, source=filters.source, q=filters.q, per_page=filters.per_page) }}">Previous</a></li>
+                        {% endif %}
+                        <li class="page-item disabled"><span class="page-link">Page {{ items.page }} of {{ items.pages }}</span></li>
+                        {% if items.has_next %}
+                            <li class="page-item"><a class="page-link" href="{{ url_for('admin.client_data_surveys_admin', page=items.next_num, team=filters.team, source=filters.source, q=filters.q, per_page=filters.per_page) }}">Next</a></li>
+                        {% endif %}
+                    </ul>
+                </nav>
+            {% endif %}
+        {% else %}
+            <div class="text-muted">No survey response rows found.</div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

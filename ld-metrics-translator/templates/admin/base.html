@@ -191,6 +191,18 @@
                             </a>
                         </li>
                         <li class="nav-item">
+                            <a class="nav-link {% if request.endpoint and ('clients' in request.endpoint or (request.endpoint.startswith('admin.client') and not request.endpoint.startswith('admin.client_data'))) %}active{% endif %}"
+                               href="{{ url_for('admin.clients_admin') }}">
+                                <i class="bi bi-building"></i>Clients
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link {% if request.endpoint and request.endpoint.startswith('admin.client_data') %}active{% endif %}"
+                               href="{{ url_for('admin.client_data_admin') }}">
+                                <i class="bi bi-database"></i>Client Data
+                            </a>
+                        </li>
+                        <li class="nav-item">
                             <a class="nav-link {% if 'event_feed' in request.endpoint %}active{% endif %}"
                                href="{{ url_for('admin.event_feed_admin') }}">
                                 <i class="bi bi-list-ul"></i>Event Feed

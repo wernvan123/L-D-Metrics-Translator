@@ -1,0 +1,137 @@
+{% extends "admin/base.html" %}
+
+{% block title %}Gap Report{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+    <h1 class="h2">
+        <i class="bi bi-clipboard2-check me-2"></i>{{ client.name }} — Gap Report
+    </h1>
+    <div class="btn-toolbar mb-2 mb-md-0">
+        <div class="btn-group me-2">
+            <a class="btn btn-outline-secondary" href="{{ url_for('admin.client_detail_admin', client_id=client.id) }}">
+                <i class="bi bi-arrow-left me-1"></i>Back to Inventory
+            </a>
+            <a class="btn btn-outline-secondary" href="{{ url_for('admin.client_inventory_export_csv_admin', client_id=client.id) }}">
+                <i class="bi bi-download me-1"></i>Export Inventory CSV
+            </a>
+            <a class="btn btn-outline-secondary" href="{{ url_for('admin.client_gap_report_export_csv_admin', client_id=client.id) }}">
+                <i class="bi bi-download me-1"></i>Export Gap Report CSV
+            </a>
+        </div>
+    </div>
+</div>
+
+<div class="row mb-3">
+    <div class="col-md-12">
+        <div class="card">
+            <div class="card-body">
+                <div class="small text-muted">Coverage summary</div>
+                <div class="mt-2 d-flex flex-wrap gap-2">
+                    <span class="badge bg-success">Yes: {{ stats.yes }}</span>
+                    <span class="badge bg-warning text-dark">Partial: {{ stats.partial }}</span>
+                    <span class="badge bg-danger">No: {{ stats.no }}</span>
+                    <span class="badge bg-secondary">Total: {{ stats.total }}</span>
+                    <span class="badge bg-primary">Gaps: {{ stats.gaps }}</span>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card mb-3">
+    <div class="card-header">
+        <h5 class="card-title mb-0">Priority gaps (what to fix first)</h5>
+    </div>
+    <div class="card-body">
+        {% if gap_rows %}
+            <div class="table-responsive">
+                <table class="table table-sm table-bordered align-middle">
+                    <thead class="table-light">
+                        <tr>
+                            <th style="width: 60px;">Prio</th>
+                            <th>Category</th>
+                            <th>Data point</th>
+                            <th style="width: 90px;">Status</th>
+                            <th>Why it matters</th>
+                            <th>Recommended next step</th>
+                            <th style="width: 170px;">Privacy</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for g in gap_rows %}
+                            <tr>
+                                <td>
+                                    {% if g.priority == 'P0' %}
+                                        <span class="badge bg-danger">P0</span>
+                                    {% elif g.priority == 'P1' %}
+                                        <span class="badge bg-warning text-dark">P1</span>
+                                    {% else %}
+                                        <span class="badge bg-secondary">P2</span>
+                                    {% endif %}
+                                </td>
+                                <td class="fw-semibold">{{ g.category }}</td>
+                                <td>{{ g.data_point }}</td>
+                                <td>
+                                    {% if g.status == 'no' %}
+                                        <span class="badge bg-danger">No</span>
+                                    {% else %}
+                                        <span class="badge bg-warning text-dark">Partial</span>
+                                    {% endif %}
+                                </td>
+                                <td class="text-muted">{{ g.why }}</td>
+                                <td>{{ g.next_step }}</td>
+                                <td class="text-muted small">
+                                    <div><strong>Sensitivity:</strong> {{ g.sensitivity or '—' }}</div>
+                                    <div><strong>Anonymity:</strong> {{ g.anonymity or '—' }}</div>
+                                </td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        {% else %}
+            <div class="text-muted">No gaps detected. Everything is marked as collected.</div>
+        {% endif %}
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-lg-4 mb-3">
+        <div class="card">
+            <div class="card-header"><strong>Phase 1 (0–2 weeks)</strong></div>
+            <div class="card-body">
+                <ol class="mb-0">
+                    {% for step in roadmap.phase_1 %}
+                        <li>{{ step }}</li>
+                    {% endfor %}
+                </ol>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-4 mb-3">
+        <div class="card">
+            <div class="card-header"><strong>Phase 2 (2–6 weeks)</strong></div>
+            <div class="card-body">
+                <ol class="mb-0">
+                    {% for step in roadmap.phase_2 %}
+                        <li>{{ step }}</li>
+                    {% endfor %}
+                </ol>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-4 mb-3">
+        <div class="card">
+            <div class="card-header"><strong>Phase 3 (6+ weeks)</strong></div>
+            <div class="card-body">
+                <ol class="mb-0">
+                    {% for step in roadmap.phase_3 %}
+                        <li>{{ step }}</li>
+                    {% endfor %}
+                </ol>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

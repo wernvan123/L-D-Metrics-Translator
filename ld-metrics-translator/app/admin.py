@@ -34,6 +34,7 @@ from wtforms import ValidationError
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 from app.models import Metric, LDOutcome, MetricType, AdminUser, AuditLog, Framework, Competency, ClientRetroItem, ClientPullRequest, ClientSurveyResponse
+from app.models import ClientCompany, ClientDataInventoryItem
 from app.models_behavioral_bias import BehavioralBias
 from app import db
 import csv
@@ -43,6 +44,7 @@ from datetime import datetime, timezone
 from functools import wraps
 import os
 import re
+from sqlalchemy import or_
 
 admin = Blueprint('admin', __name__, url_prefix='/admin')
 
@@ -90,6 +92,7 @@ def unique_competency_slug(framework_id: int, base: str) -> str:
 def _parse_optional_datetime(value):
     if value is None:
         return None
+
     s = str(value).strip()
     if not s:
         return None
@@ -103,6 +106,28 @@ def _parse_optional_datetime(value):
         except Exception:
             continue
     return None
+
+
+def unique_client_slug(base: str, client_id: int | None = None) -> str:
+    slug = slugify(base)
+    if not slug:
+        slug = 'client'
+
+    query = ClientCompany.query.filter_by(slug=slug)
+    if client_id:
+        query = query.filter(ClientCompany.id != client_id)
+    if not query.first():
+        return slug
+
+    i = 2
+    while True:
+        candidate = f"{slug}-{i}"
+        query = ClientCompany.query.filter_by(slug=candidate)
+        if client_id:
+            query = query.filter(ClientCompany.id != client_id)
+        if not query.first():
+            return candidate
+        i += 1
 
 def _normalize_csv_row(row: dict) -> dict:
     normalized = {}
@@ -256,8 +281,41 @@ class BulkImportForm(FlaskForm):
         ('types', 'Metric Types'),
         ('retros', 'Client Retrospective Items'),
         ('pull_requests', 'Client Pull Requests'),
-        ('survey_responses', 'Client Survey Responses')
+        ('survey_responses', 'Client Survey Responses'),
+        ('client_inventory', 'Client Data Inventory Items')
     ], validators=[DataRequired()])
+
+
+class ClientCompanyForm(FlaskForm):
+    name = StringField('Client Name', validators=[DataRequired(), Length(max=200)])
+    industry = StringField('Industry', validators=[Optional(), Length(max=200)])
+    notes = TextAreaField('Notes', validators=[Optional()])
+
+
+class ClientInventoryItemForm(FlaskForm):
+    data_category = StringField('Data Category', validators=[DataRequired(), Length(max=200)])
+    data_point = StringField('Specific Data Point', validators=[DataRequired(), Length(max=255)])
+    collected_status = SelectField('Collected?', choices=[
+        ('yes', 'Yes'),
+        ('partial', 'Partially'),
+        ('no', 'No'),
+    ], validators=[DataRequired()])
+    system_location = StringField('Location / System', validators=[Optional(), Length(max=255)])
+    access_method = StringField('Access Method & Notes', validators=[Optional(), Length(max=255)])
+    sensitivity = SelectField('Sensitivity', choices=[
+        ('', '—'),
+        ('low', 'Low'),
+        ('medium', 'Medium'),
+        ('high', 'High'),
+    ], validators=[Optional()])
+    anonymity = SelectField('Anonymity', choices=[
+        ('', '—'),
+        ('unknown', 'Unknown'),
+        ('anonymous', 'Anonymous'),
+        ('not_anonymous', 'Not anonymous'),
+        ('reidentification_risk', 'Re-identification risk'),
+    ], validators=[Optional()])
+    notes = TextAreaField('Notes', validators=[Optional()])
 
 # Authentication routes
 @admin.route('/login', methods=['GET', 'POST'])
@@ -307,6 +365,573 @@ def dashboard():
     }
     
     return render_template('admin/dashboard.html', stats=stats)
+
+
+def _default_client_inventory_seed() -> list[dict]:
+    return [
+        {
+            'data_category': 'Performance Reviews',
+            'data_point': 'Manager ratings',
+            'collected_status': 'yes',
+            'system_location': 'Google Forms',
+            'access_method': 'Google Drive',
+            'sensitivity': 'high',
+        },
+        {
+            'data_category': 'Performance Reviews',
+            'data_point': 'Qualitative comments',
+            'collected_status': 'yes',
+            'system_location': 'Google Docs/Sheets',
+            'access_method': 'Google Drive',
+            'sensitivity': 'high',
+        },
+        {
+            'data_category': 'Performance Reviews',
+            'data_point': 'Goal attainment',
+            'collected_status': 'no',
+            'sensitivity': 'high',
+        },
+        {
+            'data_category': '360-Degree Feedback',
+            'data_point': 'Anonymous peer/report feedback',
+            'collected_status': 'partial',
+            'system_location': 'Google Forms',
+            'access_method': 'Google Drive (Google Docs)',
+            'sensitivity': 'high',
+            'anonymity': 'anonymous',
+        },
+        {
+            'data_category': 'Project Retrospectives',
+            'data_point': 'Notes (what went well / improve) + action items',
+            'collected_status': 'yes',
+            'system_location': 'ClickUp',
+            'access_method': 'ClickUp permissions',
+            'sensitivity': 'medium',
+        },
+        {
+            'data_category': 'Customer/Client Feedback',
+            'data_point': 'CSAT/NPS scores + qualitative feedback',
+            'collected_status': 'no',
+            'sensitivity': 'medium',
+        },
+        {
+            'data_category': 'Project Management Data',
+            'data_point': 'Cycle time / rework rate / on-time delivery / bugs',
+            'collected_status': 'no',
+            'sensitivity': 'medium',
+        },
+        {
+            'data_category': 'Code Repository Data (Devs)',
+            'data_point': 'Test coverage % / code churn / PR comments/cycles',
+            'collected_status': 'yes',
+            'system_location': 'Git + PR system',
+            'access_method': 'Platform export / APIs later',
+            'sensitivity': 'medium',
+        },
+        {
+            'data_category': 'Employee Engagement Surveys',
+            'data_point': 'Engagement scores + anonymized comments',
+            'collected_status': 'partial',
+            'system_location': 'Google Forms + ClickUp anon form',
+            'access_method': 'Google Forms and ClickUp',
+            'sensitivity': 'high',
+            'anonymity': 'anonymous',
+        },
+        {
+            'data_category': 'HRIS Data',
+            'data_point': 'Turnover rate / absenteeism / promotion velocity',
+            'collected_status': 'no',
+            'sensitivity': 'high',
+        },
+        {
+            'data_category': 'Exit Interview Data',
+            'data_point': 'Reasons for leaving + feedback on management/culture',
+            'collected_status': 'partial',
+            'sensitivity': 'high',
+            'anonymity': 'reidentification_risk',
+        },
+    ]
+
+
+@admin.route('/clients')
+@admin_required
+def clients_admin():
+    clients = ClientCompany.query.order_by(ClientCompany.name.asc()).all()
+    return render_template('admin/clients.html', clients=clients)
+
+
+@admin.route('/clients/new', methods=['GET', 'POST'])
+@admin_required
+def clients_admin_new():
+    form = ClientCompanyForm()
+    if form.validate_on_submit():
+        name = (form.name.data or '').strip()
+        if ClientCompany.query.filter_by(name=name).first():
+            flash('Client already exists.', 'error')
+            return render_template('admin/client_new.html', form=form)
+
+        client = ClientCompany(
+            name=name,
+            slug=unique_client_slug(name),
+            industry=(form.industry.data or '').strip() or None,
+            notes=(form.notes.data or '').strip() or None,
+        )
+        db.session.add(client)
+        db.session.flush()
+
+        for seed in _default_client_inventory_seed():
+            db.session.add(ClientDataInventoryItem(
+                client_company_id=client.id,
+                data_category=seed.get('data_category') or 'General',
+                data_point=seed.get('data_point') or 'Data point',
+                collected_status=(seed.get('collected_status') or 'no'),
+                system_location=seed.get('system_location'),
+                access_method=seed.get('access_method'),
+                sensitivity=seed.get('sensitivity'),
+                anonymity=seed.get('anonymity'),
+                notes=seed.get('notes'),
+            ))
+
+        db.session.commit()
+        log_admin_action('ADD_CLIENT', f'Added client: {client.name}')
+        flash('Client created. Default inventory checklist added.', 'success')
+        return redirect(url_for('admin.client_detail_admin', client_id=client.id))
+
+    return render_template('admin/client_new.html', form=form)
+
+
+@admin.route('/clients/<int:client_id>')
+@admin_required
+def client_detail_admin(client_id: int):
+    client = ClientCompany.query.get_or_404(client_id)
+    items = ClientDataInventoryItem.query.filter_by(client_company_id=client.id).order_by(
+        ClientDataInventoryItem.data_category.asc(),
+        ClientDataInventoryItem.data_point.asc(),
+    ).all()
+
+    yes_count = len([i for i in items if (i.collected_status or '').lower() == 'yes'])
+    partial_count = len([i for i in items if (i.collected_status or '').lower() == 'partial'])
+    no_count = len([i for i in items if (i.collected_status or '').lower() == 'no'])
+
+    form = ClientInventoryItemForm()
+    form.collected_status.data = 'no'
+    return render_template(
+        'admin/client_detail.html',
+        client=client,
+        items=items,
+        form=form,
+        inventory_stats={'yes': yes_count, 'partial': partial_count, 'no': no_count, 'total': len(items)},
+    )
+
+
+@admin.route('/clients/<int:client_id>/inventory', methods=['POST'])
+@admin_required
+def client_inventory_add_admin(client_id: int):
+    client = ClientCompany.query.get_or_404(client_id)
+    form = ClientInventoryItemForm()
+    if not form.validate_on_submit():
+        flash('Please complete required fields for the inventory item.', 'error')
+        return redirect(url_for('admin.client_detail_admin', client_id=client.id))
+
+    item = ClientDataInventoryItem(
+        client_company_id=client.id,
+        data_category=(form.data_category.data or '').strip(),
+        data_point=(form.data_point.data or '').strip(),
+        collected_status=form.collected_status.data,
+        system_location=(form.system_location.data or '').strip() or None,
+        access_method=(form.access_method.data or '').strip() or None,
+        sensitivity=(form.sensitivity.data or '').strip() or None,
+        anonymity=(form.anonymity.data or '').strip() or None,
+        notes=(form.notes.data or '').strip() or None,
+    )
+    db.session.add(item)
+    db.session.commit()
+    log_admin_action('ADD_CLIENT_INVENTORY_ITEM', f'{client.name}: {item.data_category} / {item.data_point}')
+    flash('Inventory item added.', 'success')
+    return redirect(url_for('admin.client_detail_admin', client_id=client.id))
+
+
+@admin.route('/clients/<int:client_id>/inventory/<int:item_id>/update', methods=['POST'])
+@admin_required
+def client_inventory_update_admin(client_id: int, item_id: int):
+    client = ClientCompany.query.get_or_404(client_id)
+    item = ClientDataInventoryItem.query.get_or_404(item_id)
+    if item.client_company_id != client.id:
+        flash('Invalid inventory item for this client.', 'error')
+        return redirect(url_for('admin.client_detail_admin', client_id=client.id))
+
+    def _clean(v):
+        s = (v or '').strip()
+        return s or None
+
+    # Keep required fields safe
+    data_category = _clean(request.form.get('data_category'))
+    data_point = _clean(request.form.get('data_point'))
+    collected_status = (request.form.get('collected_status') or '').strip().lower()
+    if not data_category or not data_point or collected_status not in ('yes', 'no', 'partial'):
+        flash('Update failed: missing required fields.', 'error')
+        return redirect(url_for('admin.client_detail_admin', client_id=client.id))
+
+    item.data_category = data_category
+    item.data_point = data_point
+    item.collected_status = collected_status
+    item.system_location = _clean(request.form.get('system_location'))
+    item.access_method = _clean(request.form.get('access_method'))
+    item.sensitivity = _clean(request.form.get('sensitivity'))
+    item.anonymity = _clean(request.form.get('anonymity'))
+    item.notes = _clean(request.form.get('notes'))
+    db.session.commit()
+
+    log_admin_action('UPDATE_CLIENT_INVENTORY_ITEM', f'{client.name}: {item.data_category} / {item.data_point}')
+    flash('Inventory item updated.', 'success')
+    return redirect(url_for('admin.client_detail_admin', client_id=client.id))
+
+
+@admin.route('/clients/<int:client_id>/inventory/<int:item_id>/delete', methods=['POST'])
+@admin_required
+def client_inventory_delete_admin(client_id: int, item_id: int):
+    client = ClientCompany.query.get_or_404(client_id)
+    item = ClientDataInventoryItem.query.get_or_404(item_id)
+    if item.client_company_id != client.id:
+        flash('Invalid inventory item for this client.', 'error')
+        return redirect(url_for('admin.client_detail_admin', client_id=client.id))
+    label = f'{item.data_category} / {item.data_point}'
+    db.session.delete(item)
+    db.session.commit()
+    log_admin_action('DELETE_CLIENT_INVENTORY_ITEM', f'{client.name}: {label}')
+    flash('Inventory item deleted.', 'success')
+    return redirect(url_for('admin.client_detail_admin', client_id=client.id))
+
+
+def _gap_priority(item: ClientDataInventoryItem) -> str:
+    key = (item.data_point or '').strip().lower()
+    cat = (item.data_category or '').strip().lower()
+    if 'goal attainment' in key:
+        return 'P0'
+    if 'csat' in key or 'nps' in key:
+        return 'P0'
+    if 'cycle time' in key or 'on-time' in key or 'rework' in key or 'bugs' in key:
+        return 'P0'
+    if 'turnover' in key or 'absenteeism' in key or 'promotion' in key:
+        return 'P0'
+    if 'exit interview' in cat:
+        return 'P1'
+    if '360' in cat:
+        return 'P1'
+    return 'P2'
+
+
+def _gap_why_and_next(item: ClientDataInventoryItem) -> tuple[str, str]:
+    key = (item.data_point or '').strip().lower()
+    cat = (item.data_category or '').strip().lower()
+    if 'goal attainment' in key:
+        return (
+            'Without goal attainment, performance discussions become subjective and hard to link to outcomes.',
+            'Define 3–5 role-aligned goals per cycle, add a simple scoring rubric, and capture it in the same review workflow.'
+        )
+    if 'csat' in key or 'nps' in key:
+        return (
+            'Without customer feedback, it is difficult to connect talent initiatives to client value and retention.',
+            'Start with a lightweight CSAT/NPS pulse after key deliveries; store monthly aggregates and a few example comments.'
+        )
+    if 'cycle time' in key or 'on-time' in key or 'rework' in key or 'bugs' in key:
+        return (
+            'Delivery metrics create a measurable link between ways-of-working, capability gaps, and business outcomes.',
+            'Pick 2–3 delivery metrics (cycle time, rework, defects) and agree on definitions + a monthly export cadence.'
+        )
+    if 'turnover' in key or 'absenteeism' in key or 'promotion' in key:
+        return (
+            'HRIS signals help quantify talent risk (retention, wellbeing, progression) and validate whether interventions work.',
+            'Request monthly aggregates by team (where possible) and define minimum sample sizes to protect confidentiality.'
+        )
+    if 'exit interview' in cat:
+        return (
+            'Exit data is high-signal but can be non-anonymous and easily re-identifiable in small teams.',
+            'Only analyze aggregates; add a rule to suppress results for small samples and separate identifiers from narratives.'
+        )
+    if '360' in cat:
+        return (
+            'Partial 360 coverage makes comparisons unreliable and can bias leadership conclusions.',
+            'Standardize the 360 instrument and rollout; track coverage by team before benchmarking.'
+        )
+    return (
+        'This datapoint improves visibility into drivers of performance and engagement.',
+        'Start with a manual export/import (CSV) and standardize the fields before considering integrations.'
+    )
+
+
+@admin.route('/clients/<int:client_id>/gap-report')
+@admin_required
+def client_gap_report_admin(client_id: int):
+    client = ClientCompany.query.get_or_404(client_id)
+    items = ClientDataInventoryItem.query.filter_by(client_company_id=client.id).all()
+
+    yes_items = [i for i in items if (i.collected_status or '').lower() == 'yes']
+    partial_items = [i for i in items if (i.collected_status or '').lower() == 'partial']
+    no_items = [i for i in items if (i.collected_status or '').lower() == 'no']
+
+    gaps = [i for i in items if (i.collected_status or '').lower() in ('no', 'partial')]
+    gaps_sorted = sorted(gaps, key=lambda it: (_gap_priority(it), (it.data_category or ''), (it.data_point or '')))
+
+    gap_rows = []
+    for g in gaps_sorted:
+        why, nxt = _gap_why_and_next(g)
+        gap_rows.append({
+            'id': g.id,
+            'category': g.data_category,
+            'data_point': g.data_point,
+            'status': g.collected_status,
+            'priority': _gap_priority(g),
+            'system_location': g.system_location,
+            'access_method': g.access_method,
+            'sensitivity': g.sensitivity,
+            'anonymity': g.anonymity,
+            'why': why,
+            'next_step': nxt,
+        })
+
+    roadmap = {
+        'phase_1': [
+            'Confirm definitions for the P0 datapoints and agree on owners.',
+            'Start manual exports (CSV) from existing systems and load into a single inventory baseline.',
+            'Generate an initial gap report and align on 1–3 quick-win interventions.'
+        ],
+        'phase_2': [
+            'Standardize collection across teams (coverage + cadence).',
+            'Add light governance: naming conventions, retention, and access rules.',
+            'Run the diagnostic monthly and track movement in agreed metrics.'
+        ],
+        'phase_3': [
+            'Automate collection via integrations/APIs where ROI justifies it.',
+            'Build dashboards once the data is stable and definitions are trusted.',
+            'Expand to benchmark comparisons across teams/roles if appropriate.'
+        ],
+    }
+
+    stats = {
+        'total': len(items),
+        'yes': len(yes_items),
+        'partial': len(partial_items),
+        'no': len(no_items),
+        'gaps': len(gaps),
+    }
+
+    return render_template(
+        'admin/client_gap_report.html',
+        client=client,
+        stats=stats,
+        gap_rows=gap_rows,
+        roadmap=roadmap,
+    )
+
+
+@admin.route('/clients/<int:client_id>/export/inventory.csv')
+@admin_required
+def client_inventory_export_csv_admin(client_id: int):
+    from flask import make_response
+    client = ClientCompany.query.get_or_404(client_id)
+    items = ClientDataInventoryItem.query.filter_by(client_company_id=client.id).order_by(
+        ClientDataInventoryItem.data_category.asc(),
+        ClientDataInventoryItem.data_point.asc(),
+    ).all()
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow([
+        'client',
+        'data_category',
+        'data_point',
+        'collected_status',
+        'system_location',
+        'access_method',
+        'sensitivity',
+        'anonymity',
+        'notes',
+        'updated_date',
+    ])
+    for it in items:
+        writer.writerow([
+            client.name,
+            it.data_category,
+            it.data_point,
+            it.collected_status,
+            it.system_location or '',
+            it.access_method or '',
+            it.sensitivity or '',
+            it.anonymity or '',
+            it.notes or '',
+            it.updated_date.strftime('%Y-%m-%d %H:%M:%S') if it.updated_date else '',
+        ])
+
+    resp = make_response(output.getvalue())
+    safe = slugify(client.slug or client.name)
+    resp.headers['Content-Disposition'] = f'attachment; filename={safe}_inventory.csv'
+    resp.headers['Content-type'] = 'text/csv'
+    log_admin_action('EXPORT_CLIENT_INVENTORY', f'{client.name}')
+    return resp
+
+
+@admin.route('/clients/<int:client_id>/export/gap_report.csv')
+@admin_required
+def client_gap_report_export_csv_admin(client_id: int):
+    from flask import make_response
+    client = ClientCompany.query.get_or_404(client_id)
+    items = ClientDataInventoryItem.query.filter_by(client_company_id=client.id).all()
+    gaps = [i for i in items if (i.collected_status or '').lower() in ('no', 'partial')]
+    gaps_sorted = sorted(gaps, key=lambda it: (_gap_priority(it), (it.data_category or ''), (it.data_point or '')))
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow([
+        'client',
+        'priority',
+        'data_category',
+        'data_point',
+        'status',
+        'why_it_matters',
+        'recommended_next_step',
+        'system_location',
+        'access_method',
+        'sensitivity',
+        'anonymity',
+    ])
+    for g in gaps_sorted:
+        why, nxt = _gap_why_and_next(g)
+        writer.writerow([
+            client.name,
+            _gap_priority(g),
+            g.data_category,
+            g.data_point,
+            g.collected_status,
+            why,
+            nxt,
+            g.system_location or '',
+            g.access_method or '',
+            g.sensitivity or '',
+            g.anonymity or '',
+        ])
+
+    resp = make_response(output.getvalue())
+    safe = slugify(client.slug or client.name)
+    resp.headers['Content-Disposition'] = f'attachment; filename={safe}_gap_report.csv'
+    resp.headers['Content-type'] = 'text/csv'
+    log_admin_action('EXPORT_CLIENT_GAP_REPORT', f'{client.name}')
+    return resp
+
+
+@admin.route('/client-data')
+@admin_required
+def client_data_admin():
+    stats = {
+        'retros': ClientRetroItem.query.count(),
+        'pull_requests': ClientPullRequest.query.count(),
+        'survey_responses': ClientSurveyResponse.query.count(),
+    }
+    return render_template('admin/client_data.html', stats=stats)
+
+
+@admin.route('/client-data/retros')
+@admin_required
+def client_data_retros_admin():
+    page = request.args.get('page', 1, type=int)
+    per_page = request.args.get('per_page', 50, type=int)
+    team = (request.args.get('team') or '').strip()
+    source = (request.args.get('source') or '').strip()
+    q = (request.args.get('q') or '').strip()
+
+    query = ClientRetroItem.query
+    if team:
+        query = query.filter(ClientRetroItem.team == team)
+    if source:
+        query = query.filter(ClientRetroItem.source == source)
+    if q:
+        pattern = f"%{q}%"
+        query = query.filter(
+            or_(
+                ClientRetroItem.text.ilike(pattern),
+                ClientRetroItem.category.ilike(pattern),
+            )
+        )
+
+    pagination = query.order_by(ClientRetroItem.imported_at.desc()).paginate(
+        page=page, per_page=per_page, error_out=False
+    )
+
+    return render_template(
+        'admin/client_data_retros.html',
+        items=pagination,
+        filters={'team': team, 'source': source, 'q': q, 'per_page': per_page},
+    )
+
+
+@admin.route('/client-data/surveys')
+@admin_required
+def client_data_surveys_admin():
+    page = request.args.get('page', 1, type=int)
+    per_page = request.args.get('per_page', 50, type=int)
+    team = (request.args.get('team') or '').strip()
+    source = (request.args.get('source') or '').strip()
+    q = (request.args.get('q') or '').strip()
+
+    query = ClientSurveyResponse.query
+    if team:
+        query = query.filter(ClientSurveyResponse.team == team)
+    if source:
+        query = query.filter(ClientSurveyResponse.source == source)
+    if q:
+        pattern = f"%{q}%"
+        query = query.filter(
+            or_(
+                ClientSurveyResponse.answer.ilike(pattern),
+                ClientSurveyResponse.question.ilike(pattern),
+                ClientSurveyResponse.survey_name.ilike(pattern),
+            )
+        )
+
+    pagination = query.order_by(ClientSurveyResponse.imported_at.desc()).paginate(
+        page=page, per_page=per_page, error_out=False
+    )
+
+    return render_template(
+        'admin/client_data_surveys.html',
+        items=pagination,
+        filters={'team': team, 'source': source, 'q': q, 'per_page': per_page},
+    )
+
+
+@admin.route('/client-data/pull-requests')
+@admin_required
+def client_data_pull_requests_admin():
+    page = request.args.get('page', 1, type=int)
+    per_page = request.args.get('per_page', 50, type=int)
+    team = (request.args.get('team') or '').strip()
+    source = (request.args.get('source') or '').strip()
+    q = (request.args.get('q') or '').strip()
+
+    query = ClientPullRequest.query
+    if team:
+        query = query.filter(ClientPullRequest.team == team)
+    if source:
+        query = query.filter(ClientPullRequest.source == source)
+    if q:
+        pattern = f"%{q}%"
+        query = query.filter(
+            or_(
+                ClientPullRequest.pr_id.ilike(pattern),
+                ClientPullRequest.author.ilike(pattern),
+                ClientPullRequest.url.ilike(pattern),
+            )
+        )
+
+    pagination = query.order_by(ClientPullRequest.imported_at.desc()).paginate(
+        page=page, per_page=per_page, error_out=False
+    )
+
+    return render_template(
+        'admin/client_data_pull_requests.html',
+        items=pagination,
+        filters={'team': team, 'source': source, 'q': q, 'per_page': per_page},
+    )
 
 
 @admin.route('/event-feed')
@@ -985,6 +1610,69 @@ def bulk_import():
                         )
                         db.session.add(survey)
                         imported_count += 1
+                    except Exception as e:
+                        errors.append(f'Row {row_num}: {str(e)}')
+
+            elif import_type == 'client_inventory':
+                for row_num, row in enumerate(csv_input, start=2):
+                    try:
+                        r = _normalize_csv_row(row)
+
+                        client_name = (r.get('client') or r.get('client_name') or r.get('company') or r.get('company_name') or '').strip()
+                        if not client_name:
+                            errors.append(f'Row {row_num}: Missing client field')
+                            continue
+
+                        data_category = (r.get('data_category') or r.get('category') or '').strip()
+                        data_point = (r.get('data_point') or r.get('datapoint') or r.get('item') or r.get('field') or '').strip()
+                        if not data_category or not data_point:
+                            errors.append(f'Row {row_num}: Missing data_category or data_point field')
+                            continue
+
+                        client = ClientCompany.query.filter_by(name=client_name).first()
+                        if not client:
+                            client = ClientCompany(
+                                name=client_name,
+                                slug=unique_client_slug(client_name),
+                                industry=(r.get('industry') or '').strip() or None,
+                                notes=(r.get('client_notes') or r.get('notes') or '').strip() or None,
+                            )
+                            db.session.add(client)
+                            db.session.flush()
+
+                        status = (r.get('collected_status') or r.get('status') or '').strip().lower()
+                        if status not in ('yes', 'no', 'partial'):
+                            status = 'no'
+
+                        existing = ClientDataInventoryItem.query.filter_by(
+                            client_company_id=client.id,
+                            data_category=data_category,
+                            data_point=data_point,
+                        ).first()
+
+                        if existing:
+                            existing.collected_status = status
+                            existing.system_location = (r.get('system_location') or r.get('system') or r.get('location') or '').strip() or None
+                            existing.access_method = (r.get('access_method') or r.get('access') or '').strip() or None
+                            existing.sensitivity = (r.get('sensitivity') or '').strip() or None
+                            existing.anonymity = (r.get('anonymity') or '').strip() or None
+                            existing.notes = (r.get('item_notes') or '').strip() or None
+                        else:
+                            item = ClientDataInventoryItem(
+                                client_company_id=client.id,
+                                data_category=data_category,
+                                data_point=data_point,
+                                collected_status=status,
+                                system_location=(r.get('system_location') or r.get('system') or r.get('location') or '').strip() or None,
+                                access_method=(r.get('access_method') or r.get('access') or '').strip() or None,
+                                sensitivity=(r.get('sensitivity') or '').strip() or None,
+                                anonymity=(r.get('anonymity') or '').strip() or None,
+                                notes=(r.get('item_notes') or '').strip() or None,
+                            )
+                            db.session.add(item)
+
+                        imported_count += 1
+
                     except Exception as e:
                         errors.append(f'Row {row_num}: {str(e)}')
             

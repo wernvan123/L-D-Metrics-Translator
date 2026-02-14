@@ -118,6 +118,9 @@
                         <button class="btn btn-outline-secondary btn-sm" onclick="downloadSample('survey_responses')">
                             <i class="bi bi-download me-1"></i>Survey Responses Sample
                         </button>
+                        <button class="btn btn-outline-secondary btn-sm" onclick="downloadSample('client_inventory')">
+                            <i class="bi bi-download me-1"></i>Client Inventory Sample
+                        </button>
                     </div>
                 </div>
             </div>
@@ -183,6 +186,12 @@
             headers: ['submitted_at', 'survey_name', 'question', 'answer', 'team', 'source'],
             description: 'Required: answer. Optional: submitted_at, survey_name, question, team, source.',
             notes: 'Date formats supported: YYYY-MM-DD or YYYY-MM-DD HH:MM:SS or ISO8601.'
+        },
+        'client_inventory': {
+            title: 'Client Data Inventory Items CSV Format',
+            headers: ['client', 'data_category', 'data_point', 'collected_status', 'system_location', 'access_method', 'sensitivity', 'anonymity', 'item_notes'],
+            description: 'Required: client, data_category, data_point. Optional: collected_status (yes|no|partial), system_location, access_method, sensitivity, anonymity, item_notes.',
+            notes: 'Rows are upserted by (client + data_category + data_point). If the client does not exist, it will be created.'
         }
     };
 
@@ -315,6 +324,11 @@
                 ['submitted_at', 'survey_name', 'question', 'answer', 'team', 'source'],
                 ['2026-01-20', 'Weekly Pulse', 'What slowed you down this week?', 'Too many context switches', 'Platform', 'Google Forms'],
                 ['2026-01-20', 'Weekly Pulse', 'What helped you most this week?', 'Clearer ticket ownership', 'Platform', 'Google Forms']
+            ],
+            'client_inventory': [
+                ['client', 'data_category', 'data_point', 'collected_status', 'system_location', 'access_method', 'sensitivity', 'anonymity', 'item_notes'],
+                ['Monkey & River', 'Performance Reviews', 'Goal attainment', 'no', '', 'Define rubric + capture in review form', 'high', 'not_anonymous', 'Agree definitions before benchmarking'],
+                ['Monkey & River', 'Customer/Client Feedback', 'CSAT/NPS scores + qualitative feedback', 'partial', 'Google Forms', 'Monthly export + anonymize comments', 'medium', 'anonymous', 'Start with a lightweight pulse']
             ]
         };
         

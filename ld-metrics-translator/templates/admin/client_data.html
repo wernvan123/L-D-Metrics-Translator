@@ -1,0 +1,62 @@
+{% extends "admin/base.html" %}
+
+{% block title %}Client Data{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+    <h1 class="h2">
+        <i class="bi bi-database me-2"></i>Client Data (Imported)
+    </h1>
+    <div class="btn-toolbar mb-2 mb-md-0">
+        <a class="btn btn-outline-primary" href="{{ url_for('admin.bulk_import') }}">
+            <i class="bi bi-upload me-1"></i>Import Data
+        </a>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-md-4 mb-3">
+        <div class="card">
+            <div class="card-header"><strong>Retros</strong></div>
+            <div class="card-body">
+                <div class="display-6">{{ stats.retros }}</div>
+                <div class="text-muted small">Rows imported into <code>client_retro_items</code></div>
+                <div class="mt-3">
+                    <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('admin.client_data_retros_admin') }}">View Retros</a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-4 mb-3">
+        <div class="card">
+            <div class="card-header"><strong>Survey Responses</strong></div>
+            <div class="card-body">
+                <div class="display-6">{{ stats.survey_responses }}</div>
+                <div class="text-muted small">Rows imported into <code>client_survey_responses</code></div>
+                <div class="mt-3">
+                    <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('admin.client_data_surveys_admin') }}">View Surveys</a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-4 mb-3">
+        <div class="card">
+            <div class="card-header"><strong>Pull Requests</strong></div>
+            <div class="card-body">
+                <div class="display-6">{{ stats.pull_requests }}</div>
+                <div class="text-muted small">Rows imported into <code>client_pull_requests</code></div>
+                <div class="mt-3">
+                    <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('admin.client_data_pull_requests_admin') }}">View Pull Requests</a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="alert alert-info">
+    <i class="bi bi-info-circle me-2"></i>
+    These pages are intended for demos: you can show Monkey & River exactly what was imported before generating diagnostics and gap reports.
+</div>
+{% endblock %}

@@ -1,0 +1,176 @@
+{% extends "admin/base.html" %}
+
+{% block title %}Client Inventory{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+    <h1 class="h2">
+        <i class="bi bi-card-list me-2"></i>{{ client.name }} — Data Inventory
+    </h1>
+    <div class="btn-toolbar mb-2 mb-md-0">
+        <div class="btn-group me-2">
+            <a class="btn btn-outline-secondary" href="{{ url_for('admin.clients_admin') }}">
+                <i class="bi bi-arrow-left me-1"></i>Back
+            </a>
+            <a class="btn btn-outline-primary" href="{{ url_for('admin.client_gap_report_admin', client_id=client.id) }}">
+                <i class="bi bi-clipboard2-check me-1"></i>Gap Report
+            </a>
+        </div>
+    </div>
+</div>
+
+<div class="row mb-3">
+    <div class="col-md-4 mb-2">
+        <div class="card">
+            <div class="card-body">
+                <div class="small text-muted">Inventory coverage</div>
+                <div class="mt-2 d-flex flex-wrap gap-2">
+                    <span class="badge bg-success">Yes: {{ inventory_stats.yes }}</span>
+                    <span class="badge bg-warning text-dark">Partial: {{ inventory_stats.partial }}</span>
+                    <span class="badge bg-danger">No: {{ inventory_stats.no }}</span>
+                    <span class="badge bg-secondary">Total: {{ inventory_stats.total }}</span>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-8 mb-2">
+        <div class="card">
+            <div class="card-body">
+                <div class="small text-muted">Notes</div>
+                <div class="mt-1">{{ client.notes or '—' }}</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card mb-3">
+    <div class="card-header">
+        <h5 class="card-title mb-0">Add Inventory Item</h5>
+    </div>
+    <div class="card-body">
+        <form method="POST" action="{{ url_for('admin.client_inventory_add_admin', client_id=client.id) }}" class="row g-3">
+            {{ form.hidden_tag() }}
+
+            <div class="col-md-4">
+                {{ form.data_category.label(class="form-label") }}
+                {{ form.data_category(class="form-control", placeholder="e.g., Performance Reviews") }}
+            </div>
+            <div class="col-md-4">
+                {{ form.data_point.label(class="form-label") }}
+                {{ form.data_point(class="form-control", placeholder="e.g., Goal attainment") }}
+            </div>
+            <div class="col-md-4">
+                {{ form.collected_status.label(class="form-label") }}
+                {{ form.collected_status(class="form-select") }}
+            </div>
+
+            <div class="col-md-4">
+                {{ form.system_location.label(class="form-label") }}
+                {{ form.system_location(class="form-control", placeholder="e.g., Google Drive / ClickUp") }}
+            </div>
+            <div class="col-md-4">
+                {{ form.access_method.label(class="form-label") }}
+                {{ form.access_method(class="form-control", placeholder="e.g., CSV export after consent") }}
+            </div>
+            <div class="col-md-2">
+                {{ form.sensitivity.label(class="form-label") }}
+                {{ form.sensitivity(class="form-select") }}
+            </div>
+            <div class="col-md-2">
+                {{ form.anonymity.label(class="form-label") }}
+                {{ form.anonymity(class="form-select") }}
+            </div>
+
+            <div class="col-12">
+                {{ form.notes.label(class="form-label") }}
+                {{ form.notes(class="form-control", rows="2", placeholder="Optional notes") }}
+            </div>
+
+            <div class="col-12">
+                <button type="submit" class="btn btn-primary">
+                    <i class="bi bi-plus-circle me-1"></i>Add
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <h5 class="card-title mb-0">Inventory Items</h5>
+        <div class="small text-muted">Edit inline and click Save</div>
+    </div>
+    <div class="card-body">
+        {% if items %}
+            <div class="table-responsive">
+                <table class="table table-sm table-bordered align-middle">
+                    <thead class="table-light">
+                        <tr>
+                            <th style="min-width: 160px;">Category</th>
+                            <th style="min-width: 200px;">Data Point</th>
+                            <th style="min-width: 110px;">Collected</th>
+                            <th style="min-width: 170px;">System</th>
+                            <th style="min-width: 170px;">Access</th>
+                            <th style="min-width: 120px;">Sensitivity</th>
+                            <th style="min-width: 160px;">Anonymity</th>
+                            <th style="min-width: 220px;">Notes</th>
+                            <th style="width: 150px;">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for it in items %}
+                            {% set form_id = 'inv-update-' ~ it.id %}
+                            <tr>
+                                <td><input class="form-control form-control-sm" form="{{ form_id }}" name="data_category" value="{{ it.data_category }}"></td>
+                                <td><input class="form-control form-control-sm" form="{{ form_id }}" name="data_point" value="{{ it.data_point }}"></td>
+                                    <td>
+                                        <select class="form-select form-select-sm" form="{{ form_id }}" name="collected_status">
+                                            <option value="yes" {% if it.collected_status == 'yes' %}selected{% endif %}>Yes</option>
+                                            <option value="partial" {% if it.collected_status == 'partial' %}selected{% endif %}>Partial</option>
+                                            <option value="no" {% if it.collected_status == 'no' %}selected{% endif %}>No</option>
+                                        </select>
+                                    </td>
+                                    <td><input class="form-control form-control-sm" form="{{ form_id }}" name="system_location" value="{{ it.system_location or '' }}"></td>
+                                    <td><input class="form-control form-control-sm" form="{{ form_id }}" name="access_method" value="{{ it.access_method or '' }}"></td>
+                                    <td>
+                                        <select class="form-select form-select-sm" form="{{ form_id }}" name="sensitivity">
+                                            <option value="" {% if not it.sensitivity %}selected{% endif %}>—</option>
+                                            <option value="low" {% if it.sensitivity == 'low' %}selected{% endif %}>Low</option>
+                                            <option value="medium" {% if it.sensitivity == 'medium' %}selected{% endif %}>Medium</option>
+                                            <option value="high" {% if it.sensitivity == 'high' %}selected{% endif %}>High</option>
+                                        </select>
+                                    </td>
+                                    <td>
+                                        <select class="form-select form-select-sm" form="{{ form_id }}" name="anonymity">
+                                            <option value="" {% if not it.anonymity %}selected{% endif %}>—</option>
+                                            <option value="unknown" {% if it.anonymity == 'unknown' %}selected{% endif %}>Unknown</option>
+                                            <option value="anonymous" {% if it.anonymity == 'anonymous' %}selected{% endif %}>Anonymous</option>
+                                            <option value="not_anonymous" {% if it.anonymity == 'not_anonymous' %}selected{% endif %}>Not anonymous</option>
+                                            <option value="reidentification_risk" {% if it.anonymity == 'reidentification_risk' %}selected{% endif %}>Re-identification risk</option>
+                                        </select>
+                                    </td>
+                                    <td><input class="form-control form-control-sm" form="{{ form_id }}" name="notes" value="{{ it.notes or '' }}"></td>
+                                    <td>
+                                        <div class="d-flex gap-2">
+                                            <form id="{{ form_id }}" method="POST" action="{{ url_for('admin.client_inventory_update_admin', client_id=client.id, item_id=it.id) }}">
+                                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                            </form>
+                                            <button type="submit" class="btn btn-sm btn-outline-primary" form="{{ form_id }}">Save</button>
+
+                                            <form method="POST" action="{{ url_for('admin.client_inventory_delete_admin', client_id=client.id, item_id=it.id) }}">
+                                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                                <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
+                                            </form>
+                                        </div>
+                                    </td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        {% else %}
+            <div class="text-muted">No inventory items yet.</div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
