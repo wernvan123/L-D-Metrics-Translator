@@ -503,6 +503,61 @@ def get_framework_state():
         return jsonify({'success': False, 'error': 'Failed to get framework state'}), 500
 
 
+@context_api.route('/framework/state', methods=['POST'])
+def set_framework_state():
+    """Persist framework-related state in the session (used by Plan Builder).
+
+    Accepts (best-effort):
+    - framework_id: int | null
+    - active_competencies: [int] (or competency_ids)
+    - outcome_id: int | null
+    """
+    try:
+        data = request.get_json(silent=True) or {}
+
+        # framework_id: set or clear
+        if 'framework_id' in data:
+            fw_id = data.get('framework_id')
+            if fw_id is None or str(fw_id).strip() == '':
+                flask_session.pop('context_framework_selected', None)
+            else:
+                fw = Framework.query.get(int(fw_id))
+                if not fw:
+                    return jsonify({'success': False, 'error': 'Framework not found'}), 404
+                context_manager.set_selected_framework(int(fw_id))
+
+        # active competencies: set or clear
+        if 'active_competencies' in data or 'competency_ids' in data:
+            competency_ids = data.get('active_competencies')
+            if competency_ids is None:
+                competency_ids = data.get('competency_ids')
+            if competency_ids is None:
+                competency_ids = []
+            if not isinstance(competency_ids, list):
+                return jsonify({'success': False, 'error': 'active_competencies must be a list'}), 400
+            if not competency_ids:
+                flask_session.pop('context_framework_active_competencies', None)
+            else:
+                valid_ids = [c.id for c in Competency.query.filter(Competency.id.in_(competency_ids)).all()]
+                context_manager.set_active_competencies(valid_ids)
+
+        # outcome_id: store or clear (Plan Builder uses same endpoint)
+        if 'outcome_id' in data:
+            outcome_id = data.get('outcome_id')
+            if outcome_id is None or str(outcome_id).strip() == '':
+                flask_session.pop('context_framework_selected_outcome', None)
+            else:
+                context_manager.store_context('framework', 'selected_outcome', {
+                    'outcome_id': int(outcome_id),
+                })
+
+        flask_session.modified = True
+        return get_framework_state()
+    except Exception as e:
+        logger.error(f"Error setting framework state: {e}")
+        return jsonify({'success': False, 'error': 'Failed to set framework state'}), 500
+
+
 # ---------------------------------------------
 # Plan Items (session-backed)
 # ---------------------------------------------

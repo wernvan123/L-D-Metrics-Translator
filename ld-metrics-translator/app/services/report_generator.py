@@ -26,6 +26,7 @@ from app.models import (
     LDOutcome, Metric
 )
 from app import db
+from app.workspace_stamp import safe_component, stamp_filename
 
 
 @dataclass
@@ -84,12 +85,24 @@ class DynamicReportGenerator:
         
         # Get or create report template
         template = self._get_template(config.template_type)
+
+        ctx_ids = config.generation_context or {}
+        try:
+            client_company_id = int(ctx_ids.get('client_company_id')) if ctx_ids.get('client_company_id') is not None else None
+        except Exception:
+            client_company_id = None
+        try:
+            client_engagement_id = int(ctx_ids.get('client_engagement_id')) if ctx_ids.get('client_engagement_id') is not None else None
+        except Exception:
+            client_engagement_id = None
         
         # Create report record
         report = DynamicReport.create_report(
             title=config.title,
             template_id=template.id,
             session_id=config.session_id,
+            client_company_id=client_company_id,
+            client_engagement_id=client_engagement_id,
             selected_outcomes=config.selected_outcomes,
             selected_metrics=config.selected_metrics,
             ai_recommendations=config.ai_recommendations,
@@ -428,10 +441,25 @@ Expected Outcomes: Implementation will provide actionable insights into {outcome
         # dirname(dirname(dirname(__file__))) -> .../ld-metrics-translator
         app_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
         reports_dir = os.path.join(app_root, 'static', 'reports')
+
+        ctx = config.generation_context or {}
+        client_slug = safe_component(ctx.get('client_slug') or ctx.get('client') or '', default='')
+        engagement_slug = safe_component(ctx.get('engagement_slug') or ctx.get('engagement') or '', default='')
+        if client_slug:
+            reports_dir = os.path.join(reports_dir, client_slug)
+            if engagement_slug:
+                reports_dir = os.path.join(reports_dir, engagement_slug)
+
         os.makedirs(reports_dir, exist_ok=True)
         
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        filename = f"report_{report.id}_{timestamp}.pdf"
+        safe_title = safe_component(getattr(report, 'title', None) or '', default=f"report_{report.id}")
+        stored_base = f"{safe_title}__r{report.id}_{timestamp}.pdf"
+        filename = stamp_filename(stored_base, workspace={
+            'client_slug': client_slug,
+            'engagement_slug': engagement_slug,
+            'session_id': config.session_id,
+        })
         pdf_path = os.path.join(reports_dir, filename)
         
         doc = SimpleDocTemplate(pdf_path, pagesize=letter)

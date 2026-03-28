@@ -13,7 +13,7 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=20250924-1">
     {% block page_styles %}{% endblock %}
 </head>
-<body>
+<body data-requires-workspace="{% block requires_workspace %}0{% endblock %}">
     <header class="header">
         {% block top_nav %}
         <nav class="navbar">
@@ -59,6 +59,28 @@
                 </div>
             </div>
         </nav>
+        <div id="workspace-bar" class="workspace-bar" aria-label="Workspace">
+            <div class="nav-container workspace-inner">
+                <div class="workspace-left">
+                    <span class="workspace-title">Workspace</span>
+                    <span id="workspace-label" class="workspace-label">No client / No engagement</span>
+                    <span id="workspace-status" class="workspace-status" style="display:none"></span>
+                </div>
+                <div class="workspace-controls">
+                    <button id="workspace-new-client" class="btn btn-sm" type="button">New client</button>
+                    <label class="workspace-field">
+                        <span>Client</span>
+                        <select id="workspace-client"></select>
+                    </label>
+                    <label class="workspace-field">
+                        <span>Engagement</span>
+                        <select id="workspace-engagement"></select>
+                    </label>
+                    <button id="workspace-new-engagement" class="btn btn-sm" type="button">New engagement</button>
+                    <button id="workspace-apply" class="btn btn-sm btn-primary" type="button">Apply</button>
+                </div>
+            </div>
+        </div>
         {% if UI_TABS_V2 and WORKFLOW_STRIP and request.path != url_for('main.dashboard') %}
         {% block workflow_strip %}
       <div class="workflow-strip">
@@ -95,6 +117,13 @@
         {% block content %}{% endblock %}
     </main>
 
+    <div id="workspace-gate" class="workspace-gate" style="display:none" aria-hidden="true">
+        <div class="workspace-gate-card" role="dialog" aria-modal="true">
+            <h3>Select a workspace to continue</h3>
+            <p>Choose a client and engagement in the Workspace bar above. This prevents mixing outputs between clients.</p>
+        </div>
+    </div>
+
     <footer class="footer">
         <div class="footer-container">
             <p>&copy; 2024 L & D Metrics Translator. Built for Learning & Development professionals.</p>
@@ -117,6 +146,7 @@
     <script src="{{ url_for('static', filename='js/frameworks.js') }}?v=20250829"></script>
     <!-- Tabs Router -->
     <script src="{{ url_for('static', filename='js/tabs.js') }}?v=20250829"></script>
+    <script src="{{ url_for('static', filename='js/workspace-selector.js') }}?v=20260228-1"></script>
     
     <!-- Initialize Event Analyzer -->
     <script>

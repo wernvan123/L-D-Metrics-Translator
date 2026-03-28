@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block step %}plan-builder{% endblock %}
+{% block requires_workspace %}1{% endblock %}
 {% block breadcrumbs %}
   <a href="/diagnostics">Diagnostics</a>
   <span>→</span>
@@ -9,24 +10,39 @@
 {% endblock %}
 {% block content %}
 <section class="page report-page">
-  <div class="card">
-    <div class="card-header">
-      <h2>Generate Report</h2>
-    </div>
-    <div class="card-body">
-      <p>This page starts a dynamic report job and shows progress. You can navigate away; the job will continue.</p>
-      <div class="row gap">
+  <div class="container" style="max-width: 980px;">
+    <style>
+      .report-page { padding-top: 20px; padding-bottom: 28px; }
+      .report-progress-container { margin-top: 18px; }
+      .progress-actions .btn { min-width: 220px; }
+    </style>
+    <div class="report-progress-container">
+      <div class="progress-header">
+        <h4 id="rpt-heading">Report</h4>
+        <p id="rpt-subtitle">Generate a dynamic report and track progress. You can navigate away; the job will continue.</p>
+      </div>
+
+      <div id="rpt-form" class="row gap" style="align-items:flex-end;">
         <label class="field" style="flex:2 1 360px;">
           <span>Title</span>
           <input id="rpt-title" placeholder="Development Plan" />
         </label>
-        <button id="rpt-start" class="btn primary" style="align-self:flex-end;">Start Report</button>
+        <button id="rpt-start" class="btn primary">Start Report</button>
       </div>
+
       <div id="rpt-status" class="notice" style="display:none"></div>
-      <div id="rpt-progress" class="progress" style="margin-top:12px;display:none">
-        <div id="rpt-bar" class="progress-bar" style="width:0%"></div>
+
+      <div id="rpt-progress" class="progress-bar-container" style="display:none">
+        <div class="progress-bar">
+          <div id="rpt-bar" class="progress-fill" style="width:0%"></div>
+        </div>
+        <div class="progress-text">
+          <span id="rpt-progress-label">Preparing…</span>
+          <span id="rpt-progress-percent">0%</span>
+        </div>
       </div>
-      <div id="rpt-result" class="mt"></div>
+
+      <div id="rpt-result" class="progress-actions"></div>
     </div>
   </div>
 </section>
@@ -37,12 +53,35 @@
   const el = {
     start: document.getElementById('rpt-start'),
     title: document.getElementById('rpt-title'),
+    form: document.getElementById('rpt-form'),
+    heading: document.getElementById('rpt-heading'),
+    subtitle: document.getElementById('rpt-subtitle'),
     status: document.getElementById('rpt-status'),
     barWrap: document.getElementById('rpt-progress'),
     bar: document.getElementById('rpt-bar'),
+    progressLabel: document.getElementById('rpt-progress-label'),
+    progressPct: document.getElementById('rpt-progress-percent'),
     result: document.getElementById('rpt-result'),
   };
-  let pollId = null; let currentJob = null;
+  let pollId = null; let currentReportId = null;
+
+  function getQueryParam(name){
+    try{
+      const qs = new URLSearchParams(window.location.search || '');
+      return qs.get(name);
+    }catch{ return null; }
+  }
+
+  async function loadReportTitle(){
+    if(!currentReportId || !el.title) return;
+    try{
+      const r = await fetch(`/api/dynamic-reports/${encodeURIComponent(currentReportId)}`, { headers: { 'Accept':'application/json' } });
+      if(!r.ok) return;
+      const j = await r.json();
+      const t = j && j.report && j.report.title ? String(j.report.title) : '';
+      if(t) el.title.value = t;
+    }catch(e){}
+  }
 
   function setStatus(type, msg){
     if(!msg){ el.status.style.display='none'; return; }
@@ -52,34 +91,64 @@
   function setProgress(p){
     el.barWrap.style.display='block';
     el.bar.style.width = Math.max(0, Math.min(100, p)) + '%';
+    if(el.progressPct) el.progressPct.textContent = `${Math.max(0, Math.min(100, p))}%`;
   }
   async function startJob(){
     try{
       setStatus('', 'Starting report…'); el.result.innerHTML = ''; setProgress(0);
-      const res = await fetch('/api/dynamic-reports', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ title: (el.title.value||'').trim() || 'Development Plan' }) });
+      const res = await fetch('/api/dynamic-reports', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({
+          title: (el.title.value||'').trim() || 'Development Plan',
+          template_type: 'comprehensive',
+          selected_outcomes: [],
+          selected_metrics: [],
+          session_id: String(Date.now()),
+          generation_context: { source: 'plan_report' }
+        })
+      });
       if(!res.ok) throw new Error('Failed to start report');
-      const data = await res.json(); currentJob = data.job_id; if(window.notify) window.notify('success','Report started');
+      const data = await res.json();
+      currentReportId = data && data.report && data.report.id != null ? data.report.id : null;
+      if(!currentReportId) throw new Error('Failed to start report');
+      if(window.notify) window.notify('success','Report started');
       poll();
     }catch(err){ setStatus('warning', err.message||'Failed to start'); if(window.notify) window.notify('error', err.message||'Failed to start'); }
   }
   async function poll(){
-    if(!currentJob) return;
+    if(!currentReportId) return;
     try{
-      const r = await fetch(`/api/dynamic-reports/${encodeURIComponent(currentJob)}/status`);
+      const r = await fetch(`/api/dynamic-reports/${encodeURIComponent(currentReportId)}/progress`);
       if(!r.ok) throw new Error('Status check failed');
       const s = await r.json();
-      setProgress(s.progress||0);
-      if(String(s.status).toLowerCase() === 'completed'){
+      const p = (s && s.progress && s.progress.progress != null) ? s.progress.progress : 0;
+      const st = (s && s.progress && s.progress.status) ? String(s.progress.status).toLowerCase() : '';
+      setProgress(p||0);
+      if(st === 'completed'){
         setStatus('success', 'Report is ready');
-        el.result.innerHTML = `<a class="btn primary" href="${s.download_url||'/sample.pdf'}">Download Report</a>`;
+        el.result.innerHTML = `<a class="btn primary" href="/api/dynamic-reports/${encodeURIComponent(currentReportId)}/download">Download Full Report (PDF)</a>`;
         pollId && clearTimeout(pollId); pollId = null; return;
       }
-      setStatus('', `Progress: ${s.progress||0}%`);
+      if(el.progressLabel) el.progressLabel.textContent = st ? st.charAt(0).toUpperCase() + st.slice(1) : 'Working…';
+      setStatus('', '');
       pollId = setTimeout(poll, 800);
     }catch(err){ setStatus('warning', err.message||'Polling error'); pollId = setTimeout(poll, 1200); }
   }
 
-  if(el.start){ el.start.addEventListener('click', startJob); }
+  const bootReportId = getQueryParam('report_id');
+  if(bootReportId){
+    currentReportId = bootReportId;
+    if(el.form) el.form.style.display = 'none';
+    if(el.title) el.title.disabled = true;
+    if(el.heading) el.heading.textContent = 'Report Progress';
+    if(el.subtitle) el.subtitle.textContent = 'Your report is being generated. You can navigate away; it will continue in the background.';
+    setStatus('', 'Loading report progress…');
+    loadReportTitle();
+    poll();
+  } else {
+    if(el.start){ el.start.addEventListener('click', startJob); }
+  }
 })();
 </script>
 {% endblock %}

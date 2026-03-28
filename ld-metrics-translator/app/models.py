@@ -296,6 +296,21 @@ class ClientCompany(db.Model):
     )
 
 
+class ClientEngagement(db.Model):
+    __tablename__ = 'client_engagements'
+
+    id = db.Column(db.Integer, primary_key=True)
+    client_company_id = db.Column(db.Integer, db.ForeignKey('client_companies.id'), nullable=False, index=True)
+
+    name = db.Column(db.String(255), nullable=False)
+    start_date = db.Column(db.DateTime)
+    end_date = db.Column(db.DateTime)
+    notes = db.Column(db.Text)
+    created_date = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+
+    client_company = db.relationship('ClientCompany', backref=db.backref('engagements', lazy='dynamic', cascade='all, delete-orphan'))
+
+
 class ClientDataInventoryItem(db.Model):
     __tablename__ = 'client_data_inventory_items'
 
@@ -1062,6 +1077,9 @@ class DynamicReport(db.Model):
     template_id = db.Column(db.Integer, db.ForeignKey('report_templates.id'), nullable=False)
     session_id = db.Column(db.String(255), index=True, nullable=False)
 
+    client_company_id = db.Column(db.Integer, db.ForeignKey('client_companies.id'), index=True)
+    client_engagement_id = db.Column(db.Integer, db.ForeignKey('client_engagements.id'), index=True)
+
     # Selections and context
     selected_outcomes = db.Column(db.Text)      # JSON array of IDs
     selected_metrics = db.Column(db.Text)       # JSON array of IDs
@@ -1099,6 +1117,8 @@ class DynamicReport(db.Model):
         title: str,
         template_id: int,
         session_id: int,
+        client_company_id: int | None,
+        client_engagement_id: int | None,
         selected_outcomes,
         selected_metrics,
         ai_recommendations,
@@ -1108,6 +1128,8 @@ class DynamicReport(db.Model):
             title=title,
             template_id=template_id,
             session_id=session_id,
+            client_company_id=client_company_id,
+            client_engagement_id=client_engagement_id,
             selected_outcomes=json.dumps(selected_outcomes or []),
             selected_metrics=json.dumps(selected_metrics or []),
             ai_recommendations=json.dumps(ai_recommendations or []),
@@ -1154,6 +1176,8 @@ class DynamicReport(db.Model):
             'title': self.title,
             'template_id': self.template_id,
             'session_id': self.session_id,
+            'client_company_id': self.client_company_id,
+            'client_engagement_id': self.client_engagement_id,
             'selected_outcomes': _loads(self.selected_outcomes, []),
             'selected_metrics': _loads(self.selected_metrics, []),
             'ai_recommendations': _loads(self.ai_recommendations, []),

@@ -7,6 +7,7 @@ from flask import Blueprint, request, jsonify, send_file, current_app
 from app.models import Metric, LDOutcome, MetricType
 from app.pdf_service import PDFReportGenerator
 from app import db
+from app.workspace_stamp import stamp_filename
 import io
 import json
 from datetime import datetime
@@ -56,14 +57,14 @@ def generate_comprehensive_report():
         
         if report_type == 'summary':
             pdf_buffer = pdf_generator.generate_quick_summary(metrics)
-            filename = f"LD_Metrics_Summary_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+            filename = stamp_filename(f"LD_Metrics_Summary_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf")
         else:
             pdf_buffer = pdf_generator.generate_metrics_report(
                 selected_metrics=metrics,
                 recommendations=recommendations,
                 user_selections=user_selections
             )
-            filename = f"LD_Metrics_Report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+            filename = stamp_filename(f"LD_Metrics_Report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf")
         
         # Return PDF as download
         return send_file(
@@ -74,7 +75,7 @@ def generate_comprehensive_report():
         )
         
     except Exception as e:
-        current_app.logger.error(f"PDF generation error: {str(e)}")
+        current_app.logger.exception(f"PDF generation error: {str(e)}")
         return jsonify({
             'error': 'Failed to generate PDF report',
             'details': str(e)
@@ -155,14 +156,14 @@ def generate_from_current_selections():
         
         if report_type == 'summary':
             pdf_buffer = pdf_generator.generate_quick_summary(metrics)
-            filename = f"LD_Metrics_Summary_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+            filename = stamp_filename(f"LD_Metrics_Summary_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf")
         else:
             pdf_buffer = pdf_generator.generate_metrics_report(
                 selected_metrics=metrics,
                 recommendations=recommendations,
                 user_selections=user_selections
             )
-            filename = f"LD_Metrics_Report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+            filename = stamp_filename(f"LD_Metrics_Report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf")
         
         return send_file(
             pdf_buffer,
@@ -287,7 +288,7 @@ def generate_comparison_report():
         b_report = data.get('b_report') or {}
         summary_html = data.get('summary_html') or ''
         key_changes = data.get('key_changes') or []
-        filename = data.get('filename') or f"LD_Comparison_Report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+        filename = stamp_filename(data.get('filename') or f"LD_Comparison_Report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf")
 
         pdf_generator = PDFReportGenerator()
         pdf_buffer = pdf_generator.generate_comparison_report(
@@ -303,7 +304,7 @@ def generate_comparison_report():
             mimetype='application/pdf'
         )
     except Exception as e:
-        current_app.logger.error(f"Comparison PDF generation error: {str(e)}")
+        current_app.logger.exception(f"Comparison PDF generation error: {str(e)}")
         return jsonify({
             'error': 'Failed to generate comparison PDF',
             'details': str(e)

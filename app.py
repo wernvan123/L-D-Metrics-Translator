@@ -6,6 +6,7 @@ from datetime import datetime
 import os
 import sys
 import sqlite3
+import re
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SUB_APP_DIR = os.path.join(BASE_DIR, 'ld-metrics-translator')
@@ -687,15 +688,40 @@ def dev_role_gaps(role_id: int):
 # ---------------- Minimal Reports APIs for dev server ----------------
 @app.route('/api/reports', methods=['GET'])
 def dev_reports_list():
-    """Return an empty list or a lightweight list if a table exists. Safe fallback to empty."""
     try:
+        active_client_id = session.get('active_client_id')
+        active_engagement_id = session.get('active_engagement_id')
+        if BACKEND_AVAILABLE and backend_models is not None and backend_app is not None:
+            with backend_app.app_context():
+                DynamicReport = getattr(backend_models, 'DynamicReport', None)
+                if DynamicReport is None:
+                    return jsonify({'reports': [], 'count': 0})
+                if not active_client_id or not active_engagement_id:
+                    return jsonify({'reports': [], 'count': 0})
+                q = (
+                    DynamicReport.query
+                    .filter(
+                        DynamicReport.client_company_id == int(active_client_id),
+                        DynamicReport.client_engagement_id == int(active_engagement_id),
+                    )
+                    .order_by(DynamicReport.created_date.desc())
+                    .limit(50)
+                )
+                items = [r.to_dict(include_content=False) for r in q.all()]
+                return jsonify({'reports': items, 'count': len(items)})
+
         con = _db_conn()
         if not con:
             return jsonify({'reports': [], 'count': 0})
         cur = con.cursor()
-        # Try to select if table exists
         try:
-            cur.execute("SELECT id, title, created_date, generation_status FROM dynamic_reports ORDER BY created_date DESC LIMIT 50")
+            if active_client_id and active_engagement_id:
+                cur.execute(
+                    "SELECT id, title, created_date, generation_status FROM dynamic_reports WHERE client_company_id = ? AND client_engagement_id = ? ORDER BY created_date DESC LIMIT 50",
+                    (int(active_client_id), int(active_engagement_id)),
+                )
+            else:
+                return jsonify({'reports': [], 'count': 0})
             rows = _rows_to_dicts(cur)
             return jsonify({'reports': rows, 'count': len(rows)})
         except Exception:
@@ -707,25 +733,295 @@ def dev_reports_list():
 @app.route('/api/reports/<int:report_id>', methods=['GET'])
 def dev_reports_get(report_id: int):
     try:
+        include = (request.args.get('include') or '').lower()
+        include_content = 'content' in include
+        active_client_id = session.get('active_client_id')
+        active_engagement_id = session.get('active_engagement_id')
+
+        if BACKEND_AVAILABLE and backend_models is not None and backend_app is not None:
+            with backend_app.app_context():
+                DynamicReport = getattr(backend_models, 'DynamicReport', None)
+                if DynamicReport is None:
+                    return jsonify({'error': 'not found'}), 404
+                r = DynamicReport.query.get(int(report_id))
+                if not r:
+                    return jsonify({'error': 'not found'}), 404
+                if not active_client_id or not active_engagement_id:
+                    return jsonify({'error': 'not found'}), 404
+                if getattr(r, 'client_company_id', None) is not None and getattr(r, 'client_engagement_id', None) is not None:
+                    if int(r.client_company_id) != int(active_client_id) or int(r.client_engagement_id) != int(active_engagement_id):
+                        return jsonify({'error': 'not found'}), 404
+                return jsonify({'report': r.to_dict(include_content=include_content)})
+
         con = _db_conn()
         if not con:
             return jsonify({'error': 'not found'}), 404
+        if not active_client_id or not active_engagement_id:
+            return jsonify({'error': 'not found'}), 404
         cur = con.cursor()
         try:
-            cur.execute("SELECT id, title, created_date, generation_status, content FROM dynamic_reports WHERE id = ?", (report_id,))
+            cur.execute(
+                "SELECT id, title, created_date, generation_status, content, client_company_id, client_engagement_id FROM dynamic_reports WHERE id = ?",
+                (int(report_id),),
+            )
             row = cur.fetchone()
             if not row:
                 return jsonify({'error': 'not found'}), 404
             cols = [c[0] for c in cur.description]
             rec = dict(zip(cols, row))
-            include = (request.args.get('include') or '').lower()
-            if 'content' not in include:
+            if rec.get('client_company_id') is not None and int(rec.get('client_company_id')) != int(active_client_id):
+                return jsonify({'error': 'not found'}), 404
+            if rec.get('client_engagement_id') is not None and int(rec.get('client_engagement_id')) != int(active_engagement_id):
+                return jsonify({'error': 'not found'}), 404
+            if not include_content:
                 rec.pop('content', None)
             return jsonify({'report': rec})
         except Exception:
             return jsonify({'error': 'not found'}), 404
     except Exception:
         return jsonify({'error': 'not found'}), 404
+
+
+def _slugify(value: str) -> str:
+    s = (value or '').strip().lower()
+    s = re.sub(r'[^a-z0-9]+', '-', s)
+    s = re.sub(r'-{2,}', '-', s).strip('-')
+    return s
+
+
+def _workspace_state_payload():
+    client_id = session.get('active_client_id')
+    engagement_id = session.get('active_engagement_id')
+    client = None
+    engagement = None
+
+    try:
+        if BACKEND_AVAILABLE and backend_models is not None and backend_app is not None:
+            with backend_app.app_context():
+                ClientCompany = getattr(backend_models, 'ClientCompany', None)
+                ClientEngagement = getattr(backend_models, 'ClientEngagement', None)
+                if client_id and ClientCompany is not None:
+                    cc = ClientCompany.query.get(int(client_id))
+                    if cc:
+                        client = {'id': cc.id, 'name': cc.name, 'slug': getattr(cc, 'slug', None)}
+                if engagement_id and ClientEngagement is not None:
+                    ce = ClientEngagement.query.get(int(engagement_id))
+                    if ce:
+                        engagement = {
+                            'id': ce.id,
+                            'client_company_id': ce.client_company_id,
+                            'name': ce.name,
+                            'start_date': ce.start_date.isoformat() if getattr(ce, 'start_date', None) else None,
+                            'end_date': ce.end_date.isoformat() if getattr(ce, 'end_date', None) else None,
+                        }
+    except Exception:
+        client = None
+        engagement = None
+
+    return {
+        'active_client': client,
+        'active_engagement': engagement,
+    }
+
+
+@app.route('/api/workspace/state', methods=['GET'])
+def dev_workspace_state():
+    return jsonify({'success': True, **_workspace_state_payload()}), 200
+
+
+@app.route('/api/workspace/clients', methods=['GET'])
+def dev_workspace_clients_list():
+    try:
+        if BACKEND_AVAILABLE and backend_models is not None and backend_app is not None:
+            with backend_app.app_context():
+                ClientCompany = getattr(backend_models, 'ClientCompany', None)
+                if ClientCompany is None:
+                    return jsonify({'success': True, 'clients': [], **_workspace_state_payload()}), 200
+                clients = ClientCompany.query.order_by(ClientCompany.name.asc()).all()
+                return jsonify({
+                    'success': True,
+                    'clients': [{'id': c.id, 'name': c.name, 'slug': getattr(c, 'slug', None)} for c in clients],
+                    **_workspace_state_payload(),
+                }), 200
+        return jsonify({'success': True, 'clients': [], **_workspace_state_payload()}), 200
+    except Exception:
+        return jsonify({'success': False, 'error': 'Failed to list clients'}), 500
+
+
+@app.route('/api/workspace/clients', methods=['POST'])
+def dev_workspace_clients_create():
+    try:
+        if not (BACKEND_AVAILABLE and backend_models is not None and backend_app is not None and backend_db is not None):
+            return jsonify({'success': False, 'error': 'Failed to create client'}), 500
+
+        data = request.get_json(silent=True) or {}
+        name = (data.get('name') or '').strip()
+        if not name:
+            return jsonify({'success': False, 'error': 'name is required'}), 400
+
+        with backend_app.app_context():
+            ClientCompany = getattr(backend_models, 'ClientCompany', None)
+            if ClientCompany is None:
+                return jsonify({'success': False, 'error': 'Failed to create client'}), 500
+
+            base = _slugify(name) or 'client'
+            candidate = base
+            n = 2
+            while ClientCompany.query.filter_by(slug=candidate).first():
+                candidate = f"{base}-{n}"
+                n += 1
+
+            client = ClientCompany(name=name, slug=candidate)
+            backend_db.session.add(client)
+            backend_db.session.commit()
+
+            session['active_client_id'] = int(client.id)
+            session.pop('active_engagement_id', None)
+            session.modified = True
+
+            return jsonify({
+                'success': True,
+                'client': {'id': client.id, 'name': client.name, 'slug': getattr(client, 'slug', None)},
+                **_workspace_state_payload(),
+            }), 201
+    except Exception:
+        try:
+            if backend_db is not None:
+                backend_db.session.rollback()
+        except Exception:
+            pass
+        return jsonify({'success': False, 'error': 'Failed to create client'}), 500
+
+
+@app.route('/api/workspace/clients/<int:client_id>/engagements', methods=['GET'])
+def dev_workspace_engagements_list(client_id: int):
+    try:
+        if BACKEND_AVAILABLE and backend_models is not None and backend_app is not None:
+            with backend_app.app_context():
+                ClientEngagement = getattr(backend_models, 'ClientEngagement', None)
+                if ClientEngagement is None:
+                    return jsonify({'success': True, 'engagements': [], **_workspace_state_payload()}), 200
+                engagements = (
+                    ClientEngagement.query
+                    .filter(ClientEngagement.client_company_id == int(client_id))
+                    .order_by(ClientEngagement.created_date.desc())
+                    .limit(200)
+                    .all()
+                )
+                return jsonify({
+                    'success': True,
+                    'engagements': [
+                        {
+                            'id': e.id,
+                            'client_company_id': e.client_company_id,
+                            'name': e.name,
+                            'start_date': e.start_date.isoformat() if getattr(e, 'start_date', None) else None,
+                            'end_date': e.end_date.isoformat() if getattr(e, 'end_date', None) else None,
+                        }
+                        for e in engagements
+                    ],
+                    **_workspace_state_payload(),
+                }), 200
+        return jsonify({'success': True, 'engagements': [], **_workspace_state_payload()}), 200
+    except Exception:
+        return jsonify({'success': False, 'error': 'Failed to list engagements'}), 500
+
+
+@app.route('/api/workspace/select', methods=['POST'])
+def dev_workspace_select():
+    try:
+        data = request.get_json(silent=True) or {}
+        client_id = data.get('client_id')
+        engagement_id = data.get('engagement_id')
+
+        if not (BACKEND_AVAILABLE and backend_models is not None and backend_app is not None):
+            session.pop('active_client_id', None)
+            session.pop('active_engagement_id', None)
+            session.modified = True
+            return jsonify({'success': True, **_workspace_state_payload()}), 200
+
+        with backend_app.app_context():
+            ClientCompany = getattr(backend_models, 'ClientCompany', None)
+            ClientEngagement = getattr(backend_models, 'ClientEngagement', None)
+
+            if client_id is not None and str(client_id).strip() != '':
+                if ClientCompany is None:
+                    return jsonify({'success': False, 'error': 'Client not found'}), 404
+                cc = ClientCompany.query.get(int(client_id))
+                if not cc:
+                    return jsonify({'success': False, 'error': 'Client not found'}), 404
+                session['active_client_id'] = int(cc.id)
+            else:
+                session.pop('active_client_id', None)
+                session.pop('active_engagement_id', None)
+
+            if engagement_id is not None and str(engagement_id).strip() != '':
+                if ClientEngagement is None:
+                    return jsonify({'success': False, 'error': 'Engagement not found'}), 404
+                ce = ClientEngagement.query.get(int(engagement_id))
+                if not ce:
+                    return jsonify({'success': False, 'error': 'Engagement not found'}), 404
+                if session.get('active_client_id') and int(ce.client_company_id) != int(session.get('active_client_id')):
+                    return jsonify({'success': False, 'error': 'Engagement does not belong to active client'}), 400
+                session['active_engagement_id'] = int(ce.id)
+            else:
+                session.pop('active_engagement_id', None)
+
+        session.modified = True
+        return jsonify({'success': True, **_workspace_state_payload()}), 200
+    except Exception:
+        return jsonify({'success': False, 'error': 'Failed to select workspace'}), 500
+
+
+@app.route('/api/workspace/engagements', methods=['POST'])
+def dev_workspace_engagements_create():
+    try:
+        if not (BACKEND_AVAILABLE and backend_models is not None and backend_app is not None and backend_db is not None):
+            return jsonify({'success': False, 'error': 'Failed to create engagement'}), 500
+
+        data = request.get_json(silent=True) or {}
+        client_id = data.get('client_id') or session.get('active_client_id')
+        name = (data.get('name') or '').strip()
+        if not client_id:
+            return jsonify({'success': False, 'error': 'client_id is required'}), 400
+        if not name:
+            return jsonify({'success': False, 'error': 'name is required'}), 400
+
+        with backend_app.app_context():
+            ClientCompany = getattr(backend_models, 'ClientCompany', None)
+            ClientEngagement = getattr(backend_models, 'ClientEngagement', None)
+            if ClientCompany is None or ClientEngagement is None:
+                return jsonify({'success': False, 'error': 'Client not found'}), 404
+            cc = ClientCompany.query.get(int(client_id))
+            if not cc:
+                return jsonify({'success': False, 'error': 'Client not found'}), 404
+
+            engagement = ClientEngagement(client_company_id=int(cc.id), name=name)
+            backend_db.session.add(engagement)
+            backend_db.session.commit()
+
+            session['active_client_id'] = int(cc.id)
+            session['active_engagement_id'] = int(engagement.id)
+            session.modified = True
+
+            return jsonify({
+                'success': True,
+                'engagement': {
+                    'id': engagement.id,
+                    'client_company_id': engagement.client_company_id,
+                    'name': engagement.name,
+                    'start_date': engagement.start_date.isoformat() if getattr(engagement, 'start_date', None) else None,
+                    'end_date': engagement.end_date.isoformat() if getattr(engagement, 'end_date', None) else None,
+                },
+                **_workspace_state_payload(),
+            }), 201
+    except Exception:
+        try:
+            if backend_db is not None:
+                backend_db.session.rollback()
+        except Exception:
+            pass
+        return jsonify({'success': False, 'error': 'Failed to create engagement'}), 500
 
 # Provide simple status/health pages for dev to satisfy base.html links
 @app.route('/status')

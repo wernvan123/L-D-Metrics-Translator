@@ -5,6 +5,10 @@ Generates professional reports with metric descriptions, recommendations, and ne
 
 import io
 import os
+import tempfile
+import traceback
+import re
+import copy
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 
@@ -31,7 +35,7 @@ class PDFReportGenerator:
     """Professional PDF report generator for L&D metrics analysis."""
     
     def __init__(self):
-        self.styles = getSampleStyleSheet()
+        self.styles = copy.deepcopy(getSampleStyleSheet())
         self.setup_custom_styles()
         self.page_width = letter[0]
         self.page_height = letter[1]
@@ -87,14 +91,22 @@ class PDFReportGenerator:
         ))
         
         # Body text with better spacing
-        self.styles.add(ParagraphStyle(
-            name='BodyText',
-            parent=self.styles['Normal'],
-            fontSize=10,
-            spaceAfter=6,
-            alignment=TA_JUSTIFY,
-            fontName='Helvetica'
-        ))
+        try:
+            body_text = self.styles['BodyText']
+            body_text.parent = self.styles['Normal']
+            body_text.fontSize = 10
+            body_text.spaceAfter = 6
+            body_text.alignment = TA_JUSTIFY
+            body_text.fontName = 'Helvetica'
+        except KeyError:
+            self.styles.add(ParagraphStyle(
+                name='BodyText',
+                parent=self.styles['Normal'],
+                fontSize=10,
+                spaceAfter=6,
+                alignment=TA_JUSTIFY,
+                fontName='Helvetica'
+            ))
         
         # Recommendation style
         self.styles.add(ParagraphStyle(
@@ -621,8 +633,8 @@ class PDFReportGenerator:
         
         # Summary stats
         total_metrics = len(metrics)
-        metric_types = len(set(m.metric_type.name for m in metrics))
-        outcomes = len(set(m.ld_outcome.name for m in metrics))
+        metric_types = len(set((m.metric_type.name if getattr(m, 'metric_type', None) is not None else 'Uncategorized') for m in metrics))
+        outcomes = len(set((m.ld_outcome.name if getattr(m, 'ld_outcome', None) is not None else 'Unassigned') for m in metrics))
         
         summary_text = f"""
         <b>Selected Metrics:</b> {total_metrics}<br/>
@@ -636,7 +648,7 @@ class PDFReportGenerator:
         # Top metrics by type
         metrics_by_type = {}
         for metric in metrics:
-            type_name = metric.metric_type.name
+            type_name = metric.metric_type.name if getattr(metric, 'metric_type', None) is not None else 'Uncategorized'
             if type_name not in metrics_by_type:
                 metrics_by_type[type_name] = []
             metrics_by_type[type_name].append(metric)
@@ -706,7 +718,26 @@ class PDFReportGenerator:
         # Summary
         story.append(Paragraph('Summary of Changes', self.styles['SectionHeader']))
         if summary_html:
-            story.append(Paragraph(summary_html, self.styles['BodyText']))
+            def _sanitize_reportlab_html(html: str) -> str:
+                s = (html or '').strip()
+                if not s:
+                    return ''
+                s = s.replace('<strong>', '<b>').replace('</strong>', '</b>')
+                s = s.replace('<em>', '<i>').replace('</em>', '</i>')
+                s = s.replace('<p>', '').replace('</p>', '<br/><br/>')
+                s = s.replace('<div>', '').replace('</div>', '<br/>')
+                # Strip all tags except a small allow-list supported by ReportLab's Paragraph
+                s = re.sub(r'</?(?!b\b|i\b|u\b|br\b)[^>]*>', '', s, flags=re.IGNORECASE)
+                s = re.sub(r'(?:<br\s*/?>\s*){3,}', '<br/><br/>', s, flags=re.IGNORECASE)
+                return s
+
+            sanitized = _sanitize_reportlab_html(summary_html)
+            try:
+                story.append(Paragraph(sanitized, self.styles['BodyText']))
+            except Exception:
+                # Fallback to plain text if the parser still rejects the input
+                plain = re.sub(r'<[^>]+>', '', summary_html)
+                story.append(Paragraph(plain, self.styles['BodyText']))
         else:
             story.append(Paragraph('A concise summary of improvements and key movements between baseline and follow-up.', self.styles['BodyText']))
         story.append(Spacer(1, 12))

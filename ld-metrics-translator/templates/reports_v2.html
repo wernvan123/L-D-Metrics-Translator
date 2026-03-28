@@ -1,5 +1,7 @@
 {% extends "base.html" %}
 
+{% block requires_workspace %}1{% endblock %}
+
 {% block content %}
 <style>
   .page.reports {
@@ -289,7 +291,7 @@
         <span>Search Reports</span>
         <input id="report-search" type="search" placeholder="Find by title or keyword" />
       </label>
-      <span class="meta">Select two reports to enable comparison.</span>
+      <span class="meta" id="compare-meta">Select two completed reports to enable comparison.</span>
     </div>
 
     <div class="reports-table-card">

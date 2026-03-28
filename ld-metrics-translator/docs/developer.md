@@ -79,6 +79,32 @@ This guide provides comprehensive information for developers working on the L&D 
 
 The application exposes lightweight Reports endpoints to support the Reports list, single report view and comparison UI. In local development, the dev server in `app.py` serves safe SQLite-backed fallbacks under the same paths, returning empty results when no local DB is available. In the full backend, these endpoints are provided by the Flask package in `ld-metrics-translator/`.
 
+### Generated PDF reports (stored path vs download name)
+
+Dynamic reports are generated as PDFs and saved to disk, and also downloaded by users through HTTP endpoints.
+
+- Stored path (`DynamicReport.pdf_path`)
+  - This is the filesystem path where the generated PDF is persisted on disk.
+  - Canonical location: `ld-metrics-translator/static/reports/<client_slug>/<engagement_slug>/...`
+
+- Download name (`Content-Disposition` filename)
+  - This is the user-facing filename suggested by the browser download prompt.
+  - The backend stamps the download name with the active workspace prefix (client / engagement / session) for traceability.
+
+Stored filename policy (dynamic reports):
+
+- Stored PDFs are written using a title-based name that is always unique and traceable:
+  - `<workspace_stamp>__<safe_title>__r<report_id>_<timestamp>.pdf`
+  - Example: `monkey_river__6_week_diagnostic_sprint__s17723507__development_planx__r20_20260301_093855.pdf`
+
+Legacy directory consolidation:
+
+- Older builds stored PDFs under `ld-metrics-translator/app/static/reports/`.
+- On startup, the backend attempts a best-effort consolidation:
+  - Move legacy PDFs into: `ld-metrics-translator/static/reports/_legacy/`
+  - Repoint any matching `DynamicReport.pdf_path` records to the new `_legacy` location.
+  - This is intended to avoid broken downloads while keeping the canonical storage under `static/reports/`.
+
 Endpoints:
 
 - GET `/api/reports`
@@ -947,3 +973,7 @@ jobs:
 ---
 
 For additional development questions, consult the [API documentation](api.md) or reach out to the development team at dev@ldmetrics.com.
+
+## Dependency Maintenance Rule
+
+Whenever code changes add, remove, upgrade, or rely on any package, tool, runtime, framework feature, build step, or external integration, also check whether related dependency/config files need updating and update them if needed. This includes requirements.txt, pyproject.toml, package.json, lockfiles, Pipfile, poetry.lock, .env.example, deployment/build config files, and README/setup instructions. Keep dependency declarations accurate and minimal, do not add unused dependencies, remove obsolete dependencies when safe, follow the repository's authoritative dependency file and existing versioning style, create an appropriate dependency file if none exists but one is clearly needed, and mention dependency/config updates in the final summary. Before finishing any coding task, verify whether dependency/config/runtime files should also be updated.

@@ -2,6 +2,7 @@ from functools import wraps
 from flask import Blueprint, jsonify, request, session, current_app, abort
 from app.models import AdminUser, Metric, LDOutcome, MetricType, ReportTemplate, DynamicReport, ReportAnalytics, Framework, Competency, UserSession, competency_metrics
 from app.models import ClientRetroItem, ClientPullRequest, ClientSurveyResponse
+from app.models import ClientCompany, ClientEngagement
 from app.models import (
     RoleProfile,
     RoleKnowledge,
@@ -28,6 +29,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from threading import Lock
 from uuid import uuid4
+from werkzeug.exceptions import HTTPException
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +81,77 @@ def _event_job_set(job_id: str, **updates) -> None:
         if not job:
             return
         job.update(updates)
+
+
+def _active_workspace_ids() -> tuple[int | None, int | None]:
+    try:
+        client_id = session.get('active_client_id')
+        engagement_id = session.get('active_engagement_id')
+        return (int(client_id) if client_id else None, int(engagement_id) if engagement_id else None)
+    except Exception:
+        return (None, None)
+
+
+def _report_workspace_match_or_404(report: DynamicReport, *, route: str) -> None:
+    """Strict workspace isolation: return 404 on mismatch, but warn server-side."""
+    try:
+        active_client_id, active_engagement_id = _active_workspace_ids()
+        if not active_client_id or not active_engagement_id:
+            logger.warning(
+                "Workspace mismatch (no active workspace): route=%s report_id=%s report_client_id=%s report_engagement_id=%s",
+                route,
+                getattr(report, 'id', None),
+                getattr(report, 'client_company_id', None),
+                getattr(report, 'client_engagement_id', None),
+            )
+            abort(404)
+
+        if getattr(report, 'client_company_id', None) is not None and getattr(report, 'client_engagement_id', None) is not None:
+            if int(report.client_company_id) == int(active_client_id) and int(report.client_engagement_id) == int(active_engagement_id):
+                return
+
+        # Fallback for legacy rows: attempt to match using stamped path or generation_context slugs
+        try:
+            from app.workspace_stamp import get_active_workspace, workspace_from_pdf_path, safe_component
+            ws = get_active_workspace() or {}
+            want_client = safe_component(ws.get('client_slug') or '', default='')
+            want_eng = safe_component(ws.get('engagement_slug') or '', default='')
+
+            ctx = {}
+            try:
+                if getattr(report, 'generation_context', None):
+                    ctx = report.generation_context
+                    if isinstance(ctx, str):
+                        ctx = json.loads(ctx)
+                    if not isinstance(ctx, dict):
+                        ctx = {}
+            except Exception:
+                ctx = {}
+
+            have_client = safe_component((ctx.get('client_slug') if isinstance(ctx, dict) else None) or '', default='')
+            have_eng = safe_component((ctx.get('engagement_slug') if isinstance(ctx, dict) else None) or '', default='')
+            if not (have_client and have_eng):
+                pws = workspace_from_pdf_path(getattr(report, 'pdf_path', None)) or {}
+                have_client = safe_component(pws.get('client_slug') or '', default='')
+                have_eng = safe_component(pws.get('engagement_slug') or '', default='')
+
+            if want_client and want_eng and have_client and have_eng and want_client == have_client and want_eng == have_eng:
+                return
+        except Exception:
+            pass
+
+        logger.warning(
+            "Workspace mismatch: route=%s report_id=%s active_client_id=%s active_engagement_id=%s report_client_id=%s report_engagement_id=%s",
+            route,
+            getattr(report, 'id', None),
+            active_client_id,
+            active_engagement_id,
+            getattr(report, 'client_company_id', None),
+            getattr(report, 'client_engagement_id', None),
+        )
+        abort(404)
+    except Exception:
+        abort(404)
 
 
 def _event_job_get(job_id: str) -> dict | None:
@@ -201,6 +274,204 @@ def _run_event_analysis_job(
             )
 
 api = Blueprint('api', __name__, url_prefix='/api')
+
+
+def _slugify(value: str) -> str:
+    s = (value or '').strip().lower()
+    s = re.sub(r'[^a-z0-9]+', '-', s)
+    s = re.sub(r'-{2,}', '-', s).strip('-')
+    return s
+
+
+def _unique_client_slug(base: str) -> str:
+    slug = _slugify(base)
+    if not slug:
+        slug = 'client'
+    candidate = slug
+    n = 2
+    while ClientCompany.query.filter_by(slug=candidate).first():
+        candidate = f"{slug}-{n}"
+        n += 1
+    return candidate
+
+
+def _workspace_state_payload():
+    client_id = session.get('active_client_id')
+    engagement_id = session.get('active_engagement_id')
+
+    client = None
+    engagement = None
+    try:
+        if client_id:
+            cc = ClientCompany.query.get(int(client_id))
+            if cc:
+                client = {'id': cc.id, 'name': cc.name, 'slug': cc.slug}
+        if engagement_id:
+            ce = ClientEngagement.query.get(int(engagement_id))
+            if ce:
+                engagement = {
+                    'id': ce.id,
+                    'client_company_id': ce.client_company_id,
+                    'name': ce.name,
+                    'start_date': ce.start_date.isoformat() if ce.start_date else None,
+                    'end_date': ce.end_date.isoformat() if ce.end_date else None,
+                }
+    except Exception:
+        client = None
+        engagement = None
+
+    return {
+        'active_client': client,
+        'active_engagement': engagement,
+    }
+
+
+@api.route('/workspace/state', methods=['GET'])
+def workspace_state():
+    return jsonify({'success': True, **_workspace_state_payload()}), 200
+
+
+@api.route('/workspace/clients', methods=['GET'])
+def workspace_clients_list():
+    try:
+        clients = ClientCompany.query.order_by(ClientCompany.name.asc()).all()
+        return jsonify({
+            'success': True,
+            'clients': [{'id': c.id, 'name': c.name, 'slug': c.slug} for c in clients],
+            **_workspace_state_payload(),
+        }), 200
+    except Exception as e:
+        logger.error(f"Error listing clients: {str(e)}")
+        return jsonify({'success': False, 'error': 'Failed to list clients'}), 500
+
+
+@api.route('/workspace/clients', methods=['POST'])
+def workspace_clients_create():
+    try:
+        data = request.get_json(silent=True) or {}
+        name = (data.get('name') or '').strip()
+        if not name:
+            return jsonify({'success': False, 'error': 'name is required'}), 400
+        slug = _unique_client_slug(name)
+        client = ClientCompany(name=name, slug=slug)
+        db.session.add(client)
+        db.session.commit()
+
+        session['active_client_id'] = int(client.id)
+        session.pop('active_engagement_id', None)
+        session.modified = True
+
+        return jsonify({
+            'success': True,
+            'client': {'id': client.id, 'name': client.name, 'slug': client.slug},
+            **_workspace_state_payload(),
+        }), 201
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error creating client: {str(e)}")
+        return jsonify({'success': False, 'error': 'Failed to create client'}), 500
+
+
+@api.route('/workspace/clients/<int:client_id>/engagements', methods=['GET'])
+def workspace_engagements_list(client_id: int):
+    try:
+        engagements = (
+            ClientEngagement.query
+            .filter(ClientEngagement.client_company_id == int(client_id))
+            .order_by(ClientEngagement.created_date.desc())
+            .limit(200)
+            .all()
+        )
+        return jsonify({
+            'success': True,
+            'engagements': [
+                {
+                    'id': e.id,
+                    'client_company_id': e.client_company_id,
+                    'name': e.name,
+                    'start_date': e.start_date.isoformat() if e.start_date else None,
+                    'end_date': e.end_date.isoformat() if e.end_date else None,
+                }
+                for e in engagements
+            ],
+            **_workspace_state_payload(),
+        }), 200
+    except Exception as e:
+        logger.error(f"Error listing engagements: {str(e)}")
+        return jsonify({'success': False, 'error': 'Failed to list engagements'}), 500
+
+
+@api.route('/workspace/select', methods=['POST'])
+def workspace_select():
+    try:
+        data = request.get_json(silent=True) or {}
+        client_id = data.get('client_id')
+        engagement_id = data.get('engagement_id')
+
+        if client_id is not None and str(client_id).strip() != '':
+            cc = ClientCompany.query.get(int(client_id))
+            if not cc:
+                return jsonify({'success': False, 'error': 'Client not found'}), 404
+            session['active_client_id'] = int(cc.id)
+        else:
+            session.pop('active_client_id', None)
+            session.pop('active_engagement_id', None)
+
+        if engagement_id is not None and str(engagement_id).strip() != '':
+            ce = ClientEngagement.query.get(int(engagement_id))
+            if not ce:
+                return jsonify({'success': False, 'error': 'Engagement not found'}), 404
+            if session.get('active_client_id') and int(ce.client_company_id) != int(session.get('active_client_id')):
+                return jsonify({'success': False, 'error': 'Engagement does not belong to active client'}), 400
+            session['active_engagement_id'] = int(ce.id)
+        else:
+            session.pop('active_engagement_id', None)
+
+        session.modified = True
+        return jsonify({'success': True, **_workspace_state_payload()}), 200
+    except Exception as e:
+        logger.error(f"Error selecting workspace: {str(e)}")
+        return jsonify({'success': False, 'error': 'Failed to select workspace'}), 500
+
+
+@api.route('/workspace/engagements', methods=['POST'])
+def workspace_engagements_create():
+    try:
+        data = request.get_json(silent=True) or {}
+        client_id = data.get('client_id') or session.get('active_client_id')
+        name = (data.get('name') or '').strip()
+        if not client_id:
+            return jsonify({'success': False, 'error': 'client_id is required'}), 400
+        if not name:
+            return jsonify({'success': False, 'error': 'name is required'}), 400
+
+        cc = ClientCompany.query.get(int(client_id))
+        if not cc:
+            return jsonify({'success': False, 'error': 'Client not found'}), 404
+
+        engagement = ClientEngagement(client_company_id=int(cc.id), name=name)
+        db.session.add(engagement)
+        db.session.commit()
+
+        session['active_client_id'] = int(cc.id)
+        session['active_engagement_id'] = int(engagement.id)
+        session.modified = True
+
+        return jsonify({
+            'success': True,
+            'engagement': {
+                'id': engagement.id,
+                'client_company_id': engagement.client_company_id,
+                'name': engagement.name,
+                'start_date': engagement.start_date.isoformat() if engagement.start_date else None,
+                'end_date': engagement.end_date.isoformat() if engagement.end_date else None,
+            },
+            **_workspace_state_payload(),
+        }), 201
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error creating engagement: {str(e)}")
+        return jsonify({'success': False, 'error': 'Failed to create engagement'}), 500
 
 def login_required(f):
     """Decorator to require authentication for API endpoints."""
@@ -2279,7 +2550,14 @@ def set_proficiency():
 def list_reports():
     """List recent reports. Optionally filter by session via ?session_id=..."""
     try:
-        q = DynamicReport.query
+        active_client_id, active_engagement_id = _active_workspace_ids()
+        if not active_client_id or not active_engagement_id:
+            return jsonify({'reports': [], 'count': 0}), 200
+
+        q = DynamicReport.query.filter(
+            DynamicReport.client_company_id == int(active_client_id),
+            DynamicReport.client_engagement_id == int(active_engagement_id),
+        )
         session_id = request.args.get('session_id')
         if session_id:
             q = q.filter(DynamicReport.session_id == session_id)
@@ -2295,11 +2573,14 @@ def get_report(report_id: int):
     try:
         include = (request.args.get('include') or '').lower()
         include_content = 'content' in include
-        r = DynamicReport.query.get(report_id)
+        r = db.session.get(DynamicReport, report_id)
         if not r:
             return jsonify({'error': f'Report with id {report_id} not found'}), 404
+        _report_workspace_match_or_404(r, route='/api/reports/<id>')
         return jsonify({'report': r.to_dict(include_content=include_content)}), 200
     except Exception as e:
+        if isinstance(e, HTTPException):
+            raise
         return jsonify({'error': 'Failed to get report', 'details': str(e)}), 500
 
 # -------------------------------
@@ -2308,7 +2589,7 @@ def get_report(report_id: int):
 @api.route('/competencies/<int:competency_id>/metrics', methods=['GET'])
 def get_competency_metrics(competency_id: int):
     try:
-        comp = Competency.query.get(competency_id)
+        comp = db.session.get(Competency, competency_id)
         if not comp:
             return jsonify({'error': f'Competency with id {competency_id} not found'}), 404
         return jsonify({
@@ -2328,7 +2609,7 @@ def set_competency_metrics(competency_id: int):
     Body: { metric_ids: [int] }
     """
     try:
-        comp = Competency.query.get(competency_id)
+        comp = db.session.get(Competency, competency_id)
         if not comp:
             return jsonify({'error': f'Competency with id {competency_id} not found'}), 404
         data = request.get_json(silent=True) or {}
@@ -2348,7 +2629,7 @@ def set_competency_metrics(competency_id: int):
 @login_required
 def add_metrics_to_competency(competency_id: int):
     try:
-        comp = Competency.query.get(competency_id)
+        comp = db.session.get(Competency, competency_id)
         if not comp:
             return jsonify({'error': f'Competency with id {competency_id} not found'}), 404
         data = request.get_json(silent=True) or {}
@@ -2372,7 +2653,7 @@ def add_metrics_to_competency(competency_id: int):
 @login_required
 def remove_metrics_from_competency(competency_id: int):
     try:
-        comp = Competency.query.get(competency_id)
+        comp = db.session.get(Competency, competency_id)
         if not comp:
             return jsonify({'error': f'Competency with id {competency_id} not found'}), 404
         data = request.get_json(silent=True) or {}
@@ -3381,6 +3662,7 @@ def create_dynamic_report():
     """
     try:
         from app.services.report_generator import DynamicReportGenerator, ReportConfig
+        from app.workspace_stamp import get_active_workspace
         
         data = request.get_json()
         if not data:
@@ -3403,6 +3685,22 @@ def create_dynamic_report():
             }), 400
         
         # Create report configuration
+        gen_ctx = data.get('generation_context', {}) or {}
+        ws = get_active_workspace() or {}
+        if not ws.get('active_client_id') or not ws.get('active_engagement_id'):
+            return jsonify({
+                'error': 'Active workspace required',
+                'details': 'Select a client and engagement before generating a saved report.'
+            }), 400
+        if ws.get('active_client_id') and not gen_ctx.get('client_company_id'):
+            gen_ctx['client_company_id'] = ws.get('active_client_id')
+        if ws.get('active_engagement_id') and not gen_ctx.get('client_engagement_id'):
+            gen_ctx['client_engagement_id'] = ws.get('active_engagement_id')
+        if ws.get('client_slug') and not gen_ctx.get('client_slug'):
+            gen_ctx['client_slug'] = ws.get('client_slug')
+        if ws.get('engagement_slug') and not gen_ctx.get('engagement_slug'):
+            gen_ctx['engagement_slug'] = ws.get('engagement_slug')
+
         config = ReportConfig(
             title=data['title'],
             template_type=data['template_type'],
@@ -3410,7 +3708,7 @@ def create_dynamic_report():
             selected_metrics=data['selected_metrics'],
             ai_recommendations=data.get('ai_recommendations', []),
             session_id=data['session_id'],
-            generation_context=data.get('generation_context', {})
+            generation_context=gen_ctx
         )
         
         # Generate report
@@ -3435,7 +3733,10 @@ def create_dynamic_report():
 def get_dynamic_report(report_id):
     """GET /api/dynamic-reports/<id> - Get dynamic report details"""
     try:
-        report = DynamicReport.query.get_or_404(report_id)
+        report = db.session.get(DynamicReport, report_id)
+        if not report:
+            return jsonify({'error': f'Report with id {report_id} not found'}), 404
+        _report_workspace_match_or_404(report, route='/api/dynamic-reports/<id>')
         include_content = request.args.get('include_content', 'false').lower() == 'true'
         
         return jsonify({
@@ -3444,6 +3745,8 @@ def get_dynamic_report(report_id):
         }), 200
         
     except Exception as e:
+        if isinstance(e, HTTPException):
+            raise
         return jsonify({
             'error': 'Failed to retrieve report',
             'details': str(e)
@@ -3455,8 +3758,12 @@ def download_dynamic_report(report_id):
     """GET /api/dynamic-reports/<id>/download - Download PDF report"""
     try:
         from flask import send_file
+        from app.workspace_stamp import stamp_filename, workspace_from_pdf_path, get_active_workspace
         
-        report = DynamicReport.query.get_or_404(report_id)
+        report = db.session.get(DynamicReport, report_id)
+        if not report:
+            return jsonify({'error': f'Report with id {report_id} not found'}), 404
+        _report_workspace_match_or_404(report, route='/api/dynamic-reports/<id>/download')
         
         if not report.pdf_path or not os.path.exists(report.pdf_path):
             return jsonify({
@@ -3466,15 +3773,20 @@ def download_dynamic_report(report_id):
         
         # Increment download counter
         report.increment_download()
+
+        ws = workspace_from_pdf_path(report.pdf_path) or get_active_workspace()
+        download_name = stamp_filename(f"{report.title.replace(' ', '_')}.pdf", workspace=ws)
         
         return send_file(
             report.pdf_path,
             as_attachment=True,
-            download_name=f"{report.title.replace(' ', '_')}.pdf",
+            download_name=download_name,
             mimetype='application/pdf'
         )
         
     except Exception as e:
+        if isinstance(e, HTTPException):
+            raise
         return jsonify({
             'error': 'Failed to download report',
             'details': str(e)
@@ -3485,7 +3797,10 @@ def download_dynamic_report(report_id):
 def get_report_progress(report_id):
     """GET /api/dynamic-reports/<id>/progress - Get report generation progress"""
     try:
-        report = DynamicReport.query.get_or_404(report_id)
+        report = db.session.get(DynamicReport, report_id)
+        if not report:
+            return jsonify({'error': f'Report with id {report_id} not found'}), 404
+        _report_workspace_match_or_404(report, route='/api/dynamic-reports/<id>/progress')
         
         return jsonify({
             'success': True,
@@ -3499,6 +3814,8 @@ def get_report_progress(report_id):
         }), 200
         
     except Exception as e:
+        if isinstance(e, HTTPException):
+            raise
         return jsonify({
             'error': 'Failed to get report progress',
             'details': str(e)
@@ -3509,10 +3826,20 @@ def get_report_progress(report_id):
 def get_session_reports(session_id):
     """GET /api/dynamic-reports/session/<id> - Get all reports for a session"""
     try:
+        active_client_id, active_engagement_id = _active_workspace_ids()
+        if not active_client_id or not active_engagement_id:
+            return jsonify({'success': True, 'reports': [], 'total': 0, 'session_id': session_id})
         # Query reports for session
-        reports = DynamicReport.query.filter_by(session_id=str(session_id)).order_by(
-            DynamicReport.created_date.desc()
-        ).all()
+        reports = (
+            DynamicReport.query
+            .filter(
+                DynamicReport.session_id == str(session_id),
+                DynamicReport.client_company_id == int(active_client_id),
+                DynamicReport.client_engagement_id == int(active_engagement_id),
+            )
+            .order_by(DynamicReport.created_date.desc())
+            .all()
+        )
         return jsonify({
             'success': True,
             'reports': [r.to_dict() for r in reports],
@@ -3521,6 +3848,8 @@ def get_session_reports(session_id):
         })
         
     except Exception as e:
+        if isinstance(e, HTTPException):
+            raise
         return jsonify({
             'error': 'Failed to retrieve session reports',
             'details': str(e)

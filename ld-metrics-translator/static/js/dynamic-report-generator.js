@@ -546,7 +546,13 @@ class DynamicReportGenerator {
             const url = window.URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = `report-${reportId}.pdf`;
+            let fname = `report-${reportId}.pdf`;
+            try {
+                const cd = response.headers.get('content-disposition') || '';
+                const m = cd.match(/filename\*=UTF-8''([^;]+)|filename="?([^";]+)"?/i);
+                fname = decodeURIComponent((m && (m[1] || m[2])) || fname);
+            } catch (e) {}
+            a.download = fname;
             document.body.appendChild(a);
             a.click();
             window.URL.revokeObjectURL(url);

@@ -1,3 +1,4 @@
+
 /**
  * Context Status Indicator Component
  * Provides visual feedback for context save/load states

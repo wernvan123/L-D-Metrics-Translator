@@ -1,5 +1,7 @@
 {% extends "base.html" %}
 
+{% block requires_workspace %}1{% endblock %}
+
 {% block content %}
 <section class="page-section">
   <div class="container plan-builder-intro text-on-hero">
@@ -126,7 +128,8 @@
           <p class="pb-empty">No items yet. Use “Add to Plan” on any card.</p>
         </div>
         <div class="cta-group" style="margin-top: 12px; display:flex; gap:8px; flex-wrap:wrap;">
-          <button id="pb-generate-report" class="btn btn-primary btn-lg" disabled>Generate Report</button>
+          <button id="pb-generate-report" class="btn btn-primary btn-lg" disabled>Generate Full Report (Saved)</button>
+          <button id="pb-export-summary" class="btn btn-outline btn-lg" type="button" disabled>Download Selection Summary (PDF)</button>
           <button id="pb-start-new" class="btn btn-outline btn-lg" type="button">Start New Plan</button>
         </div>
       </aside>
@@ -143,6 +146,6 @@
   <div class="modal-backdrop"></div>
 </div>
 
-<script src="{{ url_for('static', filename='js/plan-builder.js') }}?v=20250921-1"></script>
+<script src="{{ url_for('static', filename='js/plan-builder.js') }}?v=20260301-3"></script>
 {% endblock %}
 

@@ -63,6 +63,18 @@ class Config:
     @staticmethod
     def init_app(app):
         """Initialize application with configuration-specific settings."""
+        # Fail fast if SECRET_KEY is not explicitly set (prevents insecure defaults)
+        try:
+            if not app.config.get('TESTING'):
+                secret_key = app.config.get('SECRET_KEY')
+                if not secret_key or secret_key == 'dev-key-123':
+                    raise RuntimeError(
+                        "SECRET_KEY is not set. Set SECRET_KEY in the environment or in ld-metrics-translator/.env. "
+                        "Refusing to start with the default dev key."
+                    )
+        except Exception:
+            raise
+
         # Ensure logs directory exists
         log_dir = os.path.dirname(Config.LOG_FILE)
         if not os.path.exists(log_dir):

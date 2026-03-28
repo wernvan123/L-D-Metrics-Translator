@@ -3,12 +3,32 @@
 {% block page_styles %}
 <style>
   /* Comparison View page-scoped styles */
-  .reports-compare .section-title { margin: 0 0 4px; color: #fff !important; font-size: 13px; letter-spacing: .2px; text-transform: uppercase; text-shadow: 0 1px 2px rgba(0,0,0,0.25); opacity: 1 !important; mix-blend-mode: normal !important; position: relative; z-index: 2; }
-  .reports-compare h3.section-title { color: #fff !important; }
-  /* Force white text in the visual columns for strong contrast */
-  .reports-compare .grid.two { color: #fff; }
-  .reports-compare .grid.two .report-title { color: #fff; }
-  .reports-compare .grid.two .meta { color: #e8ecff; }
+  .reports-compare { padding-top: 20px; padding-bottom: 28px; }
+  .reports-compare .container { max-width: 1140px; }
+  .reports-compare .card { border-radius: 18px; overflow: hidden; }
+  .reports-compare .card-header { display:flex; align-items:flex-start; justify-content:space-between; gap: 16px; flex-wrap: wrap; }
+  .reports-compare .cta-row { display:flex; gap: 10px; flex-wrap: wrap; align-items:center; }
+  .reports-compare .cta-row .btn { border-radius: 14px; }
+  .reports-compare .cta-row .btn.primary { min-width: 220px; }
+  .reports-compare .grid.two { gap: 16px; align-items: start; }
+  .reports-compare .compare-panel { background: rgba(255,255,255,0.96); border: 1px solid rgba(203, 213, 225, 0.55); border-radius: 14px; padding: 14px 14px 12px; box-shadow: 0 20px 48px rgba(15, 23, 42, 0.18); }
+  .reports-compare .compare-panel { color: #0f172a !important; }
+  .reports-compare .compare-panel .meta { color: rgba(15, 23, 42, 0.62) !important; }
+  .reports-compare .compare-panel .report-title { color: #0f172a !important; margin: 0 0 6px; }
+  .reports-compare .compare-panel .section-title { color: rgba(15, 23, 42, 0.6) !important; text-shadow: none; }
+  .reports-compare .compare-panel .visual-placeholder { margin-top: 10px; }
+  .reports-compare .report-preview { display: grid; gap: 12px; }
+  .reports-compare .rp-actions { display:flex; gap: 8px; flex-wrap: wrap; }
+  .reports-compare .rp-actions .btn { border-radius: 999px; padding: 6px 12px; font-weight: 600; }
+  .reports-compare .rp-section { border: 1px solid rgba(226,232,240,0.9); border-radius: 12px; background: rgba(248,250,252,0.7); padding: 12px; }
+  .reports-compare .rp-section-title { font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: rgba(71,85,105,0.9); margin-bottom: 8px; font-weight: 700; }
+  .reports-compare .rp-section-body { color: #0f172a; line-height: 1.55; font-size: 14px; }
+  .reports-compare details.rp-raw { border: 1px dashed rgba(148,163,184,0.8); border-radius: 12px; padding: 10px 12px; background: rgba(255,255,255,0.65); }
+  .reports-compare details.rp-raw summary { cursor: pointer; font-weight: 700; color: rgba(15,23,42,0.78); }
+  .reports-compare details.rp-raw pre.code { max-height: 320px; overflow:auto; margin-top: 10px; }
+  .reports-compare hr { border: none; border-top: 1px solid rgba(226,232,240,0.9); }
+  .reports-compare .notice { margin-top: 12px; }
+  .reports-compare .section-title { margin: 0 0 4px; font-size: 13px; letter-spacing: .2px; text-transform: uppercase; }
   .reports-compare .report-title { margin: 4px 0 6px; }
   .reports-compare .visual-placeholder { margin-top: 8px; border: 1px dashed var(--border); border-radius: 10px; background: #fbfbfd; color: var(--muted); padding: 12px; text-align: center; font-size: 13px; }
   .reports-compare .analysis-card { background: #fff; border: 1px solid var(--border); border-radius: 12px; padding: 14px; box-shadow: var(--shadow); color: var(--text); }
@@ -29,41 +49,46 @@
 
 {% block content %}
 <section class="page reports-compare">
-  <div class="card">
-    <div class="card-header">
-      <h2>Comparison Report</h2>
-      <div class="actions cta-row">
-        <a class="btn" href="/reports">Back to Reports</a>
-        <button id="btn-share-comparison" class="btn">Share Comparison</button>
-        <button id="btn-export-comparison" class="btn primary">Export Comparison as PDF</button>
-      </div>
-    </div>
-    <div class="card-body">
-      <div class="notice" id="rc-status" style="display:none"></div>
-
-      <div class="grid two" style="gap:16px; align-items:start;">
+  <div class="container">
+    <div class="card">
+      <div class="card-header">
         <div>
-          <h3 class="section-title" style="color:#fff;opacity:1;mix-blend-mode:normal;position:relative;z-index:2;">Before</h3>
-          <h4 id="rA-title" class="report-title">Baseline: —</h4>
-          <div class="meta" id="rA-meta"></div>
-          <div class="visual-placeholder" id="rA-visual">Competency Tree / Radar will render here.</div>
-          <div id="rA-content" class="mt"></div>
+          <h2>Comparison Report</h2>
+          <div class="meta">Compare two completed reports and export the summary as a PDF.</div>
         </div>
-        <div>
-          <h3 class="section-title" style="color:#fff;opacity:1;mix-blend-mode:normal;position:relative;z-index:2;">After</h3>
-          <h4 id="rB-title" class="report-title">Follow-up: —</h4>
-          <div class="meta" id="rB-meta"></div>
-          <div class="visual-placeholder" id="rB-visual">Competency Tree / Radar will render here.</div>
-          <div id="rB-content" class="mt"></div>
+        <div class="actions cta-row">
+          <a class="btn" href="/reports">Back to Reports</a>
+          <button id="btn-share-comparison" class="btn">Share Comparison</button>
+          <button id="btn-export-comparison" class="btn primary">Export Comparison as PDF</button>
         </div>
       </div>
+      <div class="card-body">
+        <div class="notice" id="rc-status" style="display:none"></div>
 
-      <hr class="mt"/>
+        <div class="grid two">
+          <div class="compare-panel">
+            <h3 class="section-title">Before</h3>
+            <h4 id="rA-title" class="report-title">Baseline: —</h4>
+            <div class="meta" id="rA-meta"></div>
+            <div class="visual-placeholder" id="rA-visual">Competency Tree / Radar will render here.</div>
+            <div id="rA-content" class="mt"></div>
+          </div>
+          <div class="compare-panel">
+            <h3 class="section-title">After</h3>
+            <h4 id="rB-title" class="report-title">Follow-up: —</h4>
+            <div class="meta" id="rB-meta"></div>
+            <div class="visual-placeholder" id="rB-visual">Competency Tree / Radar will render here.</div>
+            <div id="rB-content" class="mt"></div>
+          </div>
+        </div>
 
-      <div class="analysis-card">
-        <h3>Summary of Changes</h3>
-        <div id="rc-summary" class="mt">Select two reports to see a synthesized comparison summary.</div>
-        <div id="rc-key-changes" class="key-changes mt"></div>
+        <hr class="mt"/>
+
+        <div class="analysis-card">
+          <h3>Summary of Changes</h3>
+          <div id="rc-summary" class="mt">Select two reports to see a synthesized comparison summary.</div>
+          <div id="rc-key-changes" class="key-changes mt"></div>
+        </div>
       </div>
     </div>
   </div>
@@ -71,10 +96,13 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="{{ url_for('static', filename='js/reports.js') }}?v=20250917"></script>
+<script src="{{ url_for('static', filename='js/reports.js') }}?v=20260304-1"></script>
 <script>
-  document.addEventListener('DOMContentLoaded', function(){
-    if (window.ReportsCompare) ReportsCompare.init();
-  });
+  (function(){
+    try{
+      const rc = window.ReportsCompare || (typeof ReportsCompare !== 'undefined' ? ReportsCompare : null);
+      if(rc && typeof rc.init === 'function') rc.init();
+    } catch (e) {}
+  })();
 </script>
 {% endblock %}

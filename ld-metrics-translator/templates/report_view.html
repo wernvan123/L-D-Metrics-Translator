@@ -1,5 +1,27 @@
 {% extends "base.html" %}
 
+{% block requires_workspace %}1{% endblock %}
+
+{% block page_styles %}
+<style>
+  .report-view .card { overflow: hidden; }
+  .report-view .card-body { padding-top: 14px; }
+  .report-view .rp-actions { margin-bottom: 12px; }
+  .report-view .report-preview { display: grid; gap: 12px; }
+  .report-view .rp-section { background: rgba(255,255,255,0.96); border: 1px solid rgba(203, 213, 225, 0.55); border-radius: 14px; padding: 14px; box-shadow: 0 20px 48px rgba(15, 23, 42, 0.18); }
+  .report-view .rp-section-title { font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: rgba(71,85,105,0.9); margin-bottom: 10px; font-weight: 800; }
+  .report-view .rp-section-body { color: #0f172a; line-height: 1.65; font-size: 14px; }
+  .report-view .rp-section-body p { margin: 0 0 10px; }
+  .report-view .rp-section-body p:last-child { margin-bottom: 0; }
+  .report-view .rp-section-body .rv-subhead { margin: 6px 0 6px; font-weight: 800; color: rgba(15,23,42,0.78); }
+  .report-view .rp-section-body ul.rv-list { margin: 8px 0 10px 18px; padding: 0; display: grid; gap: 6px; }
+  .report-view .rp-section-body ul.rv-list li { margin: 0; }
+  .report-view details { border: 1px solid rgba(148,163,184,0.55); border-radius: 12px; padding: 10px 12px; background: rgba(255,255,255,0.65); }
+  .report-view details summary { cursor: pointer; font-weight: 800; color: rgba(15,23,42,0.78); }
+  .report-view pre.code { max-height: 520px; overflow: auto; }
+</style>
+{% endblock %}
+
 {% block content %}
 <section class="page report-view">
   <div class="card">
@@ -27,12 +49,15 @@
 
 {% block scripts %}
 <script>
-  window.__REPORT_ID__ = {{ report_id|int }};
+  window.__REPORT_ID__ = Number("{{ report_id|int }}");
 </script>
-<script src="{{ url_for('static', filename='js/report-view.js') }}?v=20250915"></script>
+<script src="{{ url_for('static', filename='js/report-view.js') }}?v=20260304-5"></script>
 <script>
   document.addEventListener('DOMContentLoaded', function(){
-    if (window.ReportView) ReportView.init();
+    try{
+      const rv = window.ReportView || (typeof ReportView !== 'undefined' ? ReportView : null);
+      if(rv && typeof rv.init === 'function') rv.init();
+    } catch (e) {}
   });
 </script>
 {% endblock %}

@@ -39,6 +39,7 @@ instance/
 
 # Environment variables
 .flaskenv
+.env
 
 # IDE
 .vscode/
@@ -53,3 +54,7 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Report artifacts
+static/reports/
+app/static/reports/

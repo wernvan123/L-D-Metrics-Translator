@@ -3,6 +3,7 @@
   console.log('[ReportsList] script loaded');
   let allItems = [];
   let sortState = { by: 'date', dir: 'desc' }; // by: 'date'|'status', dir: 'asc'|'desc'
+  let workspaceLabel = '';
 
   async function fetchJSON(url){
     const r = await fetch(url, { headers: { 'Accept': 'application/json' } });
@@ -10,6 +11,30 @@
     return r.json();
   }
   function esc(s){ return (s||'').toString().replace(/[&<>\"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+  function shortId(s){
+    try{
+      const v = (s||'').toString();
+      if(!v) return '';
+      return v.length <= 10 ? v : v.slice(0, 10);
+    }catch{ return ''; }
+  }
+  function fmtSession(s){
+    const sid = shortId(s);
+    return sid ? `s${sid}` : '';
+  }
+  async function loadWorkspaceLabel(){
+    try{
+      const st = await fetchJSON('/api/workspace/state');
+      const c = st && st.active_client ? (st.active_client.name || '') : '';
+      const e = st && st.active_engagement ? (st.active_engagement.name || '') : '';
+      const lbl = (c && e) ? `${c} / ${e}` : '';
+      workspaceLabel = lbl;
+      const meta = document.getElementById('reports-table-meta');
+      if(meta && lbl){
+        meta.textContent = `Workspace: ${lbl}`;
+      }
+    }catch{}
+  }
   function fmtDate(s){
     if(!s) return '';
     // Accept "YYYY-MM-DD HH:MM:SS" or ISO strings
@@ -54,10 +79,18 @@
     const isAdmin = !!window.IS_ADMIN;
     tb.innerHTML = items.map(r => {
       const dt = r.generated_date || r.created_date || '';
+      const sid = fmtSession(r.session_id);
+      const bits = [];
+      if(sid) bits.push(`Session: ${esc(sid)}`);
+      if(workspaceLabel) bits.push(`Workspace: ${esc(workspaceLabel)}`);
+      const metaLine = bits.length ? `<div class="meta">${bits.join(' • ')}</div>` : '';
       const disabledAttr = isAdmin ? '' : 'disabled title="Admin only"';
+      const st = String(r.generation_status || '').toLowerCase();
+      const compareDisabled = st !== 'completed';
+      const compareAttr = compareDisabled ? 'disabled title="Only completed reports can be compared"' : '';
       return `<tr data-id="${r.id}">
-        <td><input type="checkbox" class="rcheck"/></td>
-        <td>${esc(r.title)}</td>
+        <td><input type="checkbox" class="rcheck" ${compareAttr}/></td>
+        <td><div>${esc(r.title)}</div>${metaLine}</td>
         <td>${fmtDate(dt)}</td>
         <td>${statusBadge(r.generation_status)}</td>
         <td>
@@ -87,13 +120,37 @@
   function bind(){
     const tb = document.getElementById('reports-tbody');
     const cmp = document.getElementById('btn-compare');
+    const cmpMeta = document.getElementById('compare-meta');
     const search = document.getElementById('report-search');
     const sortByDate = document.getElementById('sort-date');
     const sortByStatus = document.getElementById('sort-status');
     if (tb && cmp){
-      tb.addEventListener('change', ()=>{
+      function updateCompareUI(){
         const checked = Array.from(tb.querySelectorAll('.rcheck:checked'));
-        cmp.disabled = checked.length !== 2;
+        const n = checked.length;
+        cmp.disabled = n !== 2;
+        if(cmpMeta){
+          cmpMeta.textContent = n ? `Selected ${n}/2 for comparison.` : 'Select two completed reports to enable comparison.';
+        }
+        for(const tr of tb.querySelectorAll('tr')){
+          const c = tr.querySelector('.rcheck');
+          tr.classList.toggle('is-selected', !!(c && c.checked));
+        }
+      }
+
+      tb.addEventListener('change', (e)=>{
+        const target = e.target;
+        if(!(target instanceof HTMLInputElement) || !target.classList.contains('rcheck')){
+          updateCompareUI();
+          return;
+        }
+        if(target.checked){
+          const checked = Array.from(tb.querySelectorAll('.rcheck:checked'));
+          if(checked.length > 2){
+            target.checked = false;
+          }
+        }
+        updateCompareUI();
       });
       cmp.addEventListener('click', ()=>{
         const ids = Array.from(tb.querySelectorAll('.rcheck:checked')).map(x=> x.closest('tr').getAttribute('data-id'));
@@ -143,6 +200,11 @@
           sortState.dir = 'desc';
         }
         renderRows(sortItems(allItems));
+        if(tb && cmp){
+          const checked = Array.from(tb.querySelectorAll('.rcheck:checked'));
+          cmp.disabled = checked.length !== 2;
+          if(cmpMeta) cmpMeta.textContent = checked.length ? `Selected ${checked.length}/2 for comparison.` : 'Select two completed reports to enable comparison.';
+        }
       });
     }
     if (sortByStatus){
@@ -154,6 +216,11 @@
           sortState.dir = 'desc';
         }
         renderRows(sortItems(allItems));
+        if(tb && cmp){
+          const checked = Array.from(tb.querySelectorAll('.rcheck:checked'));
+          cmp.disabled = checked.length !== 2;
+          if(cmpMeta) cmpMeta.textContent = checked.length ? `Selected ${checked.length}/2 for comparison.` : 'Select two completed reports to enable comparison.';
+        }
       });
     }
   }
@@ -164,7 +231,9 @@
     let rendered = false;
     const tb = document.getElementById('reports-tbody');
     setTimeout(()=>{ if(!rendered && tb && tb.innerText.includes('Loading')){ tb.innerHTML = '<tr><td colspan="5">No reports yet.</td></tr>'; } }, 2000);
-    loadReports().finally(()=>{ rendered = true; });
+    loadWorkspaceLabel().finally(()=>{
+      loadReports().finally(()=>{ rendered = true; });
+    });
   }
 
   if (document.readyState === 'loading'){

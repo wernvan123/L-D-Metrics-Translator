@@ -10,6 +10,7 @@
     sidebarContent: null,
     selectionCount: null,
     btnGenerate: null,
+    btnExportSummary: null,
     search: null,
     // Initial choice elements
     initialChoice: null,
@@ -580,10 +581,12 @@
       if(els.selectionCount){ els.selectionCount.textContent = `${items.length} selected`; }
       if(!items.length){ box.innerHTML = '<p class="pb-empty">No items yet. Use “Add to Plan” on any card.</p>'; 
         if(els.btnGenerate){ els.btnGenerate.disabled = true; }
+        if(els.btnExportSummary){ els.btnExportSummary.disabled = true; }
         // Clear CTA states
         $all('#pb-grid [data-action="add"]').forEach(b=>{ b.disabled=false; b.textContent='Add to Plan'; });
         return; }
       if(els.btnGenerate){ els.btnGenerate.disabled = false; }
+      if(els.btnExportSummary){ els.btnExportSummary.disabled = false; }
       // Disable add buttons for items already selected
       try{
         const selectedIds = new Set(items.map(it => parseInt(it.source_id, 10)).filter(Number.isFinite));
@@ -764,20 +767,47 @@
           catch{}
           throw new Error(msg);
         }
+        let reportId = null;
+        try{
+          const j = await res.json();
+          reportId = j && j.report && j.report.id != null ? j.report.id : null;
+        }catch{}
         setStatus('success','Report requested. Redirecting to progress view…');
-        window.location.assign('/plan/report');
+        if(reportId != null){
+          window.location.assign(`/plan/report?report_id=${encodeURIComponent(reportId)}`);
+        } else {
+          window.location.assign('/plan/report');
+        }
       }catch(err){
         setStatus('warning', err.message || 'Unable to generate report');
       }
     }); }
+
+    if(els.btnExportSummary){
+      els.btnExportSummary.addEventListener('click', ()=>{
+        try{ document.dispatchEvent(new Event('plan:generateReport')); }catch(e){}
+      });
+    }
+
     if(els.btnStartNew){ els.btnStartNew.addEventListener('click', async ()=>{
       // Clear plan items
       try{
+        // Prefer server-side clear-all endpoint
+        try{
+          await fetch('/api/context/plan/items', { method:'DELETE', headers:{'Accept':'application/json'} });
+        }catch{}
+
+        // Fallback: delete items individually if the clear endpoint is unavailable
         const res = await fetch('/api/context/plan/items', { headers:{'Accept':'application/json'} });
         const data = await res.json();
         const items = Array.isArray(data.items) ? data.items : [];
-        for(const it of items){ try{ await fetch(`/api/context/plan/items/${it.id}`, { method:'DELETE' }); }catch{} }
+        for(const it of items){
+          try{ await fetch(`/api/context/plan/items/${it.id}`, { method:'DELETE' }); }catch{}
+        }
       }catch{}
+
+      // Clear any client-side mini selections cache
+      try{ sessionStorage.removeItem('plan:selections'); }catch{}
       // Reset framework context
       try{ await fetch('/api/context/framework/state', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ framework_id: null, active_competencies: [] }) }); }catch{}
       // Reset UI state
@@ -802,6 +832,7 @@
     els.sidebarContent = $('#pb-sidebar-content');
     els.selectionCount = $('#pb-selection-count');
     els.btnGenerate = $('#pb-generate-report');
+    els.btnExportSummary = $('#pb-export-summary');
     els.search = $('#pb-search');
     els.initialChoice = $('#pb-initial-choice');
     els.choiceFramework = $('#pb-choice-framework');
@@ -893,7 +924,7 @@
           });
           section.push(`<div class="notice notice-info">Suggested metrics identified: <strong>${metricIds.size}</strong>.</div>`);
           if(metricIds.size > 0){
-            section.push('<div class="cta-group" style="margin-top:12px;"><button id="pb-export-pdf" class="btn btn-primary">Download PDF (Summary)</button></div>');
+            section.push('<div class="cta-group" style="margin-top:12px;"><button id="pb-export-pdf" class="btn btn-primary">Download Selection Summary (PDF)</button></div>');
           }
         }
         if(modalBody) modalBody.innerHTML = section.join('');
@@ -917,13 +948,24 @@
               });
               if(!r.ok){
                 let msg = `Failed to generate PDF (${r.status})`;
-                try{ const j = await r.json(); if(j && j.error) msg += `: ${j.error}`; }catch{}
+                try{
+                  const j = await r.json();
+                  if(j && j.error) msg += `: ${j.error}`;
+                  if(j && j.details) msg += ` (${j.details})`;
+                }catch{}
                 throw new Error(msg);
               }
               const blob = await r.blob();
               const url = window.URL.createObjectURL(blob);
               const a = document.createElement('a');
-              a.href = url; a.download = 'LD_Metrics_Summary.pdf';
+              a.href = url;
+              let fname = 'LD_Metrics_Summary.pdf';
+              try{
+                const cd = r.headers.get('content-disposition') || '';
+                const m = cd.match(/filename\*=UTF-8''([^;]+)|filename="?([^";]+)"?/i);
+                fname = decodeURIComponent((m && (m[1] || m[2])) || fname);
+              }catch{}
+              a.download = fname;
               document.body.appendChild(a); a.click(); a.remove();
               window.URL.revokeObjectURL(url);
             }catch(err){ alert(err.message || 'Failed to download PDF'); }
