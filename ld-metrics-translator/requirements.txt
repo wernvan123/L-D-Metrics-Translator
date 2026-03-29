@@ -11,7 +11,7 @@ Werkzeug==2.3.7
 
 # Production Dependencies
 Flask-Limiter==3.5.0
-gunicorn==21.2.0
+gunicorn==21.2.0; platform_system != "Windows"
 psycopg2-binary==2.9.9
 redis==5.0.1
 sentry-sdk[flask]==1.38.0
@@ -109,7 +109,7 @@ pyflakes==3.1.0
 Pygments==2.19.2
 PySocks==1.7.1
 python-dateutil==2.9.0.post0
-pywin32==311
+pywin32==311; platform_system == "Windows"
 PyYAML==6.0.3
 pyzmq==27.1.0
 rich==13.9.4
